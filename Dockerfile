@@ -12,4 +12,4 @@ ADD ./Monika
 
 WORKDIR /Monika
 
-CMD ["python","./monika_bot.py"]
+CMD ["python","/Monika/monika_bot.py"]
