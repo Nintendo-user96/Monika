@@ -41,6 +41,8 @@ def uniform_monika_sprite(text):
         return "Sprites/school uniform/monika_conerned.png" or "Sprites/school uniform/monika_conerned(speak).png"
     elif any(word in text for word in ["love", "romantic", "Romance", "lovely"]):
         return "Sprites/school uniform/monika_blush(eyes-close).png"
+    elif any(word in text for word in ["serious"):
+        return "Sprites/school uniform/monika_serious.png" or "Sprites/school uniform/monika_serious(speak).png"
     elif any(word in text for word in ["ERROR", "FILE NOT FOUND", "NULL", "null", "glitch", "Monika.chr"]):
         return "Sprites/school uniform/monika_error-1.png" or "Sprites/school uniform/monika_error-2.png"
     else:
