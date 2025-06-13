@@ -103,6 +103,7 @@ async def on_message(message):
             temperature=0.9,
         )
 
+        await message.channel.typing()
         reply = monika_chat.choices[0].message.content
         print(reply)
 
