@@ -81,11 +81,11 @@ async def on_message(message):
         if message.content.lower().startswith("monika"):
             return
 
-    if last_speaker == client.user:
+    if last_speaker == bot.user:
         last_speaker = message.author
         return
 
-    last_speaker = client.user
+    last_speaker = bot.user
     
     user_prompt = {
         "role": "user",
@@ -107,7 +107,6 @@ async def on_message(message):
             temperature=0.9,
         )
 
-        await message.channel.typing()
         reply = monika_chat.choices[0].message.content
         print(reply)
 
@@ -147,9 +146,12 @@ async def on_message(message):
         memory[user_id].append({"role": "Monika", "content": reply})
         save_memory()
 
+        await message.channel.typing()
+        
         await message.channel.send(
             content=reply,
             file=discord.File(sprite_path)
+            embed=embed
         )
 
     except Exception as e:
