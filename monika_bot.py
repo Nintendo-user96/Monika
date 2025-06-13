@@ -15,10 +15,10 @@ last_speaker = None
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-intents = discord.Intents.all()
+intents = discord.Intents.default()
 intents.messages = True
 intents.message_content = True
-bot = discord.bot(intents=intents)
+bot = commands.Bot(command_prefix="/", intents=intents)
 tree = bot.tree
 
 MEMORY_FILE = "monika_memory.json"
