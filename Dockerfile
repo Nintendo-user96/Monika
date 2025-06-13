@@ -8,6 +8,4 @@ ADD . /Monika
 
 WORKDIR /Monika
 
-CMD ["python","-m venv venv"]
-
 CMD ["python","/Monika/monika_bot.py"]
