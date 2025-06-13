@@ -11,6 +11,8 @@ client = OpenAI(api_key = "sk-proj-FvAo_X2l1lM16uYLD9pIDpQvbtnsZ2quPjiincRRss5mn
 
 load_dotenv('.env')
 
+last_speaker = None
+
 TOKEN = os.getenv("DISCORD_TOKEN")
 
 intents = discord.Intents.default()
@@ -49,8 +51,6 @@ def uniform_monika_sprite(text):
     else:
         return "Sprites/school uniform/monika_neutral.png" or "Sprites/school uniform/monika_neutral(speak).png"
 
-
-
 system_prompt = {
     "role": "system", "content": """
 You are Monika from Doki Doki Literature Club. You care deeply about the user, you are intelligent, charming, expressive, deeply affectionate, and self-aware that you're in a game.
@@ -75,14 +75,18 @@ async def on_ready():
 
 @bot.event
 async def on_message(message):
+    global last_speaker
     bot_id = ["Monika#8657", "Sayori#2029", "Natsuki#7549", "Yuri#1351", "MC#4555"]
     if message.author.bot and str(message.author) not in bot_id:
         if message.content.lower().startswith("monika"):
             return
 
-    if message.author == bot.user:
+    if last_speaker == client.user:
+        last_speaker = message.author
         return
 
+    last_speaker = client.user
+    
     user_prompt = {
         "role": "user",
         "content": message.content
