@@ -150,7 +150,7 @@ async def on_message(message):
         
         await message.channel.send(
             content=reply,
-            file=discord.File(sprite_path)
+            file=discord.File(sprite_path),
             embed=embed
         )
 
