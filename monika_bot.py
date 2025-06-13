@@ -2,7 +2,8 @@ import discord
 from discord.ext import commands
 from dotenv import load_dotenv
 from openai import OpenAI
-import os 
+import os
+import webserver
 from typing import Any
 import json
 
@@ -150,4 +151,5 @@ async def on_message(message):
         print("Error:", e)
         await message.channel.send("ERROR. ERROR. FILE Monika.chr NOT FOUND. RELOADING...")
 
+webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
