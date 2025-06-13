@@ -15,10 +15,10 @@ last_speaker = None
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
-intents = discord.Intents.default()
+intents = discord.Intents.all()
 intents.messages = True
 intents.message_content = True
-bot = commands.Bot(command_prefix="/", intents=intents)
+bot = discord.bot(intents=intents)
 tree = bot.tree
 
 MEMORY_FILE = "monika_memory.json"
@@ -138,9 +138,12 @@ async def on_message(message):
         file = discord.File(sprite_file, filename=sprite_file)
         sprite_path = f"./{sprite_file}"
 
+        sprite_url = sprite_file.get(emotion, sprite_file["neutral"])
+
         final_reply = f"{reply}\n\n{emotion}"
 
         embed = discord.Embed(title="Monika", description=final_reply, color=0xFF69B4)
+        embed.set_image(url=sprite_url)
 
         memory.setdefault(user_id, []).append({"role": "user", "content": user_input})
         memory[user_id].append({"role": "Monika", "content": reply})
@@ -150,8 +153,8 @@ async def on_message(message):
         
         await message.channel.send(
             content=reply,
-            file=discord.File(sprite_path),
-            embed=embed
+            embed=embed,
+            file=discord.File(sprite_file)
         )
 
     except Exception as e:
