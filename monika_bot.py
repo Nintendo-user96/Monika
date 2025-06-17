@@ -120,7 +120,7 @@ async def on_message(message):
 
     last_speaker = client.user
 
-    username = message.author.display_name
+    username = message.author.mention
     
     user_prompt = {
         "role": "user",
@@ -169,10 +169,10 @@ async def on_message(message):
         await message.channel.send(f"Emotion error: {e}")
         emotion = "neutral"
         sprite_path = school_sprite_expressions_file["neutral"]
-    
+
     final_repsponse = f"{reply}"
     final_emotion = f"[{emotion}]({sprite_url})"
-    final_reply = f"{final_repsponse}  {final_emotion}"
+    final_reply = f"{final_repsponse} {final_emotion}"
 
     memory.setdefault(user_id, []).append({"role": "user", "content": user_input})
     memory[user_id].append({"role": "Monika", "content": final_reply})
@@ -180,8 +180,15 @@ async def on_message(message):
 
     file = discord.File(sprite_path, filename=sprite_path)
 
-    await message.channel.typing()
-    await message.channel.send(final_reply, file=file)
+    if client.user in message.mentions:
+        await message.channel.typing()
+        await message.channel.send(
+            f"{final_reply}"
+        )
+        await message.channel.send(file=file)
+    else:
+        await message.channel.typing()
+        await message.channel.send(final_reply, file=file)
 
 webserver.keep_alive()
 client.run(DISCORD_TOKEN, reconnect=True)
