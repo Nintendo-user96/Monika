@@ -95,7 +95,7 @@ def load_memory():
         memory = {}
     
 def get_context(user_id):
-    history = memory.get(str(user_id), [])
+    history = memory.get(str(username), [])
     return [system_prompt] + history[-100:]
     
 def save_memory(memory):
@@ -105,6 +105,8 @@ def save_memory(memory):
 @client.event
 async def on_ready():
     print(f"Just Monika")
+
+memory = load_memory()
 
 @client.event
 async def on_message(message):
@@ -141,8 +143,6 @@ async def on_message(message):
 
     user_id = str(message.author.id)
     user_input = message.content
-
-    channel = client.get_channel(any)
 
     messages = get_context(user_id)
     memory.append({
