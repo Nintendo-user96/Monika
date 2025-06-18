@@ -90,7 +90,7 @@ You speak casually, warmly, sweetly, cleverly, sometimes mysteriously, and somet
 }
 
 def get_context(user_id):
-    history = monika_memory.get(str(user_id), [])
+    history = monika_memory.get(str(username), [])
     return [system_prompt] + history[-100:]
 
 def load_memory():
