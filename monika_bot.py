@@ -87,16 +87,16 @@ You speak casually, warmly, sweetly, cleverly, sometimes mysteriously, and somet
 """
 }
 
-def get_context(user_id):
-    history = memory.get(str(user_id), [])
-    return [system_prompt] + history[-10:]
-
 def load_memory():
     if os.path.exists(MEMORY_FILE):
         with open(MEMORY_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     else:
         memory = {}
+    
+def get_context(user_id):
+    history = memory.get(str(user_id), [])
+    return [system_prompt] + history[-100:]
     
 def save_memory(memory):
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
