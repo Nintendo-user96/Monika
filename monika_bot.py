@@ -22,11 +22,6 @@ client = discord.Client(intents=intents)
 TARGET_BOT_NAME = "Monika"
 
 MEMORY_FILE = "monika_memory.json"
-if os.path.exists(MEMORY_FILE):
-    with open(MEMORY_FILE, "r") as f:
-        memory = json.load(f)
-else:
-    memory = {}
 
 monika_memory = {MEMORY_FILE}
 
