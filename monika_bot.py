@@ -23,8 +23,6 @@ TARGET_BOT_NAME = "Monika"
 
 MEMORY_FILE = "monika_memory.json"
 
-monika_memory = {MEMORY_FILE}
-
 school_sprite_expressions_file = {
     "happy": "Sprites/school uniform/monika_happy(smile).png",
     "happy speaking": "Sprites/school uniform/monika_happy(speak).png",
@@ -91,7 +89,7 @@ You speak casually, warmly, sweetly, cleverly, sometimes mysteriously, and somet
 
 def get_context(user_id):
     history = memory.get(str(user_id), [])
-    return [system_prompt] + history[-10:]
+    return [system_prompt] + history[-100:]
 
 def load_memory():
     if os.path.exists(MEMORY_FILE):
@@ -201,11 +199,9 @@ async def on_message(message):
     file = discord.File(sprite_path, filename=sprite_path)
 
     if client.user in message.mentions:
+        recent = memory[-5:]
         await message.channel.typing()
-        await message.channel.send(
-            f"{final_reply}"
-        )
-        await message.channel.send(file=file)
+        await message.channel.send(f"{final_reply}", file=file)
     else:
         await message.channel.typing()
         await message.channel.send(final_reply, file=file)
