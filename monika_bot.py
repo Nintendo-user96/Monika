@@ -15,8 +15,11 @@ DISCORD_TOKEN = "MTM3NTU2MjEzMTc4NDczMjgxMg.GVTeh9.GwTW7JxhqjWJeQWOtZ8AbY1Ku5fqm
 intents = discord.Intents.all()
 intents.messages = True
 intents.message_content = True
+intents.guilds = True
 intents.members = True
 client = discord.Client(intents=intents)
+
+TARGET_BOT_NAME = "Monika"
 
 MEMORY_FILE = "monika_memory.json"
 if os.path.exists(MEMORY_FILE):
@@ -33,6 +36,7 @@ school_sprite_expressions_file = {
     "side smile": "Sprites/school uniform/monika_happy(side-smile).png",
     "eyes close smile": "Sprites/school uniform/monika_happy(eyes-close).png",
     "pointing finger smile": "Sprites/school uniform/monika_happy(pointing-finger-smile).png",
+    "side wink point smile": "Sprites/school uniform/monika_happy(side-wink-pointing-finger).png",
     "sad" or "conerned": "Sprites/school uniform/monika_conerned.png",
     "sad smile": "Sprites/school uniform/monika_sad(smile).png",
     "neutral": "Sprites/school uniform/monika_neutral.png",
@@ -58,6 +62,7 @@ school_sprite_expressions_link = {
     "side smile": "https://media.discordapp.net/attachments/1378871543844704347/1384286194002559036/monika_happyside-smile.png?ex=6851e07b&is=68508efb&hm=c24a69274393864d549595584fc8e55718d7d532bbbcebd5b9be1e4917b08eae&=&format=webp&quality=lossless&width=659&height=659",
     "eyes close smile": "https://media.discordapp.net/attachments/1378871543844704347/1384285619659997337/monika_happyeyes-close.png?ex=6851dff2&is=68508e72&hm=5bee8e6b37b9ed502102d39a9876c5920fcac117861d49f94dd09550598137e3&=&format=webp&quality=lossless&width=659&height=659",
     "pointing finger smile": "https://media.discordapp.net/attachments/1378871543844704347/1384286193625333890/monika_happypointing-finger-smile.png?ex=6851e07b&is=68508efb&hm=bd55c2cc77109e473feec767d013c5dd9fdd0466368e0f8bd0f8918c1da18de6&=&format=webp&quality=lossless&width=659&height=659",
+    "side wink point smile": "https://media.discordapp.net/attachments/1378871543844704347/1384693784612311100/monika_happyside-wink-pointing-finger.png?ex=68535c14&is=68520a94&hm=ba22336a1dfc01075701a33864b22478787a27de85d5fa97be54d30b2773c097&=&format=webp&quality=lossless&width=704&height=704",
     "sad" or "conerned": "https://media.discordapp.net/attachments/1378871543844704347/1384285617512382674/monika_conerned.png?ex=6851dff1&is=68508e71&hm=f3d118f94b9c2e007ea9899c787e35ec152674692cbf49e006f6649734e5b17a&=&format=webp&quality=lossless&width=659&height=659",
     "sad smile": "https://media.discordapp.net/attachments/1378871543844704347/1384287038051844308/monika_sadsmile.png?ex=6851e144&is=68508fc4&hm=767cb09e87f7ac58d45ba49b6f80560b59ac7a2d9eccb72db28f53ee5ebe14e7&=&format=webp&quality=lossless&width=659&height=659",
     "neutral": "https://media.discordapp.net/attachments/1378871543844704347/1384287037644865628/monika_neutral.png?ex=6851e144&is=68508fc4&hm=50946375332c3a8b3a04f05bc3a444129604654e6fcf02f9c2ef14dda6267563&=&format=webp&quality=lossless&width=659&height=659",
@@ -93,9 +98,15 @@ def get_context(user_id):
     history = memory.get(str(user_id), [])
     return [system_prompt] + history[-10:]
 
-def save_memory():
-    with open(MEMORY_FILE, "w") as f:
-        json.dump(memory, f, indent=2)
+def load_memory():
+    if os.path.exists(MEMORY_FILE):
+        with open(MEMORY_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    return []
+
+def save_memory(memory):
+    with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+        json.dump(memory, f, indent=2, ensure_ascii=False)
 
 @client.event
 async def on_ready():
@@ -116,6 +127,13 @@ async def on_message(message):
 # MC#4555
 
     if message.author == client.user:
+        role = "monika"
+    else:
+        role = "user"
+    
+    if message.author.bot and TARGET_BOT_NAME.lower() in str(message.author.name).lower():
+        print(f"Learning: {message.content}")
+        memory.append(message.content)
         return
 
     last_speaker = client.user
@@ -134,7 +152,13 @@ async def on_message(message):
     channel = client.get_channel(any)
 
     messages = get_context(user_id)
-    messages.append({"role": "user", "content": user_input})
+    memory.append({
+        "server": str(message.guild.id),
+        "channel": str(message.channel.id),
+        "author": str(message.author),
+        "role": role,
+        "content": message.content
+    })
 
     try:
         monika_chat = openai.chat.completions.create(
@@ -176,7 +200,7 @@ async def on_message(message):
 
     memory.setdefault(user_id, []).append({"role": "user", "content": user_input})
     memory[user_id].append({"role": "Monika", "content": final_reply})
-    save_memory()
+    save_memory(memory)
 
     file = discord.File(sprite_path, filename=sprite_path)
 
