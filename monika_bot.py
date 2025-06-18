@@ -23,8 +23,6 @@ TARGET_BOT_NAME = "Monika"
 
 MEMORY_FILE = "monika_memory.json"
 
-monika_memory = MEMORY_FILE
-
 school_sprite_expressions_file = {
     "happy": "Sprites/school uniform/monika_happy(smile).png",
     "happy speaking": "Sprites/school uniform/monika_happy(speak).png",
@@ -90,7 +88,7 @@ You speak casually, warmly, sweetly, cleverly, sometimes mysteriously, and somet
 }
 
 def get_context(user_id):
-    history = monika_memory.get(str(username), [])
+    history = MEMORY_FILE.get(str(username), [])
     return [system_prompt] + history[-100:]
 
 def load_memory():
