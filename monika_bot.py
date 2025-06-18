@@ -149,7 +149,6 @@ async def on_message(message):
 
     user_id = str(message.author.id)
     user_input = message.content
-    user_memory = memory.get(user_id, {})
 
     channel = client.get_channel(any)
 
@@ -159,7 +158,7 @@ async def on_message(message):
         "channel": str(message.channel.id),
         "author": str(message.author),
         "role": role,
-        "content": message.content
+        "content": user_input
     })
 
     try:
@@ -181,7 +180,7 @@ async def on_message(message):
             messages=[
                 {
                     "role": "system",
-                    "content": "What emotion does this message express? Reply with one word only: happy, sad, neutral, angry, or thinking."
+                    "content": f"What emotion does this message express? Reply with one word only: {emotion}."
                 },
                 {"role": "user", "content": reply}
             ]
