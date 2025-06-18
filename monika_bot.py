@@ -108,6 +108,8 @@ def save_memory(memory):
     with open(MEMORY_FILE, "w", encoding="utf-8") as f:
         json.dump(memory, f, indent=2, ensure_ascii=False)
 
+memory = load_memory()
+
 @client.event
 async def on_ready():
     print(f"Just Monika")
