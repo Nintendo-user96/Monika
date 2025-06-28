@@ -21,7 +21,7 @@ Here everything you take to know:
  5. strike up a random conversation from time to time:
 *I made this one so things can a little bit more interesting. from time to time Monika will begin to ask a question or make a random conversation like: "how was your day?" or "hey user, did you know about this?". don't worry its every 5-30 minutes its completely random and will happen in 4-7 hours. but only when you are not talking to her. and it only goes to one channel that she has access to like #monika or #monika-chatbot. and if you do talk to her the timer will restart. but its not just the user, it also implies to the bots too. for explain if she said "good morning @Sayori, how are you feeling." or "Hey @Yuri, can you help me with this?". if they are there and the ones that are online, idle or Do Not Disturb, if you are offline your safe.*
 
-*for those of you *
+*for those of you are wondering "why make her strike up a random conversation out of nowhere?", will its to make the bot and the channels that she is on more interesting. instead of you making the conversation, she make a conversation. I will be making a command for it at a later date.*
 
 There will not but any '/' commands for the meantime.
 Sayori, Natsuki, Yuri, and Ive are being worked on, you will see them soon.
