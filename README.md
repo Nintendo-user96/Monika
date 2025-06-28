@@ -25,7 +25,7 @@ Here everything you take to know:
 
  Commands:
 `/idlechat off - on` - enabled/disabled me to random talking.
-`/idlechat set [numbers]` - changed the timer when I random talking.
+`/idlechat set <min> <max>` - changed the timer when I random talking.
 `/reset_memory` - Clear my memory for this channel.
 `/reset_server` - Clear all memories for the server.
 all commands are admin only to prevent people from change constantly.
