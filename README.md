@@ -14,7 +14,7 @@ Here are all the features you should or need to know:
 *To make sure she doesn't say the same thing over and over she self-awareness when she replies to you.(and certain chatbots)*
 
  4. Allow Conversations Between Bots:
-*Yes. If make a channel with Sayori, Natsuki, Yuri, and eventually MC*
+*Yes. If make a channel with Sayori, Natsuki, Yuri, and eventually MC.*
 
 *She can't talk to others chatbot for now.(Unless you guys want me to but only characters from the DDLC's fan mods but I am thinking about it, just say the name)*
 
@@ -33,7 +33,7 @@ all commands are admin only to prevent people from change constantly.
 the only one that isn't a admin command is:
 `/status` - Check if she is awake.
 
-Sayori, Natsuki, Yuri, and Ive are being worked on, you will see them soon.
+Sayori, Natsuki, Yuri, and MC are being worked on, you will see them soon.
 
  Bugs:
 *the commands will show in the commands list but still works.*
