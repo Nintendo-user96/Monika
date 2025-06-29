@@ -14,7 +14,7 @@ Here are all the features you should or need to know:
 *To make sure she doesn't say the same thing over and over she self-awareness when she replies to you.(and certain chatbots)*
 
  4. Allow Conversations Between Bots:
-*Yes. If make a channel with Sayori, Natsuki, Yuri, and eventually Ive(Cannon name base of my researched). for those of you think that Meiji is it real Cannon name. I don't blame you, I thought that was his Cannon name too, until I looked it up.*
+*Yes. If make a channel with Sayori, Natsuki, Yuri, and eventually MC*
 
 *She can't talk to others chatbot for now.(Unless you guys want me to but only characters from the DDLC's fan mods but I am thinking about it, just say the name)*
 
