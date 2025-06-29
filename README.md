@@ -24,18 +24,21 @@ Here everything you take to know:
 *for those of you are wondering "why make her strike up a random conversation out of nowhere?", will its to make the bot and the channels that she is on more interesting. instead of you making the conversation, she make a conversation. and yes there is a command for it.*
 
  Commands:
-`/idlechat off - on` - enabled/disabled me to random talking.
+`/idlechat off - on` - enabled/disabled me to random talking. (side note: you have to wait 10 minutes to used this command again)
 `/idlechat set <min> <max>` - changed the timer when I random talking.
-`/reset_memory` - Clear my memory for this channel.
+`/reset_memory` - Clear her memory for this channel.
 `/reset_server` - Clear all memories for the server.
 all commands are admin only to prevent people from change constantly.
 
+the only one that isn't a admin command is:
+`/status` - Check if she is awake.
+
 Sayori, Natsuki, Yuri, and Ive are being worked on, you will see them soon.
 
- bugs:
-*No bugs take the moment.*
+ Bugs:
+*the commands will show in the commands list but still works.*
 
-If there any bugs, error's, or ideas you guys have you can DM me or just say it so we all know.
+If there any bugs, error's, or ideas you guys want me to add. you can DM me or just say it on the server so we all know.
 @Nintendo_user96
 
 updates will be coming out soon.
