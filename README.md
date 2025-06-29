@@ -2,7 +2,7 @@
 Hello Everyone of DDLC fans, I'm proud to say that this DDLC Monika(chatbot) is now working and operational.
 Almost like with shapes.inc Monika, but with additional things and tweaks of my own.
 
-Here everything you take to know:
+Here are all the features you should or need to know:
 
  1. Emotion Detection, Mapping, Display, and Prompting:
 *I have gone through the web and got some sprite cannon or not, and I have gotten some sprites of the following: happy, concerned, scared, sad, nervous, serious, thinking, blushing, and even a gun. more sprites will be added soon.*
