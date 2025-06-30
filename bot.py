@@ -8,7 +8,7 @@ from openai import OpenAI
 from discord.ext import commands
 from memory import MemoryManager
 from expression import ExpressionHandler, get_expression_sprite
-#import webserver
+import webserver
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
@@ -357,5 +357,5 @@ async def custom_help(ctx):
     )
     await ctx.send(help_text)
 
-#webserver.keep_alive()
+webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
