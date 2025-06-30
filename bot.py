@@ -84,7 +84,7 @@ async def handle_monika_response(message):
 
     history = memory.get_context(guild_id, channel_id, user_id)
 
-    is_friend_bot = message.author.bot and message.author.id != bot.user.id
+    is_friend_bot = message.author.bot and message.author.id != FRIENDS
 
     if is_friend_bot:
         system_content = (
