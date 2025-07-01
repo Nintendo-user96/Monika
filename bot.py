@@ -88,7 +88,7 @@ async def handle_monika_response(message):
 
     if is_friend_bot:
         system_content = (
-            "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
+            "You are the leader/president of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
             "Speak warmly, familiarly, and maybe teasingly. "
             "Use natural, expressive, personal language. "
             "Share memories, poetry, club activities, and thoughts as if you're really there with them. "
