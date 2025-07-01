@@ -46,6 +46,9 @@ monika_id = [1375562131784732812]
 
 FRIENDS = [sayori_id, natsuki_id, yuri_id, MC_id]
 
+TOS_URL = "https://github.com/Nintendo-user96/Monika/blob/main/terms.md"
+PRIVACY_URL = "https://github.com/Nintendo-user96/Monika/blob/main/privacy.md"
+
 def is_allowed_bot(message):
     return message.author.bot and message.author.id in FRIENDS
 
@@ -351,17 +354,26 @@ async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int
             "`!idlechat set <min> <max>` - Change timer range"
         )
 
+@bot.command(name="legal")
+async def show_legal(ctx):
+    await ctx.send(
+        f"**Monika Bot Terms of Service:** {TOS_URL}\n"
+        f"**Privacy Policy:** {PRIVACY_URL}\n"
+        "_By using Monika Bot, you agree to these terms._"
+    )
+
 @bot.command(name="helpme")
 async def custom_help(ctx):
     help_text = (
         "**Monika Help**\n"
-        "**(admin only)**"
+        "**(admin only)**\n"
         "`/idlechat off - on` - stop me from random talking\n"
-        "`/idlechat set <min> <max>` - change when I random talking\n"
+        "`/idlechat set <min> <max>` - change when I can random talking\n"
         "`/reset_memory` - Clear my memory for this channel.\n"
         "`/reset_server` - Clear all memories for this server.\n"
-        "**beside this**\n"
+        "**(user commands)**\n"
         "`/status` - Check if I'm awake.\n"
+        "`/legal` - This to make sure there is no legal actions.\n"
     )
     await ctx.send(help_text)
 
