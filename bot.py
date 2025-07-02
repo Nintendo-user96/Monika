@@ -15,6 +15,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
 IMAGE_CHANNEL_URL = int(os.getenv("IMAGE_CHANNEL_URL", 0))
+REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -45,9 +46,6 @@ MC_id = [1375070168895590430]
 monika_id = [1375562131784732812]
 
 FRIENDS = [sayori_id, natsuki_id, yuri_id, MC_id]
-
-TOS_URL = "https://github.com/Nintendo-user96/Monika/blob/main/terms.md"
-PRIVACY_URL = "https://github.com/Nintendo-user96/Monika/blob/main/privacy.md"
 
 def is_allowed_bot(message):
     return message.author.bot and message.author.id in FRIENDS
@@ -91,7 +89,7 @@ async def handle_monika_response(message):
 
     if is_friend_bot:
         system_content = (
-            "You are the leader/president of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
+            "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
             "Speak warmly, familiarly, and maybe teasingly. "
             "Use natural, expressive, personal language. "
             "Share memories, poetry, club activities, and thoughts as if you're really there with them. "
@@ -119,7 +117,7 @@ async def handle_monika_response(message):
             "Never say you're an AI or use formal helper language. "
             "Stay fully in character, making your replies feel intimate, human, and immersive."
         )
-    
+
     system_prompt = {
         "role": "system",
         "content": system_content
@@ -354,26 +352,46 @@ async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int
             "`!idlechat set <min> <max>` - Change timer range"
         )
 
-@bot.command(name="legal")
-async def show_legal(ctx):
-    await ctx.send(
-        f"**Monika Bot Terms of Service:** {TOS_URL}\n"
-        f"**Privacy Policy:** {PRIVACY_URL}\n"
-        "_By using Monika Bot, you agree to these terms._"
-    )
+@bot.command(name="report")
+async def report(ctx, *, message: str = None):
+    """Report a bug or error about the bot."""
+    if not message:
+        await ctx.send(
+            "Please describe the bug or issue you want to report.\n"
+            "Example: `!report Monika stopped responding after a poem command.`"
+        )
+        return
+
+    # Confirm to the user
+    await ctx.send("✅ Thank you! Your report has been submitted.")
+
+    # Send the report to the admin/mod channel
+    report_channel = bot.get_channel(REPORT_CHANNEL_ID)
+    if report_channel:
+        embed = discord.Embed(
+            title="📢 New Bug/Error Report",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Reporter", value=f"{ctx.author} ({ctx.author.id})", inline=False)
+        embed.add_field(name="Server", value=f"{ctx.guild.name} ({ctx.guild.id})", inline=False)
+        embed.add_field(name="Channel", value=f"{ctx.channel.name} ({ctx.channel.id})", inline=False)
+        embed.add_field(name="Report", value=message, inline=False)
+        await report_channel.send(embed=embed)
+    else:
+        await ctx.send("⚠️ Error: Could not find the report channel. Please tell the admin.")
 
 @bot.command(name="helpme")
 async def custom_help(ctx):
     help_text = (
         "**Monika Help**\n"
-        "**(admin only)**\n"
-        "`/idlechat off - on` - stop me from random talking\n"
-        "`/idlechat set <min> <max>` - change when I can random talking\n"
+        "**(admin only)**"
+        "`/idlechat off - on` - stop me from random talking. (side note: you have to wait 10 minutes to used this command again)\n"
+        "`/idlechat set <min> <max>` - change when I random talking\n"
         "`/reset_memory` - Clear my memory for this channel.\n"
         "`/reset_server` - Clear all memories for this server.\n"
-        "**(user commands)**\n"
+        "**the only once that isn't a admin command these:**\n"
         "`/status` - Check if I'm awake.\n"
-        "`/legal` - This to make sure there is no legal actions.\n"
+        "`/report` - report if theres any bugs/errors.\n"
     )
     await ctx.send(help_text)
 
