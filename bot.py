@@ -35,6 +35,8 @@ idle_min_hours = 4
 idle_max_hours = 7
 last_user_interaction = datetime.datetime.utcnow()
 last_reply_times = {}
+idle_settings = {}
+user_memory = {}
 
 sayori_id = [1375064525396775004]
 
@@ -54,9 +56,15 @@ def is_allowed_bot(message):
 @bot.event
 async def on_ready():
     print(f"just {bot.user}")
+    await bot.tree.sync()
     if MEMORY_LOG_CHANNEL_ID:
         await memory.load_history(bot, MEMORY_LOG_CHANNEL_ID)
     bot.loop.create_task(monika_idle_conversation_task())
+    try:
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash commands.")
+    except Exception as e:
+        print(e)
 
 @bot.event
 async def on_message(message):
@@ -300,93 +308,66 @@ async def monika_idle_conversation_task():
             last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
 
 # Idle chat command
-@bot.tree.command(name="reset_memory", description="Clear my memory for this channel")
-@app_commands.describe(message="Clear all of her memory of this channel she is in.")
-@commands.has_permissions(administrator=True)
-async def reset_memory(ctx):
-    guild_id = str(ctx.guild.id)
-    channel_id = str(ctx.channel.id)
-    memory.reset_context(guild_id, channel_id)
-    await ctx.send("I... I cleared our memories here. It's like starting over... *nervous laugh*")
+@bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
+@app_commands.describe(state="Set to true or false")
+async def idlechat(interaction: discord.Interaction, state: bool):
+    idle_settings[interaction.guild_id] = state
+    await interaction.response.send_message(
+        f"✅ Idle chat mode set to **{state}** for this server.",
+        ephemeral=True
+    )
 
-@bot.tree.command(name="reset_server", description="Clear my memory of the server")
-@app_commands.describe(message="Clear all of her memory of the server.")
-@commands.has_permissions(administrator=True)
-async def reset_server_memory(ctx):
-    guild_id = str(ctx.guild.id)
-    memory.reset_server(guild_id)
-    await ctx.send("I cleared *everything* for this server. I hope you know what you're doing...")
+#
+# STATUS COMMAND
+#
+@bot.tree.command(name="status", description="Get the current idle/chat status for this server.")
+async def status(interaction: discord.Interaction):
+    state = idle_settings.get(interaction.guild_id, False)
+    await interaction.response.send_message(
+        f"📌 Current idle chat mode is **{state}**.",
+        ephemeral=True
+    )
 
-@bot.tree.command(name="status", description="Check if she is awake")
-@app_commands.describe(message="Check if I'm awake.")
-async def monika_status(ctx):
-    await ctx.send("I'm here! Thinking... waiting... always paying attention to you ❤️")
+#
+# RESET_SERVER COMMAND
+#
+@bot.tree.command(name="reset_server", description="Reset all memory for this server.")
+async def reset_server(interaction: discord.Interaction):
+    if interaction.guild_id in idle_settings:
+        del idle_settings[interaction.guild_id]
+    await interaction.response.send_message(
+        "♻️ Memory for this server has been reset.",
+        ephemeral=True
+    )
 
-@bot.tree.command(name="idlechat", description=".set the <min> - <max> hours or on/off")
-@app_commands.describe(message="stop me from random talking or change when I random talking.")
-@commands.has_permissions(administrator=True)
-async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int = None):
-    global idle_chat_enabled, idle_min_hours, idle_max_hours
-
-    if mode is None:
-        status = "enabled" if idle_chat_enabled else "disabled"
-        await ctx.send(
-            f"Idle chat is currently **{status}**. Timer range: {idle_min_hours}-{idle_max_hours} hours."
-        )
-        return
-
-    mode = mode.lower()
-
-    if mode == "off":
-        idle_chat_enabled = False
-        await ctx.send("Idle chat has been **disabled**. Monika will stay quiet unless spoken to.")
-    elif mode == "on":
-        idle_chat_enabled = True
-        await ctx.send(f"Idle chat has been **enabled**. Timer range: {idle_min_hours}-{idle_max_hours} hours.")
-    elif mode == "set" and min_hours and max_hours:
-        if min_hours >= max_hours or min_hours < 1:
-            await ctx.send("Invalid range. Example: `!idlechat set 4 7`")
-            return
-        idle_min_hours = min_hours
-        idle_max_hours = max_hours
-        await ctx.send(f"Idle chat timer updated to **{idle_min_hours}-{idle_max_hours} hours**.")
-    else:
-        await ctx.send(
-            "Usage:\n"
-            "`/idlechat` - Show current settings\n"
-            "`/idlechat on` - Enable idle chat\n"
-            "`/idlechat off` - Disable idle chat\n"
-            "`/idlechat set <min> <max>` - Change timer range"
-        )
+#
+# RESET_MEMORY COMMAND
+#
+@bot.tree.command(name="reset_memory", description="Reset all memory for yourself.")
+async def reset_memory(interaction: discord.Interaction):
+    if interaction.user.id in user_memory:
+        del user_memory[interaction.user.id]
+    await interaction.response.send_message(
+        "🗑️ Your personal memory has been cleared.",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="report", description="Report a bug or error about the bot.")
 @app_commands.describe(message="Describe the bug or issue you want to report.")
-async def report(ctx, *, message: str = None):
-    """Report a bug or error about the bot."""
-    if not message:
-        await ctx.send(
-            "Please describe the bug or issue you want to report.\n"
-            "Example: `/report Monika stopped responding after a poem command.`"
-        )
-        return
+async def report(interaction: discord.Interaction, message: str):
+    await interaction.response.send_message("✅ Thank you! Your report has been submitted.", ephemeral=True)
 
-    # Confirm to the user
-    await ctx.send("✅ Thank you! Your report has been submitted.")
-
-    # Send the report to the admin/mod channel
     report_channel = bot.get_channel(REPORT_CHANNEL_ID)
     if report_channel:
         embed = discord.Embed(
             title="📢 New Bug/Error Report",
             color=discord.Color.orange()
         )
-        embed.add_field(name="Reporter", value=f"{ctx.author} ({ctx.author.id})", inline=False)
-        embed.add_field(name="Server", value=f"{ctx.guild.name} ({ctx.guild.id})", inline=False)
-        embed.add_field(name="Channel", value=f"{ctx.channel.name} ({ctx.channel.id})", inline=False)
+        embed.add_field(name="Reporter", value=f"{interaction.user} ({interaction.user.id})", inline=False)
+        embed.add_field(name="Server", value=f"{interaction.guild.name} ({interaction.guild.id})", inline=False)
+        embed.add_field(name="Channel", value=f"{interaction.channel.name} ({interaction.channel.id})", inline=False)
         embed.add_field(name="Report", value=message, inline=False)
         await report_channel.send(embed=embed)
-    else:
-        await ctx.send("⚠️ Error: Could not find the report channel. Please tell the admin.")
 
 @bot.tree.command(name="helpme", description="help with monika commands.")
 @bot.command(name="helpme")
