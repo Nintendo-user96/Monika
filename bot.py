@@ -386,14 +386,14 @@ async def report(ctx, *, message: str = None):
 async def custom_help(ctx):
     help_text = (
         "**Monika Help**\n"
-        "**(admin only)**"
+        "**(admin only)**\n"
         "`/idlechat off - on` - stop me from random talking. (side note: you have to wait 10 minutes to used this command again)\n"
         "`/idlechat set <min> <max>` - change when I random talking\n"
         "`/reset_memory` - Clear my memory for this channel.\n"
         "`/reset_server` - Clear all memories for this server.\n"
         "**the only once that isn't a admin command these:**\n"
         "`/status` - Check if I'm awake.\n"
-        "`/report` - report if theres any bugs/errors.\n"
+        "`/report <description>` - report if theres any bugs/errors.\n"
     )
     await ctx.send(help_text)
 
