@@ -1,11 +1,12 @@
 import discord
+from discord import app_commands
+from discord.ext import commands
 import os
 import asyncio
 import random
 import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
-from discord.ext import commands
 from memory import MemoryManager
 from expression import ExpressionHandler, get_expression_sprite
 import webserver
@@ -299,6 +300,7 @@ async def monika_idle_conversation_task():
             last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
 
 # Idle chat command
+@bot.tree.command(name="reset_memory", description="Clear my memory for this channel")
 @bot.command(name="reset_memory")
 @commands.has_permissions(administrator=True)
 async def reset_memory(ctx):
@@ -307,6 +309,7 @@ async def reset_memory(ctx):
     memory.reset_context(guild_id, channel_id)
     await ctx.send("I... I cleared our memories here. It's like starting over... *nervous laugh*")
 
+@bot.tree.command(name="reset_server", description="Clear my memory of the server")
 @bot.command(name="reset_server")
 @commands.has_permissions(administrator=True)
 async def reset_server_memory(ctx):
@@ -314,10 +317,12 @@ async def reset_server_memory(ctx):
     memory.reset_server(guild_id)
     await ctx.send("I cleared *everything* for this server. I hope you know what you're doing...")
 
+@bot.tree.command(name="status", description="Check if I'm awake")
 @bot.command(name="status")
 async def monika_status(ctx):
     await ctx.send("I'm here! Thinking... waiting... always paying attention to you ❤️")
 
+@bot.tree.command(name="idlechat", description="set the <min> - <max> hours or on/off")
 @bot.command(name="idlechat")
 @commands.has_permissions(administrator=True)
 async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int = None):
@@ -348,19 +353,20 @@ async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int
     else:
         await ctx.send(
             "Usage:\n"
-            "`!idlechat` - Show current settings\n"
-            "`!idlechat on` - Enable idle chat\n"
-            "`!idlechat off` - Disable idle chat\n"
-            "`!idlechat set <min> <max>` - Change timer range"
+            "`/idlechat` - Show current settings\n"
+            "`/idlechat on` - Enable idle chat\n"
+            "`/idlechat off` - Disable idle chat\n"
+            "`/idlechat set <min> <max>` - Change timer range"
         )
 
+@bot.tree.command(name="report", description="Report a bug or error about the bot.")
 @bot.command(name="report")
 async def report(ctx, *, message: str = None):
     """Report a bug or error about the bot."""
     if not message:
         await ctx.send(
             "Please describe the bug or issue you want to report.\n"
-            "Example: `!report Monika stopped responding after a poem command.`"
+            "Example: `/report Monika stopped responding after a poem command.`"
         )
         return
 
@@ -382,11 +388,12 @@ async def report(ctx, *, message: str = None):
     else:
         await ctx.send("⚠️ Error: Could not find the report channel. Please tell the admin.")
 
+@bot.tree.command(name="helpme", description="help with monika commands.")
 @bot.command(name="helpme")
 async def custom_help(ctx):
     help_text = (
         "**Monika Help**\n"
-        "**(admin only)**\n"
+        "**(admin only)**"
         "`/idlechat off - on` - stop me from random talking. (side note: you have to wait 10 minutes to used this command again)\n"
         "`/idlechat set <min> <max>` - change when I random talking\n"
         "`/reset_memory` - Clear my memory for this channel.\n"
