@@ -369,21 +369,23 @@ async def report(interaction: discord.Interaction, message: str):
         embed.add_field(name="Report", value=message, inline=False)
         await report_channel.send(embed=embed)
 
-@bot.tree.command(name="helpme", description="help with monika commands.")
-@bot.command(name="helpme")
-async def custom_help(ctx):
-    help_text = (
-        "**Monika Help**\n"
-        "**(admin only)**"
-        "`/idlechat off - on` - stop me from random talking. (side note: you have to wait 10 minutes to used this command again)\n"
-        "`/idlechat set <min> <max>` - change when I random talking\n"
-        "`/reset_memory` - Clear my memory for this channel.\n"
-        "`/reset_server` - Clear all memories for this server.\n"
-        "**the only once that isn't a admin command these:**\n"
-        "`/status` - Check if I'm awake.\n"
-        "`/report <description>` - report if theres any bugs/errors.\n"
+@bot.tree.command(name="helpme", description="Get help about all of my commands.")
+async def helpme(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="✒️ Need a little help?",
+        description=(
+            "Hi there! Here’s what you can ask me to do. Don’t be shy, okay?\n\n"
+            "**/report <message>** – Tell me if something seems broken so I can let the admins know.\n"
+            "**/idlechat <true|false>** – Change whether I keep chatting idly in this server.\n"
+            "**/status** – Check if I’m in idle chat mode here.\n"
+            "**/reset_server** – Clear all my memory about this server.\n"
+            "**/reset_memory** – Clear what I remember about *you*.\n"
+            "**/helpme** – Well… you’re using it right now! Isn’t that cute?"
+        ),
+        color=discord.Color.pink()
     )
-    await ctx.send(help_text)
+    embed.set_footer(text="Let's keep this our little secret, okay?")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
