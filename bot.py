@@ -301,7 +301,7 @@ async def monika_idle_conversation_task():
 
 # Idle chat command
 @bot.tree.command(name="reset_memory", description="Clear my memory for this channel")
-@bot.command(name="reset_memory")
+@app_commands.describe(message="Clear all of her memory of this channel she is in.")
 @commands.has_permissions(administrator=True)
 async def reset_memory(ctx):
     guild_id = str(ctx.guild.id)
@@ -310,20 +310,20 @@ async def reset_memory(ctx):
     await ctx.send("I... I cleared our memories here. It's like starting over... *nervous laugh*")
 
 @bot.tree.command(name="reset_server", description="Clear my memory of the server")
-@bot.command(name="reset_server")
+@app_commands.describe(message="Clear all of her memory of the server.")
 @commands.has_permissions(administrator=True)
 async def reset_server_memory(ctx):
     guild_id = str(ctx.guild.id)
     memory.reset_server(guild_id)
     await ctx.send("I cleared *everything* for this server. I hope you know what you're doing...")
 
-@bot.tree.command(name="status", description="Check if I'm awake")
-@bot.command(name="status")
+@bot.tree.command(name="status", description="Check if she is awake")
+@app_commands.describe(message="Check if I'm awake.")
 async def monika_status(ctx):
     await ctx.send("I'm here! Thinking... waiting... always paying attention to you ❤️")
 
-@bot.tree.command(name="idlechat", description="set the <min> - <max> hours or on/off")
-@bot.command(name="idlechat")
+@bot.tree.command(name="idlechat", description=".set the <min> - <max> hours or on/off")
+@app_commands.describe(message="stop me from random talking or change when I random talking.")
 @commands.has_permissions(administrator=True)
 async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int = None):
     global idle_chat_enabled, idle_min_hours, idle_max_hours
@@ -360,7 +360,7 @@ async def idlechat_control(ctx, mode=None, min_hours: int = None, max_hours: int
         )
 
 @bot.tree.command(name="report", description="Report a bug or error about the bot.")
-@bot.command(name="report")
+@app_commands.describe(message="Describe the bug or issue you want to report.")
 async def report(ctx, *, message: str = None):
     """Report a bug or error about the bot."""
     if not message:
