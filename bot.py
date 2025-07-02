@@ -240,6 +240,8 @@ async def monika_idle_conversation_task():
                     continue
                 if channel.id == IMAGE_CHANNEL_URL:
                     continue
+                if channel.id == REPORT_CHANNEL_ID:
+                    continue
                 last_replied = last_reply_times.get(str(guild.id), {}).get(str(channel.id))
                 if last_replied and (now - last_replied).total_seconds() < 4 * 3600:
                     continue
