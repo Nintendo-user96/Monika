@@ -418,7 +418,7 @@ async def broadcast(
     message: str,
     color_hex: str = "FF66CC"
 ):
-    OWNER_ID = 123456789012345678  # Replace with your own Discord ID!
+    OWNER_ID = 709957376337248367  # Replace with your own Discord ID!
 
     # Only let OWNER run it
     if interaction.user.id != OWNER_ID:
