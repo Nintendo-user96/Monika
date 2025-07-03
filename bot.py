@@ -19,11 +19,12 @@ MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
 IMAGE_CHANNEL_URL = int(os.getenv("IMAGE_CHANNEL_URL", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
 
-intents = discord.Intents.default()
-intents.message_content = True
-intents.guilds = True
-intents.messages = True
-intents.members = True
+NO_CHAT_CHANNELS = [
+    int(cid) for cid in [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
+    if cid and cid.isdigit()
+]
+
+intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
 openai_client = OpenAI(api_key=OPENAI_API_KEY)
@@ -50,8 +51,6 @@ MC_id = [1375070168895590430]
 monika_id = [1375562131784732812]
 
 FRIENDS = sayori_id + natsuki_id + yuri_id + MC_id
-
-NO_CHAT_CHANNELS = [cid for cid in [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID] if cid]
 
 FRIEND_SYSTEM_PROMPT = (
     "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
@@ -96,43 +95,35 @@ DM_SYSTEM_PROMPT = (
     "Stay fully in character, making your replies feel intimate, human, and immersive."
 )
 
-def is_allowed_bot(message):
-    return message.author.bot and message.author.id in FRIENDS
-
 def clean_monika_reply(text, bot_username, user_name=None):
-    # Remove any mention of "Monika" in any casing
     text = re.sub(r"(?i)\bmonika\b", "", text)
-    # Remove bot's own username if different
     if bot_username and bot_username.lower() != "monika":
         text = re.sub(re.escape(bot_username), "", text, flags=re.IGNORECASE)
-    # Optionally ensure user_name is *not* removed
-    if user_name:
-        user_name = user_name.strip()
-        # Avoid accidental deletion of user name
-        pass  # We do nothing; leave user's name untouched
     return text.strip()
+
+def is_allowed_bot(message):
+    return message.author.bot and message.author.id in FRIENDS
 
 @bot.event
 async def on_ready():
     print(f"just {bot.user}")
-    await bot.tree.sync()
-    if MEMORY_LOG_CHANNEL_ID:
-        await memory.load_history(bot, MEMORY_LOG_CHANNEL_ID)
-    bot.loop.create_task(monika_idle_conversation_task())
     try:
         synced = await bot.tree.sync()
         print(f"Synced {len(synced)} slash commands.")
     except Exception as e:
         print(e)
+    if MEMORY_LOG_CHANNEL_ID:
+        try:
+            await memory.load_history(bot, int(MEMORY_LOG_CHANNEL_ID))
+        except Exception as e:
+            print(f"[Memory Load Error] {e}")
+    bot.loop.create_task(monika_idle_conversation_task())
 
 @bot.event
 async def on_message(message):
     global last_user_interaction
 
     if message.author.bot and message.author.id == bot.user.id:
-        return
-
-    if message.author == bot.user:
         return
     
     await bot.process_commands(message)
@@ -153,21 +144,12 @@ async def handle_dm_message(message):
     user_id = str(message.author.id)
     username = message.author.display_name
 
-    # Save user's DM message
-    memory.save(
-        guild_id="DM",
-        channel_id="DM",
-        user_id=user_id,
-        content=message.content,
-        emotion="neutral"
-    )
+    memory.save("DM", "DM", user_id, message.content, "neutral")
 
-    # Build conversation
     conversation = memory.get_context("DM", "DM", user_id)
     conversation.insert(0, {"role": "system", "content": DM_SYSTEM_PROMPT})
     conversation.append({"role": "user", "content": message.content})
 
-    # Call OpenAI
     try:
         response = await openai_client.chat.completions.acreate(
             model="gpt-3.5-turbo",
@@ -175,7 +157,8 @@ async def handle_dm_message(message):
         )
         monika_DMS = response.choices[0].message.content.strip()
         if "monika" in monika_DMS.lower():
-            monika_DMS = monika_DMS.replace("Monika", username).replace("monika", username).replace(monika_id, username)
+            monika_DMS = monika_DMS.replace("Monika", username).replace("monika", username)
+            emotion = "neutral"
         else:
             emotion = await expression_handler.classify(monika_DMS, openai_client)
     except Exception as e:
@@ -183,89 +166,59 @@ async def handle_dm_message(message):
         monika_DMS = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
         emotion = "error"
 
-    # Remove "Monika" or bot username from reply
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
-
     sprite_path = get_expression_sprite(emotion)
     if not sprite_path:
         emotion = "neutral"
         sprite_path = get_expression_sprite(emotion)
 
+    # Sprite upload
     sprite_link = sprite_url_cache.get(emotion)
-    if not sprite_link:
-        try:    
-            upload_channel = bot.get_channel(IMAGE_CHANNEL_URL)
+    if not sprite_link and IMAGE_CHANNEL_URL:
+        try:
+            upload_channel = bot.get_channel(int(IMAGE_CHANNEL_URL))
             if upload_channel:
                 sprite_file = discord.File(sprite_path)
                 uploaded_msg = await upload_channel.send(file=sprite_file)
                 sprite_link = uploaded_msg.attachments[0].url
                 sprite_url_cache[emotion] = sprite_link
-                print(f"[Sprite Upload] Uploaded {emotion} to sprite channel.")
             else:
-                print("[Error] Sprite upload channel not found.")
                 sprite_link = "https://example.com/error.png"
-
         except Exception as e:
             print(f"[Sprite Upload Error] {e}")
             sprite_link = "https://example.com/error.png"
 
-    reply_text = f"{monika_DMS} \n [{emotion}]({sprite_link})"
+    reply_text = f"{monika_DMS}\n[{emotion}]({sprite_link})"
 
-    # Save Monika's DM reply
-    memory.save(
-        guild_id="DM",
-        channel_id="DM",
-        user_id="bot",
-        content=monika_DMS,
-        emotion="neutral"
-    )
-
-    # Send
+    memory.save("DM", "DM", "bot", monika_DMS, emotion)
     await message.channel.send(reply_text)
 
 async def handle_guild_message(message):
     global last_reply_times
 
     is_friend_bot = message.author.bot and message.author.id in FRIENDS
-
     user_id = str(message.author.id)
     guild_id = str(message.guild.id)
     channel_id = str(message.channel.id)
-    server_name = message.guild.name
-    channel_name = message.channel.name
-
     username = message.author.display_name
-    mention_username = message.author.mention
 
-    memory.save(
-        guild_id=guild_id,
-        channel_id=channel_id,
-        user_id=user_id,
-        content=message.content,
-        emotion="neutral"
-    )
+    memory.save(guild_id, channel_id, user_id, message.content, "neutral")
 
     system_content = FRIEND_SYSTEM_PROMPT if is_friend_bot else USER_SYSTEM_PROMPT
-
-    system_prompt = {
-        "role": "system",
-        "content": system_content
-    }
-
     conversation = memory.get_context(guild_id, channel_id, user_id)
     conversation.insert(0, {"role": "system", "content": system_content})
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        reply_response = openai_client.chat.completions.create(
+        reply_response = await openai_client.chat.completions.acreate(
             model="gpt-3.5-turbo",
             messages=conversation,
             max_tokens=1024
         )
         monika_reply = reply_response.choices[0].message.content.strip()
-        print(monika_reply)
         if "monika" in monika_reply.lower():
-            monika_reply = monika_reply.replace("Monika", username).replace("monika", username).replace(monika_id, username)
+            monika_reply = monika_reply.replace("Monika", username).replace("monika", username)
+            emotion = "neutral"
         else:
             emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
@@ -274,63 +227,41 @@ async def handle_guild_message(message):
         emotion = "error"
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
-
     sprite_path = get_expression_sprite(emotion)
     if not sprite_path:
         emotion = "neutral"
         sprite_path = get_expression_sprite(emotion)
 
     sprite_link = sprite_url_cache.get(emotion)
-    if not sprite_link:
-        try:    
-            upload_channel = bot.get_channel(IMAGE_CHANNEL_URL)
+    if not sprite_link and IMAGE_CHANNEL_URL:
+        try:
+            upload_channel = bot.get_channel(int(IMAGE_CHANNEL_URL))
             if upload_channel:
                 sprite_file = discord.File(sprite_path)
                 uploaded_msg = await upload_channel.send(file=sprite_file)
                 sprite_link = uploaded_msg.attachments[0].url
                 sprite_url_cache[emotion] = sprite_link
-                print(f"[Sprite Upload] Uploaded {emotion} to sprite channel.")
             else:
-                print("[Error] Sprite upload channel not found.")
                 sprite_link = "https://example.com/error.png"
-
         except Exception as e:
             print(f"[Sprite Upload Error] {e}")
             sprite_link = "https://example.com/error.png"
 
-    memory.save(
-        guild_id=guild_id,
-        channel_id=channel_id,
-        user_id="bot",
-        content=monika_reply,
-        emotion="neutral"
-    )
-    
+    memory.save(guild_id, channel_id, "bot", monika_reply, emotion)
+
     if not monika_reply.strip():
         monika_reply = "...I'm not sure what to say."
 
-    reply_text = f"{monika_reply} \n [{emotion}]({sprite_link})"
+    reply_text = f"{monika_reply}\n[{emotion}]({sprite_link})"
 
-    reply_channel = message.channel
-
-    if reply_channel and getattr(reply_channel, 'guild', None):
-        bot_member = reply_channel.guild.me
-        if bot_member and reply_channel.permissions_for(bot_member).send_messages:
-            print("Reply...")
-            async with message.channel.typing():
-                await asyncio.sleep(1.5)
-                await message.channel.send(reply_text)
-        else:
-            print(f"[Error] No permission to send in #{reply_channel.name}")
+    if message.channel.permissions_for(message.guild.me).send_messages:
+        async with message.channel.typing():
+            await asyncio.sleep(1.5)
+            await message.channel.send(reply_text)
     else:
-        print("[Error] Invalid or non-guild channel")
+        print(f"[Error] No permission to send in #{message.channel.name}")
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
-
-    memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
-    if memory_channel:
-        await memory.save_to_memory_channel(message.content, "user", user_id, memory_channel)
-        await memory.save_to_memory_channel(monika_reply, emotion, str(bot.user.id), memory_channel)
 
 async def monika_idle_conversation_task():
     await bot.wait_until_ready()
