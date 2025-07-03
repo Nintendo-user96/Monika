@@ -172,13 +172,15 @@ async def handle_monika_response(message):
         monika_reply = reply_response.choices[0].message.content.strip()
         print(monika_reply)
         if "monika" in monika_reply.lower():
-            monika_reply = clean_monika_reply(monika_reply, bot.user.name)
+            monika_reply = monika_reply.replace("Monika", username).replace("monika", username).replace(monika_id, username)
         else:
             emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = f"ERROR. NO {emotion} IS NOT FOUND."
         emotion = "error"
+
+    monika_reply = clean_monika_reply(monika_reply, bot.user.name)
 
     sprite_path = get_expression_sprite(emotion)
     if not sprite_path:
