@@ -438,12 +438,14 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
 
     for guild in bot.guilds:
         for channel in guild.text_channels:
+            if channel.id in NO_CHAT_CHANNELS:
+                continue
             try:
                 if not channel.permissions_for(guild.me).send_messages:
                     continue
                 await channel.send(embed=embed)
                 success_count += 1
-                await asyncio.sleep(1)  # prevent rate-limiting
+                await asyncio.sleep(1)
             except Exception as e:
                 print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
                 failure_count += 1
