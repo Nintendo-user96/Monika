@@ -169,7 +169,6 @@ async def handle_dm_message(message):
 
     # Call OpenAI
     try:
-        emotion = "neutral"
         response = await openai_client.chat.completions.acreate(
             model="gpt-3.5-turbo",
             messages=conversation
@@ -254,7 +253,6 @@ async def handle_guild_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        emotion = "neutral"
         reply_response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=conversation,
