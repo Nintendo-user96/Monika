@@ -483,22 +483,19 @@ async def broadcast(
 
     # --- Actually broadcast ---
     for guild in bot.guilds:
+        target_channel = None
         for channel in guild.text_channels:
-            try:
-                # Must have permission
-                if not channel.permissions_for(guild.me).send_messages:
-                    continue
+            if channel.permissions_for(guild.me).send_messages:
+                target_channel = channel
+                break  # We only want the first one
 
-                await channel.send(embed=embed)
-                success_count += 1
-
-                # Avoid hitting rate limits
-                await asyncio.sleep(1)
-            except Exception as e:
-                failure_count += 1
-                print(
-                    f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}"
-                )
+        if target_channel:
+            await target_channel.send(embed=embed)
+            success_count += 1
+            await asyncio.sleep(1)  # avoid rate limits
+        else:
+            failure_count += 1
+            print(f"[Broadcast Error] No suitable channel in {guild.name}")
 
     # --- Follow-up confirmation (always safe) ---
     try:
