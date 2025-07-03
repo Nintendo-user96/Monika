@@ -169,7 +169,7 @@ async def handle_dm_message(message):
 
     # Call OpenAI
     try:
-        response = await openai_client.chat.completions.create(
+        response = await openai_client.ChatCompletion.acreate(
             model="gpt-3.5-turbo",
             messages=conversation
         )
