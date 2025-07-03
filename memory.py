@@ -22,24 +22,27 @@ class MemoryManager:
             })
         print(f"[Memory] Saved for Guild: {guild_id}, Channel: {channel_id}, User: {user_id}")
     
-    async def save_to_memory_channel(self, content, emotion, user_id, memory_channel):
+    async def save_to_memory_channel(self, content, emotion, username, memory_channel):
         if not memory_channel:
             print("[Memory] No memory channel provided.")
             return
         
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] UserID: {user_id}: {content} | Emotion: {emotion}"
+        log_message = f"[{timestamp}] UserID: {username}: {content} | Emotion: {emotion}"
 
-        await memory_channel.send(log_message)
-        print(f"[Memory] Logged to channel: {log_message}")
+        try:
+            await memory_channel.send(log_message)
+            print(f"[Memory] Logged to channel: {log_message}")
+        except Exception as e:
+            print(f"[Memory Channel Error] {e}")
 
-    def get_context(self, guild_id, channel_id, user_id, limit=10):
+    def get_context(self, guild_id, channel_id, username, limit=10):
         messages = []
 
         all_channels = self.data.get(guild_id, {})
         all_users = all_channels.get(channel_id, {})
 
-        user_messages = all_users.get(user_id, [])[-limit:]
+        user_messages = all_users.get(username, [])[-limit:]
         bot_messages = all_users.get("bot", [])[-limit:]
 
         max_len = max(len(user_messages), len(bot_messages))
@@ -49,7 +52,7 @@ class MemoryManager:
             if i < len(bot_messages):
                 messages.append({"role": "assistant", "content": bot_messages[i]["content"]})
 
-        print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
+        print(f"[Memory] Retrieved context: {len(messages)} messages for User={username} in Channel={channel_id}")
         return messages
     
     async def load_history(self, client, MEMORY_LOG_CHANNEL_ID):
