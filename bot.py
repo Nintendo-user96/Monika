@@ -50,6 +50,8 @@ monika_id = [1375562131784732812]
 
 FRIENDS = [sayori_id, natsuki_id, yuri_id, MC_id]
 
+NO_CHAT_CHANNELS = [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
+
 def is_allowed_bot(message):
     return message.author.bot and message.author.id in FRIENDS
 
@@ -70,9 +72,15 @@ async def on_ready():
 async def on_message(message):
     global last_user_interaction
 
+    if message.author.bot and message.author.id == bot.user.id:
+        return
+
     if message.author == bot.user:
         return
     
+    if message.channel.id in NO_CHAT_CHANNELS:
+        return
+
     if bot.user.mentioned_in(message):
         print(f"[Mention] Detected from {message.author.display_name}")
         last_user_interaction = datetime.datetime.utcnow()
@@ -92,9 +100,17 @@ async def handle_monika_response(message):
     username = message.author.display_name
     mention_username = message.author.mention
 
+    memory.save(
+        guild_id=guild_id,
+        channel_id=channel_id,
+        user_id=user_id,
+        content=message.content,
+        emotion="neutral"
+    )
+
     history = memory.get_context(guild_id, channel_id, user_id)
 
-    is_friend_bot = message.author.bot and message.author.id != FRIENDS
+    is_friend_bot = message.author.bot and message.author.id in FRIENDS
 
     if is_friend_bot:
         system_content = (
@@ -135,6 +151,10 @@ async def handle_monika_response(message):
         "content": system_content
     }
 
+    conversation = memory.get_context(guild_id, channel_id, user_id)
+    conversation.insert(0, {"role": "system", "content": system_content})
+    conversation.append({"role": "user", "content": message.content})
+
     messages = [system_prompt] + history + [{"role": "user", "content": message.content}]
 
     try:
@@ -161,24 +181,6 @@ async def handle_monika_response(message):
 
     sprite_link = sprite_url_cache.get(emotion)
     if not sprite_link:
-        try:
-        # Get the upload channel
-            upload_channel = bot.get_channel(IMAGE_CHANNEL_URL)
-            if upload_channel:
-                sprite_file = discord.File(sprite_path)
-                uploaded_msg = await upload_channel.send(file=sprite_file)
-                sprite_link = uploaded_msg.attachments[0].url
-                sprite_url_cache[emotion] = sprite_link
-                print(f"[Sprite Upload] Uploaded {emotion} to sprite channel.")
-            else:
-                print("[Error] Sprite upload channel not found.")
-                sprite_link = "https://example.com/error.png"
-        except Exception as e:
-            print(f"[Sprite Upload Error] {e}")
-            await message.channel.send(f"[Sprite Upload Error] {e}")
-            sprite_link = "https://example.com/error.png"
-
-    if not sprite_link:
         try:    
             upload_channel = bot.get_channel(IMAGE_CHANNEL_URL)
             if upload_channel:
@@ -194,6 +196,14 @@ async def handle_monika_response(message):
         except Exception as e:
             print(f"[Sprite Upload Error] {e}")
             sprite_link = "https://example.com/error.png"
+
+    memory.save(
+        guild_id=guild_id,
+        channel_id=channel_id,
+        user_id="bot",
+        content=monika_reply,
+        emotion="neutral"
+    )
     
     if not monika_reply.strip():
         monika_reply = "...I'm not sure what to say."
