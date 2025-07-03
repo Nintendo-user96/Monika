@@ -4,11 +4,8 @@ class MemoryManager:
     def __init__(self):
         self.data = {}  # Nested dict: guild -> channel -> user -> messages list
 
-    def save(self, guild_id, channel_id, user_id, content, emotion="neutral", role=None):
+    def save(self, guild_id, channel_id, user_id, content, emotion="neutral"):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-
-        if role is None:
-            role = "assistant" if user_id == "bot" else "user"
 
         self.data \
             .setdefault(guild_id, {}) \
@@ -77,8 +74,6 @@ class MemoryManager:
 
                 guild_id = str(msg.guild.id) if msg.guild else "global"
                 channel_id = str(msg.channel.id)
-
-                role = "assistant" if user_id == "bot" else "user"
 
                 self.save(guild_id, channel_id, user_id, text, emotion.strip(), role=role)
 
