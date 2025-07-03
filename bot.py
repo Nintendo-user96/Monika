@@ -173,9 +173,9 @@ async def handle_dm_message(message):
     user_id = str(message.author.id)
     username = message.author.display_name
 
-    memory.save("DM", "DM", username, message.content, "neutral")
+    memory.save("DM", "DM", user_id, message.content, "neutral")
 
-    conversation = memory.get_context("DM", "DM", username)
+    conversation = memory.get_context("DM", "DM", user_id)
     conversation.insert(0, {"role": "system", "content": DM_SYSTEM_PROMPT})
     conversation.append({"role": "user", "content": message.content})
 
@@ -229,10 +229,10 @@ async def handle_guild_message(message):
     channel_id = str(message.channel.id)
     username = message.author.display_name
 
-    memory.save(guild_id, channel_id, username, message.content, "neutral")
+    memory.save(guild_id, channel_id, user_id, message.content, "neutral")
 
     system_content = FRIEND_SYSTEM_PROMPT if is_friend_bot else USER_SYSTEM_PROMPT
-    conversation = memory.get_context(guild_id, channel_id, username)
+    conversation = memory.get_context(guild_id, channel_id, user_id)
     conversation.insert(0, {"role": "system", "content": system_content})
     conversation.append({"role": "user", "content": message.content})
 
