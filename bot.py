@@ -5,6 +5,7 @@ import os
 import asyncio
 import random
 import datetime
+import re
 from dotenv import load_dotenv
 from openai import OpenAI
 from memory import MemoryManager
@@ -54,6 +55,13 @@ NO_CHAT_CHANNELS = [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
 
 def is_allowed_bot(message):
     return message.author.bot and message.author.id in FRIENDS
+
+def clean_monika_reply(text, bot_username):
+    # Remove "Monika" in any casing
+    text = re.sub(r"(?i)monika", "", text)
+    # Remove the bot's username if different
+    text = re.sub(re.escape(bot_username), "", text, flags=re.IGNORECASE)
+    return text.strip()
 
 @bot.event
 async def on_ready():
@@ -155,18 +163,16 @@ async def handle_monika_response(message):
     conversation.insert(0, {"role": "system", "content": system_content})
     conversation.append({"role": "user", "content": message.content})
 
-    messages = [system_prompt] + history + [{"role": "user", "content": message.content}]
-
     try:
         reply_response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
-            messages=messages,
+            messages=conversation,
             max_tokens=1024
         )
         monika_reply = reply_response.choices[0].message.content.strip()
         print(monika_reply)
         if "monika" in monika_reply.lower():
-            monika_reply = monika_reply.replace("Monika", username).replace("monika", username).replace(monika_id, username)
+            monika_reply = clean_monika_reply(monika_reply, bot.user.name)
         else:
             emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
@@ -223,9 +229,6 @@ async def handle_monika_response(message):
             print(f"[Error] No permission to send in #{reply_channel.name}")
     else:
         print("[Error] Invalid or non-guild channel")
-
-    memory.save(guild_id, channel_id, user_id, message.content)
-    memory.save(guild_id, channel_id, str(bot.user.id), monika_reply, emotion)
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
