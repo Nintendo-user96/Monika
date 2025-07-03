@@ -49,9 +49,9 @@ MC_id = [1375070168895590430]
 
 monika_id = [1375562131784732812]
 
-FRIENDS = [sayori_id, natsuki_id, yuri_id, MC_id]
+FRIENDS = sayori_id + natsuki_id + yuri_id + MC_id
 
-NO_CHAT_CHANNELS = [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
+NO_CHAT_CHANNELS = [cid for cid in [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID] if cid]
 
 FRIEND_SYSTEM_PROMPT = (
     "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
@@ -147,7 +147,7 @@ async def on_message(message):
     if bot.user.mentioned_in(message):
         print(f"[Mention] Detected from {message.author.display_name}")
         last_user_interaction = datetime.datetime.utcnow()
-        bot.loop.create_task(handle_guild_message(message))
+        await handle_guild_message(message)
 
 async def handle_dm_message(message):
     user_id = str(message.author.id)
@@ -169,7 +169,8 @@ async def handle_dm_message(message):
 
     # Call OpenAI
     try:
-        response = await openai_client.ChatCompletion.acreate(
+        emotion = "neutral"
+        response = await openai_client.chat.completions.acreate(
             model="gpt-3.5-turbo",
             messages=conversation
         )
@@ -253,6 +254,7 @@ async def handle_guild_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
+        emotion = "neutral"
         reply_response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=conversation,
