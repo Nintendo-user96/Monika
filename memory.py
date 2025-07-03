@@ -4,7 +4,7 @@ class MemoryManager:
     def __init__(self):
         self.data = {}  # Nested dict: guild -> channel -> user -> messages list
 
-    def save(self, guild_id, channel_id, user_id, content, emotion="neutral"):
+    def save(self, guild_id, channel_id, user_id, content, emotion="neutral", role=None):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
@@ -42,9 +42,12 @@ class MemoryManager:
         user_messages = all_users.get(user_id, [])[-limit:]
         bot_messages = all_users.get("bot", [])[-limit:]
 
-        for u, b in zip(user_messages, bot_messages):
-            messages.append({"role": "user", "content": u["content"]})
-            messages.append({"role": "assistant", "content": b["content"]})
+        max_len = max(len(user_messages), len(bot_messages))
+        for i in range(max_len):
+            if i < len(user_messages):
+                messages.append({"role": "user", "content": user_messages[i]["content"]})
+            if i < len(bot_messages):
+                messages.append({"role": "assistant", "content": bot_messages[i]["content"]})
 
         print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
