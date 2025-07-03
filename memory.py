@@ -4,13 +4,18 @@ class MemoryManager:
     def __init__(self):
         self.data = {}  # Nested dict: guild -> channel -> user -> messages list
 
-    def save(self, guild_id, channel_id, user_id, content, emotion="neutral"):
+    def save(self, guild_id, channel_id, user_id, content, emotion="neutral", role=None):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+        if role is None:
+            role = "assistant" if user_id == "bot" else "user"
+
         self.data \
             .setdefault(guild_id, {}) \
             .setdefault(channel_id, {}) \
             .setdefault(user_id, []) \
             .append({
+                "role": role,
                 "content": content,
                 "emotion": emotion,
                 "timestamp": timestamp
@@ -19,15 +24,16 @@ class MemoryManager:
     
     async def save_to_memory_channel(self, content, emotion, user_id, memory_channel):
         if not memory_channel:
-            print("[Memory] No memory channel to log to.")
+            print("[Memory] No memory channel provided.")
             return
+        
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         log_message = f"[{timestamp}] UserID: {user_id}: {content} | Emotion: {emotion}"
+
         await memory_channel.send(log_message)
         print(f"[Memory] Logged to channel: {log_message}")
 
-
-    def get_context(self, guild_id, channel_id, user_id, limit=6):
+    def get_context(self, guild_id, channel_id, user_id, limit=10):
         messages = []
 
         all_channels = self.data.get(guild_id, {})
@@ -40,7 +46,7 @@ class MemoryManager:
             messages.append({"role": "user", "content": u["content"]})
             messages.append({"role": "assistant", "content": b["content"]})
 
-        print(f"[Memory] Retrieved context with {len(messages)} messages.")
+        print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
     
     async def load_history(self, client, MEMORY_LOG_CHANNEL_ID):
@@ -72,7 +78,9 @@ class MemoryManager:
                 guild_id = str(msg.guild.id) if msg.guild else "global"
                 channel_id = str(msg.channel.id)
 
-                self.save(guild_id, channel_id, user_id, text, emotion.strip())
+                role = "assistant" if user_id == "bot" else "user"
+
+                self.save(guild_id, channel_id, user_id, text, emotion.strip(), role=role)
 
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
