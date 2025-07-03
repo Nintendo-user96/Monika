@@ -94,9 +94,10 @@ DM_SYSTEM_PROMPT = (
 )
 
 def clean_monika_reply(text, bot_username, user_name=None):
-    text = re.sub(r"(?i)\bmonika\b", "", text)
-    if bot_username and bot_username.lower() != "monika":
-        text = re.sub(re.escape(bot_username), "", text, flags=re.IGNORECASE)
+    if user_name:
+        text = re.sub(r"(?i)\b(monika)\b", user_name, text)
+    else:
+        text = re.sub(r"(?i)\b(monika)\b", "", text)
     return text.strip()
 
 def is_allowed_bot(message):
