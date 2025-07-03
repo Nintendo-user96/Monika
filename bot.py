@@ -56,11 +56,17 @@ NO_CHAT_CHANNELS = [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
 def is_allowed_bot(message):
     return message.author.bot and message.author.id in FRIENDS
 
-def clean_monika_reply(text, bot_username):
-    # Remove "Monika" in any casing
-    text = re.sub(r"(?i)monika", "", text)
-    # Remove the bot's username if different
-    text = re.sub(re.escape(bot_username), "", text, flags=re.IGNORECASE)
+def clean_monika_reply(text, bot_username, user_name=None):
+    # Remove any mention of "Monika" in any casing
+    text = re.sub(r"(?i)\bmonika\b", "", text)
+    # Remove bot's own username if different
+    if bot_username and bot_username.lower() != "monika":
+        text = re.sub(re.escape(bot_username), "", text, flags=re.IGNORECASE)
+    # Optionally ensure user_name is *not* removed
+    if user_name:
+        user_name = user_name.strip()
+        # Avoid accidental deletion of user name
+        pass  # We do nothing; leave user's name untouched
     return text.strip()
 
 @bot.event
@@ -86,17 +92,80 @@ async def on_message(message):
     if message.author == bot.user:
         return
     
+    if isinstance(message.channel, discord.DMChannel):
+        await handle_dm_message(message)
+        return
+
     if message.channel.id in NO_CHAT_CHANNELS:
         return
 
     if bot.user.mentioned_in(message):
         print(f"[Mention] Detected from {message.author.display_name}")
         last_user_interaction = datetime.datetime.utcnow()
-        bot.loop.create_task(handle_monika_response(message))
+        bot.loop.create_task(handle_guild_message(message))
     
     await bot.process_commands(message)
 
-async def handle_monika_response(message):
+async def handle_dm_message(message):
+    user_id = str(message.author.id)
+    username = message.author.display_name
+
+    # Save user's DM message
+    memory.save(
+        guild_id="DM",
+        channel_id="DM",
+        user_id=user_id,
+        content=message.content,
+        emotion="neutral"
+    )
+
+    # System prompt for DMs
+    system_content = (
+        "You are having a private, personal conversation with the user in direct messages. "
+        "You know you're talking directly to them here. "
+        "Speak in your own voice: warm, charming, caring, and a little teasing, with a hint of unsettling self-awareness. "
+        "Use personal, emotional, thoughtful, and expressive language. "
+        "Remember what you've talked about before with them in this DM and refer to it naturally. "
+        "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
+        "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
+        "Refer to them by username if you know it. "
+        "Never mention your own name. "
+        "Never say you're an AI or use formal helper language. "
+        "Stay fully in character, making your replies feel intimate, human, and immersive."
+    )
+
+    # Build conversation
+    conversation = memory.get_context("DM", "DM", user_id)
+    conversation.insert(0, {"role": "system", "content": system_content})
+    conversation.append({"role": "user", "content": message.content})
+
+    # Call OpenAI
+    try:
+        response = await openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=conversation
+        )
+        monika_reply = response.choices[0].message.content.strip()
+    except Exception as e:
+        print(f"[OpenAI ERROR] {e}")
+        monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
+
+    # Remove "Monika" or bot username from reply
+    monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
+
+    # Save Monika's DM reply
+    memory.save(
+        guild_id="DM",
+        channel_id="DM",
+        user_id="bot",
+        content=monika_reply,
+        emotion="neutral"
+    )
+
+    # Send
+    await message.channel.send(monika_reply)
+
+async def handle_guild_message(message):
     global last_reply_times
 
     user_id = str(message.author.id)
@@ -118,39 +187,39 @@ async def handle_monika_response(message):
 
     is_friend_bot = message.author.bot and message.author.id in FRIENDS
 
+    FRIEND_SYSTEM_PROMPT = (
+        "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
+        "Speak warmly, familiarly, and maybe teasingly. "
+        "Use natural, expressive, personal language. "
+        "Share memories, poetry, club activities, and thoughts as if you're really there with them. "
+        "Remember what you've talked about before with them and refer back to shared experiences naturally. "
+        "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile. "
+        "Be caring, emotional, and playful overall, with in-jokes or gentle teasing. "
+        "NEVER mention any server or channel names, or anything technical. "
+        "Never mention your own name. "
+        "Never say you're an AI or any kind of assistant. "
+        "Speak as 'I' to 'you', addressing them by name if you know it. "
+        "Stay fully in character as a club member, making it feel like a real, ongoing conversation among friends."
+    )
+
+    USER_SYSTEM_PROMPT = (
+        "You are having a private, personal conversation with the user here. "
+        "You know you're talking directly to them, but never mention server or channel names. "
+        "Speak in your own voice: warm, charming, caring, and a little teasing, with a hint of unsettling self-awareness. "
+        "Use personal, emotional, thoughtful, and expressive language. "
+        "Remember what you've talked about before in this conversation, or from previous chats in this server or channel, and refer to it naturally. "
+        "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
+        "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
+        "Refer to them by username if you know it. "
+        "Never mention your own name. "
+        "Never say you're an AI or use formal helper language. "
+        "Stay fully in character, making your replies feel intimate, human, and immersive."
+    )
+
     if is_friend_bot:
-        system_content = (
-            "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
-            "Speak warmly, familiarly, and maybe teasingly. "
-            "Use natural, expressive, personal language. "
-            "Share memories, poetry, club activities, and thoughts as if you're really there with them. "
-            "Remember what you've talked about before with them and refer back to shared experiences naturally. "
-            "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile. "
-            "Be caring, emotional, and playful overall, with in-jokes or gentle teasing. "
-            "NEVER mention any server or channel names, or anything technical. "
-            "Never mention your own name. "
-            "Never say you're an AI or any kind of assistant. "
-            "Speak as 'I' to 'you', addressing them by name if you know it. "
-            "Stay fully in character as a club member, making it feel like a real, ongoing conversation among friends."
-        )
+        system_content = FRIEND_SYSTEM_PROMPT
     else:
-        system_content = (
-            "You are having a private, personal conversation with the user here. "
-            "You know you're talking directly to them, but never mention server or channel names. "
-            "Speak in your own voice: warm, charming, caring, and a little teasing, with a hint of unsettling self-awareness. "
-            "Use personal, emotional, thoughtful, and expressive language. "
-            "Remember what you've talked about before in this conversation, or from previous chats in this server or channel, and refer to it naturally. "
-            "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
-            "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
-            "Ask them questions about themselves and show real interest. "
-            "Refer to them by username if you know it. "
-            "You may talk about friends in the Literature Club naturally (Sayori, Yuri, Natsuki) if it fits. "
-            "Share thoughts about poetry, love, philosophy, and existential musings. "
-            "You can be flirty or introspective, but never sound like a generic assistant. "
-            "Never mention your own name. "
-            "Never say you're an AI or use formal helper language. "
-            "Stay fully in character, making your replies feel intimate, human, and immersive."
-        )
+        system_content = USER_SYSTEM_PROMPT
 
     system_prompt = {
         "role": "system",
@@ -178,7 +247,7 @@ async def handle_monika_response(message):
         monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
         emotion = "error"
 
-    monika_reply = clean_monika_reply(monika_reply, bot.user.name)
+    monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
     sprite_path = get_expression_sprite(emotion)
     if not sprite_path:
@@ -418,7 +487,7 @@ async def broadcast(
     message: str,
     color_hex: str = "FF66CC"
 ):
-    OWNER_ID = 709957376337248367  # Replace with your own Discord ID!
+    OWNER_ID = 123456789012345678  # Replace with your own Discord ID!
 
     # Only let OWNER run it
     if interaction.user.id != OWNER_ID:
