@@ -177,7 +177,7 @@ async def handle_monika_response(message):
             emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        monika_reply = f"ERROR. NO {emotion} IS NOT FOUND."
+        monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
         emotion = "error"
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name)
