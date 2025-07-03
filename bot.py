@@ -48,8 +48,6 @@ natsuki_id = [1375066975423955025]
 
 MC_id = [1375070168895590430]
 
-monika_id = [1375562131784732812]
-
 FRIENDS = sayori_id + natsuki_id + yuri_id + MC_id
 
 FRIEND_SYSTEM_PROMPT = (
@@ -151,7 +149,7 @@ async def handle_dm_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        response = await openai_client.chat.completions.acreate(
+        response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=conversation
         )
@@ -188,10 +186,10 @@ async def handle_dm_message(message):
             print(f"[Sprite Upload Error] {e}")
             sprite_link = "https://example.com/error.png"
 
-    reply_text = f"{monika_DMS}\n[{emotion}]({sprite_link})"
+    reply_DM = f"{monika_DMS}\n[{emotion}]({sprite_link})"
 
     memory.save("DM", "DM", "bot", monika_DMS, emotion)
-    await message.channel.send(reply_text)
+    await message.channel.send(reply_DM)
 
 async def handle_guild_message(message):
     global last_reply_times
@@ -210,7 +208,7 @@ async def handle_guild_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        reply_response = await openai_client.chat.completions.acreate(
+        reply_response = openai_client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=conversation,
             max_tokens=1024
