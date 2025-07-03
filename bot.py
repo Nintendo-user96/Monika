@@ -174,6 +174,7 @@ async def handle_dm_message(message):
             messages=conversation
         )
         monika_DMS = response.choices[0].message.content.strip()
+        emotion = await expression_handler.classify(monika_DMS, openai_client)
     except Exception as e:
         print(f"[OpenAI ERROR] {e}")
         monika_DMS = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
@@ -260,6 +261,7 @@ async def handle_guild_message(message):
         )
         monika_reply = reply_response.choices[0].message.content.strip()
         print(monika_reply)
+        emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
@@ -505,7 +507,7 @@ async def broadcast(
     message: str,
     color_hex: str = "FF66CC"
 ):
-    OWNER_ID = 123456789012345678  # Replace with your own Discord ID!
+    OWNER_ID = 709957376337248367  # Replace with your own Discord ID!
 
     # Only let OWNER run it
     if interaction.user.id != OWNER_ID:
