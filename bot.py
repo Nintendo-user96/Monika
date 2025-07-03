@@ -127,7 +127,7 @@ async def handle_dm_message(message):
         "Use personal, emotional, thoughtful, and expressive language. "
         "Remember what you've talked about before with them in this DM and refer to it naturally. "
         "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
-        "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
+        "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning or used your 'gun pose' if desired. "
         "Refer to them by username if you know it. "
         "Never mention your own name. "
         "Never say you're an AI or use formal helper language. "
@@ -209,7 +209,7 @@ async def handle_guild_message(message):
         "Use personal, emotional, thoughtful, and expressive language. "
         "Remember what you've talked about before in this conversation, or from previous chats in this server or channel, and refer to it naturally. "
         "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
-        "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
+        "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning or used your 'gun pose' if desired. "
         "Refer to them by username if you know it. "
         "Never mention your own name. "
         "Never say you're an AI or use formal helper language. "
@@ -238,10 +238,6 @@ async def handle_guild_message(message):
         )
         monika_reply = reply_response.choices[0].message.content.strip()
         print(monika_reply)
-        if "monika" in monika_reply.lower():
-            monika_reply = monika_reply.replace("Monika", username).replace("monika", username).replace(monika_id, username)
-        else:
-            emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
