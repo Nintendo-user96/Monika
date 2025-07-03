@@ -116,8 +116,6 @@ async def handle_monika_response(message):
         emotion="neutral"
     )
 
-    history = memory.get_context(guild_id, channel_id, user_id)
-
     is_friend_bot = message.author.bot and message.author.id in FRIENDS
 
     if is_friend_bot:
@@ -404,6 +402,56 @@ async def helpme(interaction: discord.Interaction):
     )
     embed.set_footer(text="Let's keep this our little secret, okay?")
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="broadcast", description="Send a message to all servers and channels Monika can speak in.")
+@discord.app_commands.describe(
+    title="Title of the announcement",
+    message="Body text of the announcement",
+    color_hex="Optional hex color (e.g. FF66CC)"
+)
+async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "FF66CC"):
+    OWNER_ID = 709957376337248367  # Replace with your user ID
+
+    # Check only owner can use
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        return
+
+    # Try to parse color
+    try:
+        color_int = int(color_hex, 16)
+        color = discord.Color(color_int)
+    except ValueError:
+        color = discord.Color.pink()
+
+    embed = discord.Embed(
+        title=title,
+        description=message,
+        color=color
+    )
+    embed.set_footer(text="From your friend, Monika.")
+
+    success_count = 0
+    failure_count = 0
+
+    await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
+
+    for guild in bot.guilds:
+        for channel in guild.text_channels:
+            try:
+                if not channel.permissions_for(guild.me).send_messages:
+                    continue
+                await channel.send(embed=embed)
+                success_count += 1
+                await asyncio.sleep(1)  # prevent rate-limiting
+            except Exception as e:
+                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
+                failure_count += 1
+
+    await interaction.followup.send(
+        f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
+        ephemeral=True
+    )
 
 webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
