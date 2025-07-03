@@ -20,8 +20,8 @@ IMAGE_CHANNEL_URL = int(os.getenv("IMAGE_CHANNEL_URL", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
 
 NO_CHAT_CHANNELS = [
-    int(cid) for cid in [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
-    if cid and cid.isdigit()
+    cid for cid in [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
+    if cid and cid > 0
 ]
 
 intents = discord.Intents.all()
