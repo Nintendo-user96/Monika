@@ -13,8 +13,19 @@ from expression import ExpressionHandler, get_expression_sprite
 import webserver
 
 load_dotenv()
+
+OPENAI_KEYS = [
+    os.getenv("OPENAI_KEY_1"),
+    os.getenv("OPENAI_KEY_2"),
+    os.getenv("OPENAI_KEY_3"),
+    os.getenv("OPENAI_KEY_4"),
+    os.getenv("OPENAI_KEY_5"),
+]
+key_index = 0
+
+chosen_key = random.choice(OPENAI_KEYS)
+
 TOKEN = os.getenv("DISCORD_TOKEN")
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
 IMAGE_CHANNEL_URL = int(os.getenv("IMAGE_CHANNEL_URL", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
@@ -27,7 +38,7 @@ NO_CHAT_CHANNELS = [
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-openai_client = OpenAI(api_key=OPENAI_API_KEY)
+openai_client = OpenAI(api_key=chosen_key)
 memory = MemoryManager()
 expression_handler = ExpressionHandler()
 sprite_url_cache = {}
@@ -93,6 +104,25 @@ DM_SYSTEM_PROMPT = (
     "Stay fully in character, making your replies feel intimate, human, and immersive."
 )
 
+def get_next_openai_client():
+    global key_index
+    key = OPENAI_KEYS[key_index]
+    key_index = (key_index + 1) % len(OPENAI_KEYS)
+    return OpenAI(api_key=key)
+
+def call_openai_with_retries(conversation):
+    for attempt in range(len(OPENAI_KEYS)):
+        client = get_next_openai_client()
+        try:
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=conversation
+            )
+            return response
+        except Exception as e:
+            print(f"[OpenAI Error] {e}")
+    raise Exception("All keys exhausted.")
+
 def clean_monika_reply(text, bot_username, user_name=None):
     if user_name:
         text = re.sub(r"(?i)\b(monika)\b", user_name, text)
@@ -150,10 +180,8 @@ async def handle_dm_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=conversation
-        )
+        response = call_openai_with_retries(conversation)
+
         monika_DMS = response.choices[0].message.content.strip()
         if "monika" in monika_DMS.lower():
             monika_DMS = monika_DMS.replace("Monika", username).replace("monika", username)
@@ -209,11 +237,8 @@ async def handle_guild_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        reply_response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=conversation,
-            max_tokens=1024
-        )
+        reply_response = call_openai_with_retries(conversation)
+
         monika_reply = reply_response.choices[0].message.content.strip()
         if "monika" in monika_reply.lower():
             monika_reply = monika_reply.replace("Monika", username).replace("monika", username)
@@ -330,7 +355,9 @@ async def monika_idle_conversation_task():
                     }
                 ]
 
-                idle_completion = openai_client.chat.completions.create(
+                client = get_next_openai_client()
+
+                idle_completion = client.chat.completions.create(
                     model="gpt-3.5-turbo",
                     messages=idle_prompt,
                     max_tokens=500
