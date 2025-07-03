@@ -174,7 +174,10 @@ async def handle_dm_message(message):
             messages=conversation
         )
         monika_DMS = response.choices[0].message.content.strip()
-        emotion = await expression_handler.classify(monika_DMS, openai_client)
+        if "monika" in monika_DMS.lower():
+            monika_DMS = monika_DMS.replace("Monika", username).replace("monika", username).replace(monika_id, username)
+        else:
+            emotion = await expression_handler.classify(monika_DMS, openai_client)
     except Exception as e:
         print(f"[OpenAI ERROR] {e}")
         monika_DMS = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
@@ -261,7 +264,10 @@ async def handle_guild_message(message):
         )
         monika_reply = reply_response.choices[0].message.content.strip()
         print(monika_reply)
-        emotion = await expression_handler.classify(monika_reply, openai_client)
+        if "monika" in monika_reply.lower():
+            monika_reply = monika_reply.replace("Monika", username).replace("monika", username).replace(monika_id, username)
+        else:
+            emotion = await expression_handler.classify(monika_reply, openai_client)
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
@@ -400,7 +406,10 @@ async def monika_idle_conversation_task():
                     max_tokens=500
                 )
                 monika_message = idle_completion.choices[0].message.content.strip()
-
+                if "monika" in monika_message.lower():
+                    monika_message = monika_message.replace("Monika", "").replace("monika", "").replace(monika_id, "")
+                else:
+                    emotion = await expression_handler.classify(monika_message, openai_client)
             except Exception as e:
                 print(f"[Idle GPT Error] {e}")
                 monika_message = f"{chosen_user.mention}, ...I wanted to say something, but I lost my words."
