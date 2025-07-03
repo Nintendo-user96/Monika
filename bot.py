@@ -403,27 +403,45 @@ async def helpme(interaction: discord.Interaction):
     embed.set_footer(text="Let's keep this our little secret, okay?")
     await interaction.response.send_message(embed=embed, ephemeral=True)
 
-@bot.tree.command(name="broadcast", description="Send a message to all servers and channels Monika can speak in.")
+@bot.tree.command(
+    name="broadcast",
+    description="Send an announcement to all servers/channels Monika can speak in."
+)
 @discord.app_commands.describe(
     title="Title of the announcement",
     message="Body text of the announcement",
     color_hex="Optional hex color (e.g. FF66CC)"
 )
-async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "FF66CC"):
-    OWNER_ID = 709957376337248367  # Replace with your user ID
+async def broadcast(
+    interaction: discord.Interaction,
+    title: str,
+    message: str,
+    color_hex: str = "FF66CC"
+):
+    OWNER_ID = 123456789012345678  # Replace with your own Discord ID!
 
-    # Check only owner can use
+    # Only let OWNER run it
     if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message("❌ You don't have permission to use this command.", ephemeral=True)
+        await interaction.response.send_message(
+            "❌ You don't have permission to use this command.",
+            ephemeral=True
+        )
         return
 
-    # Try to parse color
+    # --- Respond immediately to avoid timeout ---
+    await interaction.response.send_message(
+        "📣 Starting broadcast! I'll update you when I'm done.",
+        ephemeral=True
+    )
+
+    # Parse color safely
     try:
         color_int = int(color_hex, 16)
         color = discord.Color(color_int)
     except ValueError:
         color = discord.Color.pink()
 
+    # Create the embed
     embed = discord.Embed(
         title=title,
         description=message,
@@ -431,29 +449,39 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
     )
     embed.set_footer(text="From your friend, Monika.")
 
+    # Counters
     success_count = 0
     failure_count = 0
 
-    await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
-
+    # --- Actually broadcast ---
     for guild in bot.guilds:
         for channel in guild.text_channels:
-            if channel.id in NO_CHAT_CHANNELS:
-                continue
             try:
+                # Must have permission
                 if not channel.permissions_for(guild.me).send_messages:
                     continue
+
                 await channel.send(embed=embed)
                 success_count += 1
+
+                # Avoid hitting rate limits
                 await asyncio.sleep(1)
             except Exception as e:
-                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
                 failure_count += 1
+                print(
+                    f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}"
+                )
 
-    await interaction.followup.send(
-        f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
-        ephemeral=True
-    )
+    # --- Follow-up confirmation (always safe) ---
+    try:
+        await interaction.followup.send(
+            f"✅ Broadcast complete!\n"
+            f"✅ Sent successfully to **{success_count}** channels.\n"
+            f"⚠️ Failed in **{failure_count}** channels.",
+            ephemeral=True
+        )
+    except Exception as e:
+        print(f"[Follow-up Error] {e}")
 
 webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
