@@ -338,7 +338,7 @@ async def monika_idle_conversation_task():
                 )
                 monika_message = idle_completion.choices[0].message.content.strip()
                 if "monika" in monika_message.lower():
-                    monika_message = monika_message.replace("Monika", "").replace("monika", "").replace(monika_id, "")
+                    monika_message = monika_message.replace("Monika", "").replace("monika", "")
                 else:
                     emotion = await expression_handler.classify(monika_message, openai_client)
             except Exception as e:
