@@ -182,12 +182,11 @@ async def handle_dm_message(message):
 
     try:
         response = call_openai_with_retries(conversation)
-
         monika_DMS = response.choices[0].message.content.strip()
-        emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
+        emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
     except Exception as e:
         print(f"[OpenAI ERROR] {e}")
-        monika_reply = "Ahaha... Sorry, I glitched there."
+        monika_DMS = "Ahaha... Sorry, I glitched there."
         emotion = "error"
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
@@ -239,9 +238,8 @@ async def handle_guild_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        reply_response = call_openai_with_retries(conversation)
-
-        monika_reply = reply_response.choices[0].message.content.strip()
+        response = await call_openai_with_retries(conversation)
+        monika_reply = response.choices[0].message.content.strip()
         emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
     except Exception as e:
         print(f"[OpenAI Error] {e}")
@@ -358,18 +356,8 @@ async def monika_idle_conversation_task():
                     }
                 ]
 
-                client = get_next_openai_client()
-
-                idle_completion = client.chat.completions.create(
-                    model="gpt-3.5-turbo",
-                    messages=idle_prompt,
-                    max_tokens=500
-                )
-                monika_message = idle_completion.choices[0].message.content.strip()
-                if "monika" in monika_message.lower():
-                    monika_message = monika_message.replace("Monika", "").replace("monika", "")
-                else:
-                    emotion = await expression_handler.classify(monika_message, openai_client)
+                response = await call_openai_with_retries(idle_prompt)
+                monika_message = response.choices[0].message.content.strip()
             except Exception as e:
                 print(f"[Idle GPT Error] {e}")
                 monika_message = f"{chosen_user.mention}, ...I wanted to say something, but I lost my words."
