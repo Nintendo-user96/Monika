@@ -493,22 +493,19 @@ async def broadcast(
     await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
 
     for guild in bot.guilds:
-        target_channel = discord.utils.find(
-            lambda c: c.permissions_for(guild.me).send_messages,
+        channel = discord.utils.find(
+            lambda c: c.permissions_for(guild.me).send_messages and c.id not in NO_CHAT_CHANNELS,
             guild.text_channels
         )
-        if not target_channel:
+        if not channel:
             continue
-        await target_channel.send(embed=embed)
-            try:
-                if not channel.permissions_for(guild.me).send_messages:
-                    continue
-                await channel.send(embed=embed)
-                success_count += 1
-                await asyncio.sleep(1)  # prevent rate-limiting
-            except Exception as e:
-                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
-                failure_count += 1
+        try:
+            await channel.send(embed=embed)
+            success_count += 1
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
+            failure_count += 1
 
     await interaction.followup.send(
         f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
