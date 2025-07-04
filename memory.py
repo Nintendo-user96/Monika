@@ -5,7 +5,7 @@ class MemoryManager:
         # Nested structure: guild_id -> channel_id -> user_id -> list of messages
         self.data = {}
 
-    def save(self, guild_id, channel_id, user_id, content, emotion="neutral", role=None):
+    def save(self, guild_id, channel_id, user_id, user_name, content, emotion="neutral", role=None):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
@@ -22,7 +22,7 @@ class MemoryManager:
                 "timestamp": timestamp
             })
 
-        print(f"[Memory] is Saved")
+        print(f"[Memory] Saved, userID: {user_id}, username: {user_name}, channelID: {channel_id}, serverID: {guild_id}")
 
     async def save_to_memory_channel(self, content, emotion, user_id, memory_channel):
         if not memory_channel:
@@ -92,4 +92,4 @@ class MemoryManager:
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
 
-        print("[Memory] History load complete.")
+        print("[Memory]: loading complete.")
