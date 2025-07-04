@@ -181,7 +181,7 @@ async def handle_dm_message(message):
     conversation.append({"role": "user", "content": message.content})
 
     try:
-        response = call_openai_with_retries(conversation)
+        response = await call_openai_with_retries(conversation)
         monika_DMS = response.choices[0].message.content.strip()
         emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
     except Exception as e:
