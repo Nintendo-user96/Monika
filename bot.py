@@ -40,22 +40,53 @@ def get_next_openai_client():
 
 async def call_openai_with_retries(conversation):
     attempts = len(OPENAI_KEYS)
-    for _ in range(attempts):
+    last_exception = None
+
+    for attempt in range(attempts):
         client = get_next_openai_client()
+        print(f"[OpenAI] Attempt {attempt+1}/{attempts} using key index {openai_key_index}")
+
         try:
+            # Make sure the conversation is valid
+            if not conversation or not isinstance(conversation, list):
+                raise ValueError("Invalid conversation passed to OpenAI. Must be a list of messages.")
+
+            # Call the API
             response = await client.chat.completions.acreate(
                 model="gpt-3.5-turbo",
                 messages=conversation
             )
+
+            # Sanity check on response
+            if not response or not hasattr(response, 'choices') or not response.choices:
+                print("[OpenAI] Empty response. Retrying...")
+                await asyncio.sleep(1)
+                continue
+
+            choice = response.choices[0]
+            if not hasattr(choice, 'message') or not choice.message or not choice.message.content.strip():
+                print("[OpenAI] Blank message content. Retrying...")
+                await asyncio.sleep(1)
+                continue
+
+            # Valid response!
             return response
+
         except Exception as e:
-            if "429" in str(e):
-                print("[OpenAI] 429 Rate Limit. Trying next key...")
-                await asyncio.sleep(1)  # tiny delay
+            last_exception = e
+            err_str = str(e)
+            if "429" in err_str or "rate limit" in err_str.lower():
+                print("[OpenAI] 429 Rate Limit error detected. Rotating to next key...")
+                await asyncio.sleep(2)  # Longer delay to be polite
             else:
-                print(f"[OpenAI Error] {e}")
-                raise
-    raise Exception("All OpenAI keys exhausted! Please slow down.")
+                print(f"[OpenAI Error] {err_str}")
+                # For other errors, we might want to retry but let's wait a bit
+                await asyncio.sleep(2)
+
+    print("[OpenAI] All keys exhausted or all attempts failed.")
+    if last_exception:
+        raise last_exception
+    raise Exception("All OpenAI keys failed or exhausted.")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
@@ -493,19 +524,16 @@ async def broadcast(
     await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
 
     for guild in bot.guilds:
-        channel = discord.utils.find(
-            lambda c: c.permissions_for(guild.me).send_messages and c.id not in NO_CHAT_CHANNELS,
-            guild.text_channels
-        )
-        if not channel:
-            continue
-        try:
-            await channel.send(embed=embed)
-            success_count += 1
-            await asyncio.sleep(1)
-        except Exception as e:
-            print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
-            failure_count += 1
+        for channel in guild.text_channels:
+            try:
+                if not channel.permissions_for(guild.me).send_messages:
+                    continue
+                await channel.send(embed=embed)
+                success_count += 1
+                await asyncio.sleep(1)  # prevent rate-limiting
+            except Exception as e:
+                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
+                failure_count += 1
 
     await interaction.followup.send(
         f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
