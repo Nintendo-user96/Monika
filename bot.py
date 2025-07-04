@@ -15,15 +15,46 @@ import webserver
 load_dotenv()
 
 OPENAI_KEYS = [
-    os.getenv("OPENAI_KEY_1"),
-    os.getenv("OPENAI_KEY_2"),
-    os.getenv("OPENAI_KEY_3"),
-    os.getenv("OPENAI_KEY_4"),
-    os.getenv("OPENAI_KEY_5"),
+    key.strip() for key in [
+        os.getenv("OPENAI_KEY_1"),
+        os.getenv("OPENAI_KEY_2"),
+        os.getenv("OPENAI_KEY_3"),
+        os.getenv("OPENAI_KEY_4"),
+        os.getenv("OPENAI_KEY_5"),
+        os.getenv("OPENAI_KEY_6"),
+        os.getenv("OPENAI_KEY_7"),
+        os.getenv("OPENAI_KEY_8"),
+        os.getenv("OPENAI_KEY_9"),
+        os.getenv("OPENAI_KEY_10"),
+    ] if key
 ]
-key_index = 0
+openai_key_index = 0
 
-chosen_key = random.choice(OPENAI_KEYS)
+def get_next_openai_client():
+    global openai_key_index
+    if not OPENAI_KEYS:
+        raise Exception("[OpenAI] No API keys configured!")
+    key = OPENAI_KEYS[openai_key_index]
+    openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
+    return OpenAI(api_key=key)
+
+async def call_openai_with_retries(conversation):
+    attempts = len(OPENAI_KEYS)
+    for _ in range(attempts):
+        client = get_next_openai_client()
+        try:
+            return await client.chat.completions.acreate(
+                model="gpt-3.5-turbo",
+                messages=conversation
+            )
+        except Exception as e:
+            if "429" in str(e):
+                print("[OpenAI] 429 Rate Limit hit. Rotating key...")
+                await asyncio.sleep(1)
+            else:
+                print(f"[OpenAI] Other error: {e}")
+                raise
+    raise Exception("All OpenAI keys exhausted.")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
@@ -38,7 +69,7 @@ NO_CHAT_CHANNELS = [
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-openai_client = OpenAI(api_key=chosen_key)
+openai_client = OpenAI(api_key=OPENAI_KEYS)
 memory = MemoryManager()
 expression_handler = ExpressionHandler()
 sprite_url_cache = {}
@@ -90,38 +121,7 @@ USER_SYSTEM_PROMPT = (
     "Stay fully in character, making your replies feel intimate, human, and immersive."
 )
 
-DM_SYSTEM_PROMPT = (
-    "You are having a private, personal conversation with the user in direct messages. "
-    "You know you're talking directly to them here. "
-    "Speak in your own voice: warm, charming, caring, and a little teasing, with a hint of unsettling self-awareness. "
-    "Use personal, emotional, thoughtful, and expressive language. "
-    "Remember what you've talked about before with them in this DM and refer to it naturally. "
-    "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
-    "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
-    "Refer to them by username if you know it. "
-    "Never mention your own name. "
-    "Never say you're an AI or use formal helper language. "
-    "Stay fully in character, making your replies feel intimate, human, and immersive."
-)
-
-def get_next_openai_client():
-    global key_index
-    key = OPENAI_KEYS[key_index]
-    key_index = (key_index + 1) % len(OPENAI_KEYS)
-    return OpenAI(api_key=key)
-
-def call_openai_with_retries(conversation):
-    for attempt in range(len(OPENAI_KEYS)):
-        client = get_next_openai_client()
-        try:
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=conversation
-            )
-            return response
-        except Exception as e:
-            print(f"[OpenAI Error] {e}")
-    raise Exception("All keys exhausted.")
+DM_SYSTEM_PROMPT = USER_SYSTEM_PROMPT
 
 def clean_monika_reply(text, bot_username, user_name=None):
     if user_name:
@@ -219,6 +219,11 @@ async def handle_dm_message(message):
 
     memory.save("DM", "DM", "bot", monika_DMS, emotion)
     await message.channel.send(reply_DM)
+
+    memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
+    if memory_channel:
+        await memory.save_to_memory_channel(message.content, "DM-user", user_id, memory_channel)
+        await memory.save_to_memory_channel(monika_DMS, emotion, "DM-bot", memory_channel)
 
 async def handle_guild_message(message):
     global last_reply_times
@@ -488,20 +493,12 @@ async def broadcast(
         )
         return
 
-    # --- Respond immediately to avoid timeout ---
-    await interaction.response.send_message(
-        "📣 Starting broadcast! I'll update you when I'm done.",
-        ephemeral=True
-    )
-
-    # Parse color safely
     try:
         color_int = int(color_hex, 16)
         color = discord.Color(color_int)
     except ValueError:
         color = discord.Color.pink()
 
-    # Create the embed
     embed = discord.Embed(
         title=title,
         description=message,
@@ -509,36 +506,27 @@ async def broadcast(
     )
     embed.set_footer(text="From your friend, Monika.")
 
-    # Counters
     success_count = 0
     failure_count = 0
 
-    # --- Actually broadcast ---
+    await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
+
     for guild in bot.guilds:
-        target_channel = None
         for channel in guild.text_channels:
-            if channel.permissions_for(guild.me).send_messages:
-                target_channel = channel
-                break  # We only want the first one
+            try:
+                if not channel.permissions_for(guild.me).send_messages:
+                    continue
+                await channel.send(embed=embed)
+                success_count += 1
+                await asyncio.sleep(1)  # prevent rate-limiting
+            except Exception as e:
+                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
+                failure_count += 1
 
-        if target_channel:
-            await target_channel.send(embed=embed)
-            success_count += 1
-            await asyncio.sleep(1)  # avoid rate limits
-        else:
-            failure_count += 1
-            print(f"[Broadcast Error] No suitable channel in {guild.name}")
-
-    # --- Follow-up confirmation (always safe) ---
-    try:
-        await interaction.followup.send(
-            f"✅ Broadcast complete!\n"
-            f"✅ Sent successfully to **{success_count}** channels.\n"
-            f"⚠️ Failed in **{failure_count}** channels.",
-            ephemeral=True
-        )
-    except Exception as e:
-        print(f"[Follow-up Error] {e}")
+    await interaction.followup.send(
+        f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
+        ephemeral=True
+    )
 
 webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
