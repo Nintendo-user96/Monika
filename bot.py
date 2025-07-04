@@ -493,7 +493,13 @@ async def broadcast(
     await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
 
     for guild in bot.guilds:
-        for channel in guild.text_channels:
+        target_channel = discord.utils.find(
+            lambda c: c.permissions_for(guild.me).send_messages,
+            guild.text_channels
+        )
+        if not target_channel:
+            continue
+        await target_channel.send(embed=embed)
             try:
                 if not channel.permissions_for(guild.me).send_messages:
                     continue
