@@ -33,7 +33,7 @@ openai_key_index = 0
 def get_next_openai_client():
     global openai_key_index
     if not OPENAI_KEYS:
-        raise Exception("[OpenAI] No API keys configured!")
+        raise Exception("[OpenAI] No API keys available!")
     key = OPENAI_KEYS[openai_key_index]
     openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
     return OpenAI(api_key=key)
@@ -43,18 +43,19 @@ async def call_openai_with_retries(conversation):
     for _ in range(attempts):
         client = get_next_openai_client()
         try:
-            return await client.chat.completions.acreate(
+            response = await client.chat.completions.acreate(
                 model="gpt-3.5-turbo",
                 messages=conversation
             )
+            return response
         except Exception as e:
             if "429" in str(e):
-                print("[OpenAI] 429 Rate Limit hit. Rotating key...")
-                await asyncio.sleep(1)
+                print("[OpenAI] 429 Rate Limit. Trying next key...")
+                await asyncio.sleep(1)  # tiny delay
             else:
-                print(f"[OpenAI] Other error: {e}")
+                print(f"[OpenAI Error] {e}")
                 raise
-    raise Exception("All OpenAI keys exhausted.")
+    raise Exception("All OpenAI keys exhausted! Please slow down.")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
@@ -183,14 +184,10 @@ async def handle_dm_message(message):
         response = call_openai_with_retries(conversation)
 
         monika_DMS = response.choices[0].message.content.strip()
-        if "monika" in monika_DMS.lower():
-            monika_DMS = monika_DMS.replace("Monika", username).replace("monika", username)
-            emotion = "neutral"
-        else:
-            emotion = await expression_handler.classify(monika_DMS, openai_client)
+        emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
     except Exception as e:
         print(f"[OpenAI ERROR] {e}")
-        monika_DMS = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
+        monika_reply = "Ahaha... Sorry, I glitched there."
         emotion = "error"
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
@@ -245,14 +242,10 @@ async def handle_guild_message(message):
         reply_response = call_openai_with_retries(conversation)
 
         monika_reply = reply_response.choices[0].message.content.strip()
-        if "monika" in monika_reply.lower():
-            monika_reply = monika_reply.replace("Monika", username).replace("monika", username)
-            emotion = "neutral"
-        else:
-            emotion = await expression_handler.classify(monika_reply, openai_client)
+        emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        monika_reply = "Ahaha... Sorry, I glitched for a moment there. Can you say that again?"
+        monika_reply = "Ahaha... Sorry, I glitched there."
         emotion = "error"
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
