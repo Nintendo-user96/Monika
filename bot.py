@@ -213,11 +213,21 @@ async def handle_dm_message(message):
 
     try:
         response = await call_openai_with_retries(conversation)
-        monika_DMS = response.choices[0].message.content.strip()
-        emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
+
+        if response and response.choices and response.choices[0].message and response.choices[0].message.content:
+            monika_DMS = response.choices[0].message.content.strip()
+            if not monika_DMS:
+                print("[OpenAI] Blank response content. Using safe fallback.")
+                monika_DMS = "Mmm... I'm thinking. Could you say that again?"
+            emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
+        else:
+            print("[OpenAI] Response is invalid or empty.")
+            monika_DMS = "I'm not sure what to say right now. Can you ask me again?"
+            emotion = "error"
+
     except Exception as e:
         print(f"[OpenAI ERROR] {e}")
-        monika_DMS = "Ahaha... Sorry, I glitched there."
+        monika_DMS = "Ahaha... I lost my train of thought! Can you repeat that?"
         emotion = "error"
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
@@ -270,11 +280,21 @@ async def handle_guild_message(message):
 
     try:
         response = await call_openai_with_retries(conversation)
-        monika_reply = response.choices[0].message.content.strip()
-        emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
+
+        if response and response.choices and response.choices[0].message and response.choices[0].message.content:
+            monika_reply = response.choices[0].message.content.strip()
+            if not monika_reply:
+                print("[OpenAI] Blank response content. Using safe fallback.")
+                monika_reply = "Hm... that's interesting! Can you tell me more?"
+            emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
+        else:
+            print("[OpenAI] Response is invalid or empty.")
+            monika_reply = "I wasn't sure what to say! Try again?"
+            emotion = "error"
+
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        monika_reply = "Ahaha... Sorry, I glitched there."
+        monika_reply = "Ehehe... Sorry! My mind went blank. Can you say that again?"
         emotion = "error"
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
@@ -388,11 +408,23 @@ async def monika_idle_conversation_task():
                 ]
 
                 response = await call_openai_with_retries(idle_prompt)
-                monika_message = response.choices[0].message.content.strip()
-            except Exception as e:
-                print(f"[Idle GPT Error] {e}")
-                monika_message = f"{chosen_user.mention}, ...I wanted to say something, but I lost my words."
 
+                if response and response.choices and response.choices[0].message and response.choices[0].message.content:
+                    monika_message = response.choices[0].message.content.strip()
+                    if not monika_message:
+                        print("[OpenAI] Blank response content. Using safe fallback.")
+                        monika_message = "Hm... that's interesting! Can you tell me more?"
+                    emotion = await expression_handler.classify(monika_message, get_next_openai_client())
+                else:
+                    print("[OpenAI] Response is invalid or empty.")
+                    monika_message = "I wasn't sure what to say! Try again?"
+                    emotion = "error"
+
+            except Exception as e:
+                print(f"[OpenAI Error] {e}")
+                monika_message = f"{chosen_user.mention}, ...I wanted to say something, but I lost my words."
+                emotion = "error"
+                
             async with channel.typing():
                 await asyncio.sleep(2)
                 await channel.send(monika_message)
