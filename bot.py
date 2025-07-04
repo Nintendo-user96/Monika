@@ -70,7 +70,7 @@ NO_CHAT_CHANNELS = [
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-openai_client = OpenAI(api_key=OPENAI_KEYS)
+client = get_next_openai_client()
 memory = MemoryManager()
 expression_handler = ExpressionHandler()
 sprite_url_cache = {}
