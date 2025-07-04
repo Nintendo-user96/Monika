@@ -52,7 +52,7 @@ async def call_openai_with_retries(conversation):
                 raise ValueError("Invalid conversation passed to OpenAI. Must be a list of messages.")
 
             # Call the API
-            response = await client.chat.completions.acreate(
+            response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=conversation
             )
