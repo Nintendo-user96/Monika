@@ -296,6 +296,8 @@ async def handle_guild_message(message):
     user_id = str(message.author.id)
     guild_id = str(message.guild.id)
     channel_id = str(message.channel.id)
+    guild_name = str(message.guild.name)
+    channel_name = str(message.channel.name)
     username = message.author.display_name
 
     memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "neutral")
