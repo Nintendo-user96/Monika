@@ -15,10 +15,13 @@ class MemoryManager:
             .setdefault(guild_id, {}) \
             .setdefault(channel_id, {}) \
             .setdefault(user_id, []) \
-            .setdefault(guild_name, {}) \
-            .setdefault(channel_name, {}) \
-            .setdefault(username, []) \
             .append({
+                "guild_id": guild_id,
+                "guild_name": guild_name,
+                "channel_id": channel_id,
+                "channel_name": channel_name,
+                "user_id": user_id,
+                "username": username,
                 "role": role,
                 "content": content,
                 "emotion": emotion,
