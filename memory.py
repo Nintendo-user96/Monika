@@ -91,19 +91,16 @@ class MemoryManager:
                 if not msg.content:
                     continue
 
-                prefix, rest = msg.content.split("] ", 1)
-                if " | Emotion: " in rest:
-                    content, emotion = rest.split(" | Emotion: ", 1)
-                else:
-                    content, emotion = rest, "neutral"
-
-                parts = content.split(": ", 2)
-                if len(parts) < 3:
+                # Parse the log format
+                first_line, *rest = msg.content.split("\n")
+                if " | Emotion: " not in first_line:
                     continue
 
-                user_id = parts[1].strip()
-                text = parts[2].strip()
+                header, emotion_part = first_line.split(" | Emotion: ", 1)
+                emotion = emotion_part.strip()
+                timestamp_part, server_part, channel_part, user_part = header.split(" | ")
 
+                # Extract fields
                 guild_name, guild_id = self._parse_name_and_id(server_part, "Server")
                 channel_name, channel_id = self._parse_name_and_id(channel_part, "Channel")
                 username, user_id = self._parse_name_and_id(user_part, "User")
