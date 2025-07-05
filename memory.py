@@ -16,7 +16,7 @@ class MemoryManager:
             .setdefault(channel_id, {}) \
             .setdefault(user_id, []) \
             .append({
-                "username": username
+                "username": username,
                 "role": role,
                 "content": content,
                 "emotion": emotion,
