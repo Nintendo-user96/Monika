@@ -36,7 +36,12 @@ class MemoryManager:
             return
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] UserID: {user_id}: {content} ChannelID: {channel_id}, serverID: {guild_id}| Emotion: {emotion}"
+        log_message = (
+            f"[{timestamp}] Server: {guild_name} ({guild_id}) | "
+            f"Channel: {channel_name} ({channel_id}) | "
+            f"User: {username} ({user_id}) | Emotion: {emotion}\n"
+            f"Content: {content}"
+        )
 
         try:
             await memory_channel.send(log_message)
