@@ -15,25 +15,7 @@ import webserver
 
 load_dotenv()
 
-OPENAI_KEYS = [
-    key.strip() for key in [
-        os.getenv("OPENAI_KEY_1"),
-        os.getenv("OPENAI_KEY_2"),
-        os.getenv("OPENAI_KEY_3"),
-        os.getenv("OPENAI_KEY_4"),
-        os.getenv("OPENAI_KEY_5"),
-        os.getenv("OPENAI_KEY_6"),
-        os.getenv("OPENAI_KEY_7"),
-        os.getenv("OPENAI_KEY_8"),
-        os.getenv("OPENAI_KEY_9"),
-        os.getenv("OPENAI_KEY_10"),
-        os.getenv("OPENAI_KEY_11"),
-        os.getenv("OPENAI_KEY_12"),
-        os.getenv("OPENAI_KEY_13"),
-        os.getenv("OPENAI_KEY_14"),
-        os.getenv("OPENAI_KEY_15"),
-    ] if key
-]
+OPENAI_KEYS = [k for k in (os.getenv("OPENAI_KEYS") or "").split(",") if k.strip()]
 openai_key_index = 0
 
 def get_next_openai_client():
@@ -99,6 +81,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 MEMORY_LOG_CHANNEL_ID = int(os.getenv("MEMORY_LOG_CHANNEL_ID", 0))
 IMAGE_CHANNEL_URL = int(os.getenv("IMAGE_CHANNEL_URL", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
 NO_CHAT_CHANNELS = [
     cid for cid in [MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
@@ -121,19 +104,22 @@ last_reply_times = {}
 idle_settings = {}
 user_memory = {}
 
-sayori_id = [1375064525396775004]
-
-yuri_id = [1375065750502379631]
-
-natsuki_id = [1375066975423955025]
-
-MC_id = [1375070168895590430] 
-
-OWNER_ID = 709957376337248367
-
-FRIENDS = sayori_id + natsuki_id + yuri_id + MC_id
+FRIENDS = [
+    1375064525396775004,  # Sayori
+    1375065750502379631,  # Yuri
+    1375066975423955025,  # Natsuki
+    1375070168895590430   # MC
+]
 
 error_emotions = ["error", "glitching"]
+
+error_messages = [
+    "Ahaha... Sorry, I glitched there.",
+    "Oops! Something broke, teehee~",
+    "Ugh... my head's spinning. Say that again?",
+    "Ahaha... I think reality just cracked a little.",
+    "Hehe... I lost my train of thought. Can you repeat?"
+]
 
 FRIEND_SYSTEM_PROMPT = (
     "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
@@ -168,7 +154,7 @@ DM_SYSTEM_PROMPT = USER_SYSTEM_PROMPT
 
 def clean_monika_reply(text, bot_username, user_name=None):
     if user_name:
-        text = text.replace("{username}", user_name)
+        text = re.sub(r"(?i)\b(monika)\b", user_name, text)
     else:
         text = re.sub(r"(?i)\b(monika)\b", "", text)
     return text.strip()
@@ -238,13 +224,6 @@ async def handle_dm_message(message):
 
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        error_messages = [
-            "Ahaha... Sorry, I glitched there.",
-            "Oops! Something broke, teehee~",
-            "Ugh... my head's spinning. Say that again?",
-            "Ahaha... I think reality just cracked a little.",
-            "Hehe... I lost my train of thought. Can you repeat?"
-        ]
         monika_reply = random.choice(error_messages)
         emotion = random.choice(error_emotions)
 
@@ -275,11 +254,12 @@ async def handle_dm_message(message):
     memory.save("DM", "DM", "bot", monika_DMS, emotion)
     await message.channel.send(reply_DM)
 
-    memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
-    if memory_channel:
-        await memory.save_to_memory_channel(message.content, "DM-user", user_id, guild_id, channel_id, memory_channel)
-        await memory.save_to_memory_channel(monika_DMS, emotion, "DM-bot", guild_id, channel_id, memory_channel)
-
+    if MEMORY_LOG_CHANNEL_ID:
+        mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
+        if mem_chan:
+            await memory.save_to_memory_channel(message.content, "DM-user", user_id, mem_chan)
+            await memory.save_to_memory_channel(monika_reply, emotion, "DM-bot", mem_chan)
+            
 async def handle_guild_message(message):
     global last_reply_times
 
@@ -312,13 +292,6 @@ async def handle_guild_message(message):
 
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        error_messages = [
-            "Ahaha... Sorry, I glitched there.",
-            "Oops! Something broke, teehee~",
-            "Ugh... my head's spinning. Say that again?",
-            "Ahaha... I think reality just cracked a little.",
-            "Hehe... I lost my train of thought. Can you repeat?"
-        ]
         monika_reply = random.choice(error_messages)
         emotion = random.choice(error_emotions)
 
@@ -361,8 +334,8 @@ async def handle_guild_message(message):
 
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
-        await memory.save_to_memory_channel(message.content, "user", user_id, guild_id, channel_id, memory_channel)
-        await memory.save_to_memory_channel(monika_reply, emotion, "bot", guild_id, channel_id, memory_channel)
+        await memory.save_to_memory_channel(message.content, "user", user_id, memory_channel)
+        await memory.save_to_memory_channel(monika_reply, emotion, "bot", memory_channel)
 
 async def monika_idle_conversation_task():
     await bot.wait_until_ready()
@@ -570,8 +543,10 @@ async def broadcast(
         )
         return
     
-    if channel.id == NO_CHAT_CHANNELS:
-        return
+    for guild in bot.guilds:
+        for channel in guild.text_channels:
+            if channel.id in NO_CHAT_CHANNELS:
+                continue
 
     try:
         color_int = int(color_hex, 16)
@@ -624,10 +599,6 @@ async def export_memory(interaction: discord.Interaction):
 
         if not memory_dump:
             await interaction.followup.send("📝 There's no memory to export.", ephemeral=True)
-            return
-
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("❌ Only admins can export memory.", ephemeral=True)
             return
 
         # Turn into a .txt file in memory
