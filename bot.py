@@ -154,9 +154,9 @@ DM_SYSTEM_PROMPT = USER_SYSTEM_PROMPT
 
 def clean_monika_reply(text, bot_username, user_name=None):
     if user_name:
-        text = re.sub(r"(?i)\b(monika)\b", user_name, text)
+        text = re.sub(r"(?i)\\b(monika)\\b", user_name, text)
     else:
-        text = re.sub(r"(?i)\b(monika)\b", "", text)
+        text = re.sub(r"(?i)\\b(monika)\\b", "", text)
     return text.strip()
 
 def is_allowed_bot(message):
@@ -230,7 +230,7 @@ async def handle_dm_message(message):
 
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        monika_reply = random.choice(error_messages)
+        monika_DMS = random.choice(error_messages)
         emotion = random.choice(error_emotions)
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
@@ -257,10 +257,37 @@ async def handle_dm_message(message):
 
     reply_DM = f"{monika_DMS}\n[{emotion}]({sprite_link})"
 
-    memory.save("DM", "DM", "bot", monika_DMS, emotion)
+    # Save bot reply ONCE
+    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion)
+
     await message.channel.send(reply_DM)
 
-    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion)
+    # Log both messages to memory channel
+    if MEMORY_LOG_CHANNEL_ID:
+        mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
+        if mem_chan:
+            await memory.save_to_memory_channel(
+                message.content,
+                "DM-user",
+                user_id,
+                username,
+                guild_id,
+                guild_name,
+                channel_id,
+                channel_name,
+                mem_chan
+            )
+            await memory.save_to_memory_channel(
+                monika_DMS,
+                emotion,
+                "bot",
+                bot.user.name,
+                guild_id,
+                guild_name,
+                channel_id,
+                channel_name,
+                mem_chan
+            )
 
     # Log to memory channel
     if MEMORY_LOG_CHANNEL_ID:
@@ -300,7 +327,12 @@ async def handle_guild_message(message):
     channel_name = str(message.channel.name)
     username = message.author.display_name
 
-    memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "neutral")
+    memory.save(
+        guild_id, guild_name,
+        channel_id, channel_name,
+        user_id, username,
+        message.content, "neutral"
+    )
 
     system_content = FRIEND_SYSTEM_PROMPT if is_friend_bot else USER_SYSTEM_PROMPT
     conversation = memory.get_context(guild_id, channel_id, user_id)
@@ -347,11 +379,6 @@ async def handle_guild_message(message):
             print(f"[Sprite Upload Error] {e}")
             sprite_link = "https://example.com/error.png"
 
-    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion)
-
-    if not monika_reply.strip():
-        monika_reply = "...I'm not sure what to say."
-
     reply_text = f"{monika_reply}\n[{emotion}]({sprite_link})"
 
     if message.channel.permissions_for(message.guild.me).send_messages:
@@ -363,17 +390,27 @@ async def handle_guild_message(message):
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
+    memory.save(
+        guild_id, guild_name,
+        channel_id, channel_name,
+        "bot", bot.user.name,
+        monika_reply, emotion
+    )
+
+    last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
+
+    # Log to memory channel if set
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
         await memory.save_to_memory_channel(
             message.content,
-            "user",
+            "neutral",
             user_id,
             username,
             guild_id,
-            message.guild.name,
+            guild_name,
             channel_id,
-            message.channel.name,
+            channel_name,
             memory_channel
         )
         await memory.save_to_memory_channel(
@@ -382,13 +419,12 @@ async def handle_guild_message(message):
             "bot",
             bot.user.name,
             guild_id,
-            message.guild.name,
+            guild_name,
             channel_id,
-            message.channel.name,
+            channel_name,
             memory_channel
         )
-
-
+        
 async def monika_idle_conversation_task():
     await bot.wait_until_ready()
     global last_user_interaction
