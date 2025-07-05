@@ -104,12 +104,20 @@ class MemoryManager:
                 user_id = parts[1].strip()
                 text = parts[2].strip()
 
-                guild_id = str(msg.guild.id) if msg.guild else "global"
-                channel_id = str(msg.channel.id)
+                guild_name, guild_id = self._parse_name_and_id(server_part, "Server")
+                channel_name, channel_id = self._parse_name_and_id(channel_part, "Channel")
+                username, user_id = self._parse_name_and_id(user_part, "User")
+
+                content = "\n".join(rest).replace("Content: ", "", 1).strip()
 
                 role = "assistant" if user_id == "bot" else "user"
 
-                self.save(guild_id, channel_id, user_id, text, emotion.strip(), role=role)
+                self.save(
+                    guild_id, guild_name,
+                    channel_id, channel_name,
+                    user_id, username,
+                    content, emotion, role=role
+                )
 
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
