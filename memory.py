@@ -109,25 +109,17 @@ class MemoryManager:
 
                 role = "assistant" if user_id == "bot" else "user"
 
-                self.save(
-                    guild_id, guild_name,
-                    channel_id, channel_name,
-                    user_id, username,
-                    content, emotion, role=role
-                )
-
+                self.save(guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion, role=role)
+                
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
 
         print("[Memory] History load complete.")
         
     def _parse_name_and_id(self, section, label):
-        """
-        Helper to split 'Label: Name (ID)' into (Name, ID)
-        """
+        """ Helper to split 'Label: Name (ID)' into (Name, ID) """
         if f"{label}:" not in section:
             return "Unknown", "unknown"
-
         try:
             after_label = section.split(f"{label}: ", 1)[1].strip()
             name_part, id_part = after_label.rsplit("(", 1)
