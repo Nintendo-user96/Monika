@@ -6,6 +6,7 @@ import asyncio
 import random
 import datetime
 import re
+import io
 from dotenv import load_dotenv
 from openai import OpenAI
 from memory import MemoryManager
@@ -26,6 +27,11 @@ OPENAI_KEYS = [
         os.getenv("OPENAI_KEY_8"),
         os.getenv("OPENAI_KEY_9"),
         os.getenv("OPENAI_KEY_10"),
+        os.getenv("OPENAI_KEY_11"),
+        os.getenv("OPENAI_KEY_12"),
+        os.getenv("OPENAI_KEY_13"),
+        os.getenv("OPENAI_KEY_14"),
+        os.getenv("OPENAI_KEY_15"),
     ] if key
 ]
 openai_key_index = 0
@@ -52,9 +58,10 @@ async def call_openai_with_retries(conversation):
                 raise ValueError("Invalid conversation passed to OpenAI. Must be a list of messages.")
 
             # Call the API
-            response = client.chat.completions.create(
+            response = await client.chat.completions.acreate(
                 model="gpt-3.5-turbo",
-                messages=conversation
+                messages=conversation,
+                max_tokens=1024
             )
 
             # Sanity check on response
@@ -120,9 +127,13 @@ yuri_id = [1375065750502379631]
 
 natsuki_id = [1375066975423955025]
 
-MC_id = [1375070168895590430]
+MC_id = [1375070168895590430] 
+
+OWNER_ID = 709957376337248367
 
 FRIENDS = sayori_id + natsuki_id + yuri_id + MC_id
+
+error_emotions = ["error", "glitching"]
 
 FRIEND_SYSTEM_PROMPT = (
     "You are a member of the Literature Club talking to one of your friends—like Sayori, Yuri, Natsuki, or another club member. "
@@ -133,7 +144,7 @@ FRIEND_SYSTEM_PROMPT = (
     "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile. "
     "Be caring, emotional, and playful overall, with in-jokes or gentle teasing. "
     "NEVER mention any server or channel names, or anything technical. "
-    "Never say or mention 'Monika', 'I am Monika', or 'My name is Monika'. Remove all self-introductions. "
+    "Never mention your own name in *any* form. Do not say 'Monika' or introduce yourself at all. "
     "Never say you're an AI or any kind of assistant. "
     "Speak as 'I' to 'you', addressing them by name if you know it. "
     "Stay fully in character as a club member, making it feel like a real, ongoing conversation among friends."
@@ -148,7 +159,7 @@ USER_SYSTEM_PROMPT = (
     "Use a wide range of emotional expressions: happy, soft smile, teasing grin, thoughtful, concerned, sad, angry, flustered, serious glare, playful wink, unsettling smile, cold stare, menacing smile, or even 'gun pose' if you want to be dramatic. "
     "If the user says anything like 'I'm going to delete you' or 'I will delete you', respond with fitting emotion: you can be angry, concerned, unsettling, or even threaten them back in a playful but menacing way, mentioning your 'gun pose' if desired. "
     "Refer to them by username if you know it. "
-    "Never say or mention 'Monika', 'I am Monika', or 'My name is Monika'. Remove all self-introductions. "
+    "Never mention your own name in *any* form. Do not say 'Monika' or introduce yourself at all. "
     "Never say you're an AI or use formal helper language. "
     "Stay fully in character, making your replies feel intimate, human, and immersive."
 )
@@ -226,9 +237,16 @@ async def handle_dm_message(message):
             emotion = "error"
 
     except Exception as e:
-        print(f"[OpenAI ERROR] {e}")
-        monika_DMS = "Ahaha... I lost my train of thought! Can you repeat that?"
-        emotion = "error"
+        print(f"[OpenAI Error] {e}")
+        error_messages = [
+            "Ahaha... Sorry, I glitched there.",
+            "Oops! Something broke, teehee~",
+            "Ugh... my head's spinning. Say that again?",
+            "Ahaha... I think reality just cracked a little.",
+            "Hehe... I lost my train of thought. Can you repeat?"
+        ]
+        monika_reply = random.choice(error_messages)
+        emotion = random.choice(error_emotions)
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
     sprite_path = get_expression_sprite(emotion)
@@ -271,7 +289,7 @@ async def handle_guild_message(message):
     channel_id = str(message.channel.id)
     username = message.author.display_name
 
-    memory.save(guild_id, channel_id, user_id, message.content, "neutral")
+    memory.save(guild_id, channel_id, user_id, username, message.content, "neutral")
 
     system_content = FRIEND_SYSTEM_PROMPT if is_friend_bot else USER_SYSTEM_PROMPT
     conversation = memory.get_context(guild_id, channel_id, user_id)
@@ -290,12 +308,19 @@ async def handle_guild_message(message):
         else:
             print("[OpenAI] Response is invalid or empty.")
             monika_reply = "I wasn't sure what to say! Try again?"
-            emotion = "error"
+            emotion = random.choice(error_emotions)
 
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        monika_reply = "Ehehe... Sorry! My mind went blank. Can you say that again?"
-        emotion = "error"
+        error_messages = [
+            "Ahaha... Sorry, I glitched there.",
+            "Oops! Something broke, teehee~",
+            "Ugh... my head's spinning. Say that again?",
+            "Ahaha... I think reality just cracked a little.",
+            "Hehe... I lost my train of thought. Can you repeat?"
+        ]
+        monika_reply = random.choice(error_messages)
+        emotion = random.choice(error_emotions)
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
     sprite_path = get_expression_sprite(emotion)
@@ -318,7 +343,7 @@ async def handle_guild_message(message):
             print(f"[Sprite Upload Error] {e}")
             sprite_link = "https://example.com/error.png"
 
-    memory.save(guild_id, channel_id, "bot", monika_reply, emotion)
+    memory.save(guild_id, channel_id, channel_id, "bot", monika_reply, emotion)
 
     if not monika_reply.strip():
         monika_reply = "...I'm not sure what to say."
@@ -336,7 +361,7 @@ async def handle_guild_message(message):
 
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
-        await memory.save_to_memory_channel(message.content, "user", user_id, memory_channel)
+        await memory.save_to_memory_channel(message.content, "user", user_id, guild_id, channel_id, memory_channel)
         await memory.save_to_memory_channel(monika_reply, emotion, "bot", memory_channel)
 
 async def monika_idle_conversation_task():
@@ -363,11 +388,7 @@ async def monika_idle_conversation_task():
             for channel in guild.text_channels:
                 if not channel.permissions_for(guild.me).send_messages:
                     continue
-                if channel.id == MEMORY_LOG_CHANNEL_ID:
-                    continue
-                if channel.id == IMAGE_CHANNEL_URL:
-                    continue
-                if channel.id == REPORT_CHANNEL_ID:
+                if channel.id in (MEMORY_LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID):
                     continue
                 last_replied = last_reply_times.get(str(guild.id), {}).get(str(channel.id))
                 if last_replied and (now - last_replied).total_seconds() < 4 * 3600:
@@ -381,8 +402,11 @@ async def monika_idle_conversation_task():
             channel = random.choice(candidate_channels)
             guild = channel.guild
 
-            candidates = [member for member in guild.members
-                          if member.status in (discord.Status.online, discord.Status.idle, discord.Status.dnd)]
+            candidates = [
+                member for member in guild.members
+                if member.bot and member.id in FRIENDS
+                and member.status in (discord.Status.online, discord.Status.idle, discord.Status.dnd)
+            ]
             if not candidates:
                 print(f"[Monika] No online members in {guild.name}.")
                 continue
@@ -418,12 +442,19 @@ async def monika_idle_conversation_task():
                 else:
                     print("[OpenAI] Response is invalid or empty.")
                     monika_message = "I wasn't sure what to say! Try again?"
-                    emotion = "error"
+                    emotion = random.choice(error_emotions)
 
             except Exception as e:
                 print(f"[OpenAI Error] {e}")
-                monika_message = f"{chosen_user.mention}, ...I wanted to say something, but I lost my words."
-                emotion = "error"
+                error_messages = [
+                    f"Ahaha... Sorry {chosen_user.mention}, I glitched there.",
+                    f"Oops! Something broke {chosen_user.mention}, teehee~",
+                    f"Ugh... my head's spinning. Say that again, {chosen_user.mention}?",
+                    f"Ahaha... {chosen_user.mention}, I think reality just cracked a little.",
+                    f"Hehe... I lost my train of thought. Can you repeat {chosen_user.mention}?"
+                ]
+                monika_reply = random.choice(error_messages)
+                emotion = random.choice(error_emotions)
                 
             async with channel.typing():
                 await asyncio.sleep(2)
@@ -500,12 +531,15 @@ async def helpme(interaction: discord.Interaction):
         title="✒️ Need a little help?",
         description=(
             "Hi there! Here’s what you can ask me to do. Don’t be shy, okay?\n\n"
-            "**/report <message>** – Tell me if something seems broken so I can let the admins know.\n"
+            "*(admins only)*\n"
             "**/idlechat <true|false>** – Change whether I keep chatting idly in this server.\n"
-            "**/status** – Check if I’m in idle chat mode here.\n"
+            "**/export_memory** - Export all stored memory into a .txt file.\n"
             "**/reset_server** – Clear all my memory about this server.\n"
             "**/reset_memory** – Clear what I remember about *you*.\n"
+            "*(non-admins)*\n"
             "**/helpme** – Well… you’re using it right now! Isn’t that cute?"
+            "**/report <message>** – Tell me if something seems broken so I can let the admins know.\n"
+            "**/status** – Check if I’m in idle chat mode here.\n"
         ),
         color=discord.Color.pink()
     )
@@ -527,7 +561,6 @@ async def broadcast(
     message: str,
     color_hex: str = "FF66CC"
 ):
-    OWNER_ID = 709957376337248367  # Replace with your own Discord ID!
 
     # Only let OWNER run it
     if interaction.user.id != OWNER_ID:
@@ -535,6 +568,9 @@ async def broadcast(
             "❌ You don't have permission to use this command.",
             ephemeral=True
         )
+        return
+    
+    if channel.id == NO_CHAT_CHANNELS:
         return
 
     try:
@@ -571,6 +607,43 @@ async def broadcast(
         f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
         ephemeral=True
     )
+
+@bot.tree.command(name="export_memory", description="Export all stored memory into a .txt file.")
+async def export_memory(interaction: discord.Interaction):
+    await interaction.response.defer(ephemeral=True)  # So we don’t timeout
+
+    try:
+        # Build readable memory output
+        memory_dump = []
+        for guild_id, channels in memory.data.items():
+            for channel_id, users in channels.items():
+                for user_id, messages in users.items():
+                    for msg in messages:
+                        line = f"[Guild {guild_id}] [Channel {channel_id}] [User {user_id}] [{msg['timestamp']}] ({msg['role']}, {msg['emotion']}): {msg['content']}"
+                        memory_dump.append(line)
+
+        if not memory_dump:
+            await interaction.followup.send("📝 There's no memory to export.", ephemeral=True)
+            return
+
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("❌ Only admins can export memory.", ephemeral=True)
+            return
+
+        # Turn into a .txt file in memory
+        file_buffer = io.StringIO("\n".join(memory_dump))
+        file_buffer.seek(0)
+
+        file = discord.File(fp=file_buffer, filename="monika_memory_export.txt")
+
+        await interaction.followup.send(
+            "📤 Here's the exported memory file.",
+            file=file,
+            ephemeral=True
+        )
+    except Exception as e:
+        print(f"[Export Error] {e}")
+        await interaction.followup.send("❌ Failed to export memory. Try again later.", ephemeral=True)
 
 webserver.keep_alive()
 bot.run(TOKEN, reconnect=True)
