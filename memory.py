@@ -5,7 +5,7 @@ class MemoryManager:
         # Nested structure: guild_id -> channel_id -> user_id -> list of messages
         self.data = {}
 
-    def save(self, guild_id, channel_id, user_id, user_name, content, emotion="neutral", role=None):
+    def save(self, guild_id, channel_id, user_id, username, content, emotion="neutral", role=None):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
@@ -22,15 +22,15 @@ class MemoryManager:
                 "timestamp": timestamp
             })
 
-        print(f"[Memory] Saved, userID: {user_id}, username: {user_name}, channelID: {channel_id}, serverID: {guild_id}")
+        print(f"[Memory] Saved, userID: {user_id}, username: {username}, channelID: {channel_id}, serverID: {guild_id}")
 
-    async def save_to_memory_channel(self, content, emotion, user_id, memory_channel):
+    async def save_to_memory_channel(self, content, emotion, user_id, guild_id, channel_id, memory_channel):
         if not memory_channel:
             print("[Memory] No memory channel provided.")
             return
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] UserID: {user_id}: {content} | Emotion: {emotion}"
+        log_message = f"[{timestamp}] UserID: {user_id}: {content} ChannelID: {channel_id}, serverID: {guild_id}| Emotion: {emotion}"
 
         try:
             await memory_channel.send(log_message)
@@ -92,4 +92,4 @@ class MemoryManager:
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
 
-        print("[Memory]: loading complete.")
+        print("[Memory] History load complete.")
