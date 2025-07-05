@@ -57,8 +57,11 @@ class MemoryManager:
             print("[Memory] No memory channel provided.")
             return
 
+        # Escape pipes in user content so logs can be reliably split later
+        safe_content = content.replace("|", "\\|")
+
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] {guild_id} | {guild_name} | {channel_id} | {channel_name} | {user_id} | {username} | {content} | {emotion}"
+        log_message = f"[{timestamp}] {guild_id} | {guild_name} | {channel_id} | {channel_name} | {user_id} | {username} | {safe_content} | {emotion}"
 
         try:
             await memory_channel.send(log_message)
@@ -87,14 +90,14 @@ class MemoryManager:
                 timestamp_part, rest = line.split("] ", 1)
                 timestamp = timestamp_part.strip("[")  # e.g. "2025-07-03 12:34:56"
 
-                # Expected format:
-                # guildID | guildName | channelID | channelName | userID | username | content | emotion
                 parts = [p.strip() for p in rest.split(" | ")]
                 if len(parts) < 8:
                     print(f"[Memory Parse Warning] Skipping malformed line (too few fields): {line}")
                     continue
 
                 guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion = parts
+                # Unescape pipes in content
+                content = content.replace("\\|", "|")
 
                 role = "assistant" if user_id == "bot" else "user"
 
@@ -103,8 +106,11 @@ class MemoryManager:
                     .setdefault(channel_id, {}) \
                     .setdefault(user_id, []) \
                     .append({
+                        "guild_id": guild_id,
                         "guild_name": guild_name,
+                        "channel_id": channel_id,
                         "channel_name": channel_name,
+                        "user_id": user_id,
                         "username": username,
                         "role": role,
                         "content": content,
