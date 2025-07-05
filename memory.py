@@ -2,7 +2,7 @@ import datetime
 
 class MemoryManager:
     def __init__(self):
-        # Nested structure: guild_id -> channel_id -> user_id -> list of messages
+        # Structure: guild_id -> channel_id -> user_id -> list of messages
         self.data = {}
 
     def save(self, guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion="neutral", role=None):
@@ -28,26 +28,11 @@ class MemoryManager:
                 "timestamp": timestamp
             })
 
-        print(f"[Memory] Saved | Server: {guild_name} / ({guild_id}) | Channel: {channel_name} / ({channel_id}) | User: {username} / ({user_id})")
-
-    async def save_to_memory_channel(self, content, emotion, user_id, guild_id, channel_id, memory_channel):
-        if not memory_channel:
-            print("[Memory] No memory channel provided.")
-            return
-
-        timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = (
-            f"[{timestamp}] Server: {guild_name} ({guild_id}) | "
+        print(
+            f"[Memory] Saved | Server: {guild_name} ({guild_id}) | "
             f"Channel: {channel_name} ({channel_id}) | "
-            f"User: {username} ({user_id}) | Emotion: {emotion}\n"
-            f"Content: {content}"
+            f"User: {username} ({user_id}) | Role: {role} | Emotion: {emotion}"
         )
-
-        try:
-            await memory_channel.send(log_message)
-            print(f"[Memory] Logged to channel: {log_message}")
-        except Exception as e:
-            print(f"[Memory Channel Error] {e}")
 
     def get_context(self, guild_id, channel_id, user_id, limit=10):
         messages = []
@@ -73,6 +58,7 @@ class MemoryManager:
             return
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
         log_message = (
             f"[{timestamp}] Server: {guild_name} ({guild_id}) | "
             f"Channel: {channel_name} ({channel_id}) | "
@@ -114,16 +100,15 @@ class MemoryManager:
                 username, user_id = self._parse_name_and_id(user_part, "User")
 
                 content = "\n".join(rest).replace("Content: ", "", 1).strip()
-
                 role = "assistant" if user_id == "bot" else "user"
 
                 self.save(guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion, role=role)
-                
+
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
 
         print("[Memory] History load complete.")
-        
+
     def _parse_name_and_id(self, section, label):
         """ Helper to split 'Label: Name (ID)' into (Name, ID) """
         if f"{label}:" not in section:
@@ -134,4 +119,3 @@ class MemoryManager:
             return name_part.strip(), id_part.strip(")")
         except Exception:
             return "Unknown", "unknown"
-
