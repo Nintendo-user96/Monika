@@ -277,8 +277,8 @@ async def handle_dm_message(message):
 
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
-        await memory.save_to_memory_channel(message.content, "DM-user", user_id, memory_channel)
-        await memory.save_to_memory_channel(monika_DMS, emotion, "DM-bot", memory_channel)
+        await memory.save_to_memory_channel(message.content, "DM-user", user_id, guild_id, channel_id, memory_channel)
+        await memory.save_to_memory_channel(monika_DMS, emotion, "DM-bot", guild_id, channel_id, memory_channel)
 
 async def handle_guild_message(message):
     global last_reply_times
@@ -462,6 +462,11 @@ async def monika_idle_conversation_task():
 
             # Update last reply time
             last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
+        memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
+        if memory_channel:
+            await memory.save_to_memory_channel(message.content, "user", user_id, guild_id, channel_id, memory_channel)
+            await memory.save_to_memory_channel(monika_reply, emotion, "bot", guild_id, channel_id, memory_channel)
+
 
 # Idle chat command
 @bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
