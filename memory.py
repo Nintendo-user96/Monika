@@ -58,13 +58,7 @@ class MemoryManager:
             return
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-
-        log_message = (
-            f"[{timestamp}] Server: {guild_name} ({guild_id}) | "
-            f"Channel: {channel_name} ({channel_id}) | "
-            f"User: {username} ({user_id}) | Emotion: {emotion}\n"
-            f"Content: {content}"
-        )
+        log_message = f"[{timestamp}] {guild_id} | {guild_name} | {channel_id} | {channel_name} | {user_id} | {username} | {content} | {emotion}"
 
         try:
             await memory_channel.send(log_message)
@@ -85,37 +79,40 @@ class MemoryManager:
                 if not msg.content:
                     continue
 
-                # Parse the log format
-                first_line, *rest = msg.content.split("\n")
-                if " | Emotion: " not in first_line:
+                line = msg.content
+                if "] " not in line:
+                    print(f"[Memory Parse Warning] Skipping malformed line (no timestamp): {line}")
                     continue
 
-                header, emotion_part = first_line.split(" | Emotion: ", 1)
-                emotion = emotion_part.strip()
-                timestamp_part, server_part, channel_part, user_part = header.split(" | ")
+                timestamp_part, rest = line.split("] ", 1)
+                timestamp = timestamp_part.strip("[")  # e.g. "2025-07-03 12:34:56"
 
-                # Extract fields
-                guild_name, guild_id = self._parse_name_and_id(server_part, "Server")
-                channel_name, channel_id = self._parse_name_and_id(channel_part, "Channel")
-                username, user_id = self._parse_name_and_id(user_part, "User")
+                # Expected format:
+                # guildID | guildName | channelID | channelName | userID | username | content | emotion
+                parts = [p.strip() for p in rest.split(" | ")]
+                if len(parts) < 8:
+                    print(f"[Memory Parse Warning] Skipping malformed line (too few fields): {line}")
+                    continue
 
-                content = "\n".join(rest).replace("Content: ", "", 1).strip()
+                guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion = parts
+
                 role = "assistant" if user_id == "bot" else "user"
 
-                self.save(guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion, role=role)
+                self.data \
+                    .setdefault(guild_id, {}) \
+                    .setdefault(channel_id, {}) \
+                    .setdefault(user_id, []) \
+                    .append({
+                        "guild_name": guild_name,
+                        "channel_name": channel_name,
+                        "username": username,
+                        "role": role,
+                        "content": content,
+                        "emotion": emotion,
+                        "timestamp": timestamp
+                    })
 
             except Exception as e:
                 print(f"[Memory Parse Error] {e}")
 
         print("[Memory] History load complete.")
-
-    def _parse_name_and_id(self, section, label):
-        """ Helper to split 'Label: Name (ID)' into (Name, ID) """
-        if f"{label}:" not in section:
-            return "Unknown", "unknown"
-        try:
-            after_label = section.split(f"{label}: ", 1)[1].strip()
-            name_part, id_part = after_label.rsplit("(", 1)
-            return name_part.strip(), id_part.strip(")")
-        except Exception:
-            return "Unknown", "unknown"
