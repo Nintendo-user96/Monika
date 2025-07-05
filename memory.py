@@ -5,7 +5,7 @@ class MemoryManager:
         # Nested structure: guild_id -> channel_id -> user_id -> list of messages
         self.data = {}
 
-    def save(self, guild_id, channel_id, user_id, username, content, emotion="neutral", role=None):
+    def save(self, guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion="neutral", role=None):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
@@ -15,15 +15,17 @@ class MemoryManager:
             .setdefault(guild_id, {}) \
             .setdefault(channel_id, {}) \
             .setdefault(user_id, []) \
+            .setdefault(guild_name, {}) \
+            .setdefault(channel_name, {}) \
+            .setdefault(username, []) \
             .append({
-                "username": username,
                 "role": role,
                 "content": content,
                 "emotion": emotion,
                 "timestamp": timestamp
             })
 
-        print(f"[Memory] Saved, userID: {user_id}, username: {username}, channelID: {channel_id}, serverID: {guild_id}")
+        print(f"[Memory] Saved | Server: {guild_name} / ({guild_id}) | Channel: {channel_name} / ({channel_id}) | User: {username} / ({user_id})")
 
     async def save_to_memory_channel(self, content, emotion, user_id, guild_id, channel_id, memory_channel):
         if not memory_channel:
@@ -56,6 +58,25 @@ class MemoryManager:
 
         print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
+
+    async def save_to_memory_channel(self, content, emotion, user_id, username, guild_id, guild_name, channel_id, channel_name, memory_channel):
+        if not memory_channel:
+            print("[Memory] No memory channel provided.")
+            return
+
+        timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        log_message = (
+            f"[{timestamp}] Server: {guild_name} ({guild_id}) | "
+            f"Channel: {channel_name} ({channel_id}) | "
+            f"User: {username} ({user_id}) | Emotion: {emotion}\n"
+            f"Content: {content}"
+        )
+
+        try:
+            await memory_channel.send(log_message)
+            print(f"[Memory] Logged to channel: {log_message}")
+        except Exception as e:
+            print(f"[Memory Channel Error] {e}")
 
     async def load_history(self, client, MEMORY_LOG_CHANNEL_ID):
         log_channel = client.get_channel(MEMORY_LOG_CHANNEL_ID)
@@ -94,3 +115,18 @@ class MemoryManager:
                 print(f"[Memory Parse Error] {e}")
 
         print("[Memory] History load complete.")
+        
+    def _parse_name_and_id(self, section, label):
+        """
+        Helper to split 'Label: Name (ID)' into (Name, ID)
+        """
+        if f"{label}:" not in section:
+            return "Unknown", "unknown"
+
+        try:
+            after_label = section.split(f"{label}: ", 1)[1].strip()
+            name_part, id_part = after_label.rsplit("(", 1)
+            return name_part.strip(), id_part.strip(")")
+        except Exception:
+            return "Unknown", "unknown"
+
