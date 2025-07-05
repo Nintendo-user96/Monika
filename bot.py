@@ -334,7 +334,7 @@ async def handle_guild_message(message):
 
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
-        await memory.save_to_memory_channel(message.content, "user", user_id, "server", guild_id, "channel", channel_id, memory_channel)
+        await memory.save_to_memory_channel(message.content, "user", user_id, guild_id, channel_id, memory_channel)
         await memory.save_to_memory_channel(monika_reply, emotion, "bot", memory_channel)
 
 async def monika_idle_conversation_task():
