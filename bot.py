@@ -264,30 +264,30 @@ async def handle_dm_message(message):
 
     # Log to memory channel
     if MEMORY_LOG_CHANNEL_ID:
-    mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
-    if mem_chan:
-        await memory.save_to_memory_channel(
-            message.content,
-            "DM-user",
-            user_id,
-            username,
-            "DM",
-            "Direct Message",
-            "DM",
-            "Direct Message",
-            mem_chan
-        )
-        await memory.save_to_memory_channel(
-            monika_DMS,
-            emotion,
-            "bot",
-            bot.user.name,
-            "DM",
-            "Direct Message",
-            "DM",
-            "Direct Message",
-            mem_chan
-        )
+        mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
+        if mem_chan:
+            await memory.save_to_memory_channel(
+                message.content,
+                "DM-user",
+                user_id,
+                username,
+                "DM",
+                "Direct Message",
+                "DM",
+                "Direct Message",
+                mem_chan
+            )
+            await memory.save_to_memory_channel(
+                monika_DMS,
+                emotion,
+                "bot",
+                bot.user.name,
+                "DM",
+                "Direct Message",
+                "DM",
+                "Direct Message",
+                mem_chan
+            )
             
 async def handle_guild_message(message):
     global last_reply_times
