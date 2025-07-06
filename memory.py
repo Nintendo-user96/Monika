@@ -95,7 +95,7 @@ class MemoryManager:
                     print(f"[Memory Parse Warning] Skipping malformed line (too few fields): {line}")
                     continue
 
-                guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion = parts
+                guild_id, guild_name, channel_id, channel_name, user_id, username, role, content, emotion = parts
                 # Unescape pipes in content
                 content = content.replace("\\|", "|")
 
