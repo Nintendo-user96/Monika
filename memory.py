@@ -9,7 +9,7 @@ class MemoryManager:
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
-            role = "assistant" if user_id == "bot" else "user"
+            role = "monika" if user_id == "bot" else "user"
 
         self.data \
             .setdefault(guild_id, {}) \
@@ -47,7 +47,7 @@ class MemoryManager:
             if i < len(user_messages):
                 messages.append({"role": "user", "content": user_messages[i]["content"]})
             if i < len(bot_messages):
-                messages.append({"role": "assistant", "content": bot_messages[i]["content"]})
+                messages.append({"role": "monika", "content": bot_messages[i]["content"]})
 
         print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
@@ -61,7 +61,7 @@ class MemoryManager:
         safe_content = content.replace("|", "\\|")
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] Server name: {guild_name}, ID: ({guild_id}) | Channel name: {channel_name}, ID: ({channel_id}) | User Name: {username}, ID: ( {user_id}) | role: {role} | {safe_content} | {emotion}"
+        log_message = f"[{timestamp}] Server name: {guild_name}, ID: ({guild_id}) | Channel name: {channel_name}, ID: ({channel_id}) | User Name: {username}, ID: ( {user_id}) | Role: {role_str} | {safe_content} | {emotion}"
 
         try:
             await memory_channel.send(log_message)
@@ -99,7 +99,7 @@ class MemoryManager:
                 # Unescape pipes in content
                 content = content.replace("\\|", "|")
 
-                role = "assistant" if user_id == "bot" else "user"
+                role = "monika" if user_id == "bot" else "user"
 
                 self.data \
                     .setdefault(guild_id, {}) \
