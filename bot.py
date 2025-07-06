@@ -285,28 +285,8 @@ async def handle_dm_message(message):
     if MEMORY_LOG_CHANNEL_ID:
         mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
         if mem_chan:
-            await memory.save_to_memory_channel(
-                message.content,
-                "DM-user",
-                user_id,
-                username,
-                "DM",
-                "Direct Message",
-                "DM",
-                "Direct Message",
-                mem_chan
-            )
-            await memory.save_to_memory_channel(
-                monika_DMS,
-                emotion,
-                "bot",
-                bot.user.name,
-                "DM",
-                "Direct Message",
-                "DM",
-                "Direct Message",
-                mem_chan
-            )
+            await memory.save_to_memory_channel(message.content, "DM-user", user_id, username, "DM", "Direct Message", "DM", "Direct Message", mem_chan)
+            await memory.save_to_memory_channel(monika_DMS, emotion, "bot", bot.user.name, "DM", "Direct Message", "DM", "Direct Message", mem_chan)
             
 async def handle_guild_message(message):
     global last_reply_times
@@ -333,12 +313,14 @@ async def handle_guild_message(message):
             monika_reply = response.choices[0].message.content.strip()
             if not monika_reply:
                 print("[OpenAI] Blank response. Using error fallback.")
+                print(f"[OpenAI Error] {e}")
                 monika_reply = random.choice(error_messages)
                 emotion = random.choice(error_emotions)
             else:
                 emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
         else:
             print("[OpenAI] Invalid or empty. Using error fallback.")
+            print(f"[OpenAI Error] {e}")
             monika_reply = random.choice(error_messages)
             emotion = random.choice(error_emotions)
 
@@ -386,28 +368,8 @@ async def handle_guild_message(message):
     # Log to memory channel if set
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
-        await memory.save_to_memory_channel(
-            message.content,
-            "neutral",
-            user_id,
-            username,
-            guild_id,
-            guild_name,
-            channel_id,
-            channel_name,
-            memory_channel
-        )
-        await memory.save_to_memory_channel(
-            monika_reply,
-            emotion,
-            "bot",
-            bot.user.name,
-            guild_id,
-            guild_name,
-            channel_id,
-            channel_name,
-            memory_channel
-        )
+        await memory.save_to_memory_channel(message.content, "user", user_id, username, guild_id, guild_name, channel_id, channel_name, memory_channel)
+        await memory.save_to_memory_channel(monika_reply, emotion, "bot", bot.user.name, guild_id, guild_name, channel_id, channel_name, memory_channel)
         
 async def monika_idle_conversation_task():
     await bot.wait_until_ready()
