@@ -249,7 +249,7 @@ async def handle_dm_message(message):
             emotion = "error"
 
     except Exception as e:
-        print(f"[OpenAI Error] {e}")
+        print(f"[OpenAI Error] Response was invalid or empty in: {e}.")
         monika_DMS = random.choice(error_messages)
         emotion = random.choice(error_emotions)
 
@@ -365,11 +365,11 @@ async def handle_guild_message(message):
         if response and response.choices and response.choices[0].message and response.choices[0].message.content:
             monika_reply = response.choices[0].message.content.strip()
             if not monika_reply:
-                print("[OpenAI ERROR] {e}.")
+                print(f"[OpenAI Error] Response was invalid or empty in: {e}.")
                 monika_reply = "Hm... that's interesting! Can you tell me more?"
             emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
         else:
-            print("[OpenAI ERROR] {e}.")
+            print(f"[OpenAI Error] Response was invalid or empty in: {e}.")
             monika_reply = "I wasn't sure what to say! Try again?"
             emotion = random.choice(error_emotions)
 
