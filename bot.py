@@ -83,14 +83,13 @@ async def call_openai_with_retries(conversation):
 
         except Exception as e:
             last_exception = e
-            err_str = str(e)
-            if "429" in err_str or "rate limit" in err_str.lower():
-                print("[OpenAI] 429 Rate Limit error detected. Rotating to next key...")
-                await asyncio.sleep(2)  # Longer delay to be polite
-            else:
-                print(f"[OpenAI Error] {err_str}")
-                # For other errors, we might want to retry but let's wait a bit
+            if isinstance(e, openai.error.RateLimitError):
+                print("[OpenAI] Rate limit detected. Rotating keys.")
                 await asyncio.sleep(2)
+            else:
+                print(f"[OpenAI Error] {e}")
+                break
+
 
     print("[OpenAI] All keys exhausted or all attempts failed.")
     if last_exception:
@@ -616,11 +615,6 @@ async def broadcast(
             ephemeral=True
         )
         return
-    
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            if channel.id in NO_CHAT_CHANNELS:
-                continue
 
     try:
         color_int = int(color_hex, 16)
@@ -643,7 +637,7 @@ async def broadcast(
     for guild in bot.guilds:
         channel_to_use = None
         for channel in guild.text_channels:
-            if channel.id in NO_CHAT_CHANNELS:
+            if channel.id in IMAGE_CHANNEL_URL:
                 continue
             if channel.permissions_for(guild.me).send_messages:
                 channel_to_use = channel
