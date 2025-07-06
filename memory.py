@@ -52,7 +52,7 @@ class MemoryManager:
         print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
 
-    async def save_to_memory_channel(self, content, emotion, user_id, username, guild_id, guild_name, channel_id, channel_name, memory_channel):
+    async def save_to_memory_channel(self, content, emotion, user_id, username, guild_id, guild_name, channel_id, channel_name, role, memory_channel):
         if not memory_channel:
             print("[Memory] No memory channel provided.")
             return
