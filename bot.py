@@ -230,7 +230,7 @@ async def handle_dm_message(message):
     channel_id = "DM"
     channel_name = "DM"
 
-    memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "neutral")
+    memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "user", role="user")
 
     conversation = memory.get_context(guild_id, channel_id, user_id)
     conversation.insert(0, {"role": "system", "content": DM_SYSTEM_PROMPT})
@@ -280,17 +280,16 @@ async def handle_dm_message(message):
             sprite_link = "https://example.com/error.png"
 
     reply_DM = f"{monika_DMS}\n[{emotion}]({sprite_link})"
-    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion)
+    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion, role="monika")
 
     print(f"{reply_DM}")
-    await message.channel.send(reply_DM)
-
+    await message.channel.send(reply_DM)43 e';
     # Log to memory channel
     if MEMORY_LOG_CHANNEL_ID:
         mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
         if mem_chan:
-            await memory.save_to_memory_channel(message.content, "DM-user", user_id, username, "DM", "Direct Message", "DM", "Direct Message", mem_chan)
-            await memory.save_to_memory_channel(monika_DMS, emotion, "bot", bot.user.name, "DM", "Direct Message", "DM", "Direct Message", mem_chan)
+            await memory.save_to_memory_channel(message.content, "DM-user", user_id, username, "user", "DM", "Direct Message", "DM", "DM", "Direct Message", mem_chan)
+            await memory.save_to_memory_channel(monika_DMS, emotion, "DM-bot", bot.user.name, "monika", "DM", "Direct Message", "DM", "Direct Message", mem_chan)
             
 async def handle_guild_message(message):
     global last_reply_times
@@ -302,8 +301,9 @@ async def handle_guild_message(message):
     guild_name = str(message.guild.name)
     channel_name = str(message.channel.name)
     username = message.author.display_name
+    
 
-    memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "neutral")
+    memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "user", role="user")
 
     system_content = FRIEND_SYSTEM_PROMPT if is_friend_bot else USER_SYSTEM_PROMPT
     conversation = memory.get_context(guild_id, channel_id, user_id)
@@ -367,13 +367,13 @@ async def handle_guild_message(message):
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
-    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion)
+    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion, role="monika")
     
     # Log to memory channel if set
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
-        await memory.save_to_memory_channel(message.content, "user", user_id, username, guild_id, guild_name, channel_id, channel_name, memory_channel)
-        await memory.save_to_memory_channel(monika_reply, emotion, "bot", bot.user.name, guild_id, guild_name, channel_id, channel_name, memory_channel)
+        await memory.save_to_memory_channel(message.content, "user", user_id, username, "user", guild_id, guild_name, channel_id, channel_name, memory_channel)
+        await memory.save_to_memory_channel(monika_reply, emotion, "bot", bot.user.name, "monika", guild_id, guild_name, channel_id, channel_name, memory_channel)
         
 async def monika_idle_conversation_task():
     await bot.wait_until_ready()
