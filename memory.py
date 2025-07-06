@@ -61,7 +61,7 @@ class MemoryManager:
         safe_content = content.replace("|", "\\|")
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] {guild_id} | {guild_name} | {channel_id} | {channel_name} | {user_id} | {username} | {safe_content} | {emotion}"
+        log_message = f"[{timestamp}] Server name: {guild_name} ID: ({guild_id}) | Channel name: {channel_name} ID: ({channel_id}) | User Name {username} ID: ( {user_id}) | {safe_content} | {emotion}"
 
         try:
             await memory_channel.send(log_message)
