@@ -15,7 +15,25 @@ import webserver
 
 load_dotenv()
 
-OPENAI_KEYS = [k for k in (os.getenv("OPENAI_KEYS") or "").split(",") if k.strip()]
+OPENAI_KEYS = [
+    key.strip() for key in [
+        os.getenv("OPENAI_KEY_1"),
+        os.getenv("OPENAI_KEY_2"),
+        os.getenv("OPENAI_KEY_3"),
+        os.getenv("OPENAI_KEY_4"),
+        os.getenv("OPENAI_KEY_5"),
+        os.getenv("OPENAI_KEY_6"),
+        os.getenv("OPENAI_KEY_7"),
+        os.getenv("OPENAI_KEY_8"),
+        os.getenv("OPENAI_KEY_9"),
+        os.getenv("OPENAI_KEY_10"),
+        os.getenv("OPENAI_KEY_11"),
+        os.getenv("OPENAI_KEY_12"),
+        os.getenv("OPENAI_KEY_13"),
+        os.getenv("OPENAI_KEY_14"),
+        os.getenv("OPENAI_KEY_15"),
+    ] if key
+]
 openai_key_index = 0
 
 def get_next_openai_client():
