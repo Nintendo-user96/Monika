@@ -255,6 +255,7 @@ async def handle_dm_message(message):
         emotion = random.choice(error_emotions)
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
+    
     sprite_path = get_expression_sprite(emotion)
     if not sprite_path:
         emotion = "neutral"
@@ -278,6 +279,7 @@ async def handle_dm_message(message):
     reply_DM = f"{monika_DMS}\n[{emotion}]({sprite_link})"
     memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion)
 
+    print(f"{reply_DM}")
     await message.channel.send(reply_DM)
 
     # Log to memory channel
@@ -347,6 +349,7 @@ async def handle_guild_message(message):
         emotion = random.choice(error_emotions)
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
+    
     sprite_path = get_expression_sprite(emotion)
     if not sprite_path:
         emotion = "neutral"
@@ -371,6 +374,7 @@ async def handle_guild_message(message):
 
     if message.channel.permissions_for(message.guild.me).send_messages:
         async with message.channel.typing():
+            print(f"{reply_text}")
             await asyncio.sleep(1.5)
             await message.channel.send(reply_text)
     else:
@@ -499,6 +503,7 @@ async def monika_idle_conversation_task():
                 emotion = random.choice(error_emotions)
                 
             async with channel.typing():
+                print(f"{monika_message}")
                 await asyncio.sleep(2)
                 await channel.send(monika_message)
 
