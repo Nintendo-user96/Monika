@@ -227,7 +227,6 @@ async def handle_dm_message(message):
     channel_id = "DM"
     channel_name = "DM"
 
-    # Save user's message
     memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "neutral")
 
     conversation = memory.get_context(guild_id, channel_id, user_id)
@@ -240,20 +239,20 @@ async def handle_dm_message(message):
         if response and response.choices and response.choices[0].message and response.choices[0].message.content:
             monika_DMS = response.choices[0].message.content.strip()
             if not monika_DMS:
-                print("[OpenAI] Blank response content. Using safe fallback.")
-                monika_DMS = "Mmm... I'm thinking. Could you say that again?"
-            emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
+                print("[OpenAI] Blank response content. Using fallback.")
+                monika_DMS = random.choice(error_messages)
+                emotion = random.choice(error_emotions)
+            else:
+                emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
         else:
             print("[OpenAI] Response was invalid or empty.")
-            print(f"[OpenAI Error]: {e}")
             monika_DMS = random.choice(error_messages)
             emotion = random.choice(error_emotions)
-    
+
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_DMS = random.choice(error_messages)
         emotion = random.choice(error_emotions)
-
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
     sprite_path = get_expression_sprite(emotion)
@@ -261,7 +260,6 @@ async def handle_dm_message(message):
         emotion = "neutral"
         sprite_path = get_expression_sprite(emotion)
 
-    # Sprite upload
     sprite_link = sprite_url_cache.get(emotion)
     if not sprite_link and IMAGE_CHANNEL_URL:
         try:
@@ -278,38 +276,9 @@ async def handle_dm_message(message):
             sprite_link = "https://example.com/error.png"
 
     reply_DM = f"{monika_DMS}\n[{emotion}]({sprite_link})"
-
-    # Save bot reply ONCE
     memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion)
 
     await message.channel.send(reply_DM)
-
-    # Log both messages to memory channel
-    if MEMORY_LOG_CHANNEL_ID:
-        mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
-        if mem_chan:
-            await memory.save_to_memory_channel(
-                message.content,
-                "DM-user",
-                user_id,
-                username,
-                guild_id,
-                guild_name,
-                channel_id,
-                channel_name,
-                mem_chan
-            )
-            await memory.save_to_memory_channel(
-                monika_DMS,
-                emotion,
-                "bot",
-                bot.user.name,
-                guild_id,
-                guild_name,
-                channel_id,
-                channel_name,
-                mem_chan
-            )
 
     # Log to memory channel
     if MEMORY_LOG_CHANNEL_ID:
@@ -349,12 +318,7 @@ async def handle_guild_message(message):
     channel_name = str(message.channel.name)
     username = message.author.display_name
 
-    memory.save(
-        guild_id, guild_name,
-        channel_id, channel_name,
-        user_id, username,
-        message.content, "neutral"
-    )
+    memory.save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "neutral")
 
     system_content = FRIEND_SYSTEM_PROMPT if is_friend_bot else USER_SYSTEM_PROMPT
     conversation = memory.get_context(guild_id, channel_id, user_id)
@@ -363,24 +327,24 @@ async def handle_guild_message(message):
 
     try:
         response = await call_openai_with_retries(conversation)
-    
+
         if response and response.choices and response.choices[0].message and response.choices[0].message.content:
             monika_reply = response.choices[0].message.content.strip()
             if not monika_reply:
-                print("[OpenAI] Blank response content. Using safe fallback.")
-                monika_reply = "Hm... that's interesting! Can you tell me more?"
-            emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
+                print("[OpenAI] Blank response. Using error fallback.")
+                monika_reply = random.choice(error_messages)
+                emotion = random.choice(error_emotions)
+            else:
+                emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
         else:
-            print("[OpenAI] Response was invalid or empty.")
-            print(f"[Error]: {e}")
+            print("[OpenAI] Invalid or empty. Using error fallback.")
             monika_reply = random.choice(error_messages)
             emotion = random.choice(error_emotions)
-    
+
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = random.choice(error_messages)
         emotion = random.choice(error_emotions)
-
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
     sprite_path = get_expression_sprite(emotion)
@@ -414,15 +378,8 @@ async def handle_guild_message(message):
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
-    memory.save(
-        guild_id, guild_name,
-        channel_id, channel_name,
-        "bot", bot.user.name,
-        monika_reply, emotion
-    )
-
-    last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
-
+    memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion)
+    
     # Log to memory channel if set
     memory_channel = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
     if memory_channel:
