@@ -173,8 +173,10 @@ DM_SYSTEM_PROMPT = USER_SYSTEM_PROMPT
 
 def clean_monika_reply(text, bot_username, user_name=None):
     if user_name:
+        text = re.sub(r"(?i)\b(monika)\b", user_name, text)
         text = re.sub(r"(?i)\\b(monika)\\b", user_name, text)
     else:
+        text = re.sub(r"(?i)\b(monika)\b", "", text)
         text = re.sub(r"(?i)\\b(monika)\\b", "", text)
     return text.strip()
 
