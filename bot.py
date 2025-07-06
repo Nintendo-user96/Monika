@@ -83,12 +83,14 @@ async def call_openai_with_retries(conversation):
 
         except Exception as e:
             last_exception = e
-            if isinstance(e, openai.error.RateLimitError):
-                print("[OpenAI] Rate limit detected. Rotating keys.")
-                await asyncio.sleep(2)
+            err_str = str(e)
+            if "429" in err_str or "rate limit" in err_str.lower():
+                print("[OpenAI] 429 Rate Limit error detected. Rotating to next key...")
+                await asyncio.sleep(2)  # Longer delay to be polite
             else:
-                print(f"[OpenAI Error] {e}")
-                break
+                print(f"[OpenAI Error] {err_str}")
+                # For other errors, we might want to retry but let's wait a bit
+                await asyncio.sleep(2)
 
 
     print("[OpenAI] All keys exhausted or all attempts failed.")
