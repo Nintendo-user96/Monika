@@ -16,7 +16,8 @@ import webserver
 load_dotenv()
 
 OPENAI_KEYS = [
-    key.strip() for key in [
+    key.strip()
+    for key in [
         os.getenv("OPENAI_KEY_1"),
         os.getenv("OPENAI_KEY_2"),
         os.getenv("OPENAI_KEY_3"),
@@ -32,7 +33,8 @@ OPENAI_KEYS = [
         os.getenv("OPENAI_KEY_13"),
         os.getenv("OPENAI_KEY_14"),
         os.getenv("OPENAI_KEY_15"),
-    ] if key
+    ]
+    if key and key.strip()
 ]
 openai_key_index = 0
 
@@ -109,7 +111,7 @@ NO_CHAT_CHANNELS = [
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-client = get_next_openai_client()
+
 memory = MemoryManager()
 expression_handler = ExpressionHandler()
 sprite_url_cache = {}
