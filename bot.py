@@ -244,14 +244,15 @@ async def handle_dm_message(message):
                 monika_DMS = "Mmm... I'm thinking. Could you say that again?"
             emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
         else:
-            print("[OpenAI ERROR] {e}.")
-            monika_DMS = "I'm not sure what to say right now. Can you ask me again?"
-            emotion = "error"
-
+            print("[OpenAI] Response was invalid or empty.")
+            monika_DMS = random.choice(error_messages)
+            emotion = random.choice(error_emotions)
+    
     except Exception as e:
-        print(f"[OpenAI Error] Response was invalid or empty in: {e}.")
+        print(f"[OpenAI Error] {e}")
         monika_DMS = random.choice(error_messages)
         emotion = random.choice(error_emotions)
+
 
     monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
     sprite_path = get_expression_sprite(emotion)
@@ -369,8 +370,8 @@ async def handle_guild_message(message):
                 monika_reply = "Hm... that's interesting! Can you tell me more?"
             emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
         else:
-            print(f"[OpenAI Error] Response was invalid or empty in: {e}.")
-            monika_reply = "I wasn't sure what to say! Try again?"
+            print("[OpenAI] Response was invalid or empty.")
+            monika_reply = random.choice(error_messages)
             emotion = random.choice(error_emotions)
 
     except Exception as e:
