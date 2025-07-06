@@ -60,6 +60,8 @@ class MemoryManager:
         # Escape pipes in user content so logs can be reliably split later
         safe_content = content.replace("|", "\\|")
 
+        role_str = "monika" if user_id == "bot" else "user"
+
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
         log_message = f"[{timestamp}] Server name: {guild_name}, ID: ({guild_id}) | Channel name: {channel_name}, ID: ({channel_id}) | User Name: {username}, ID: ( {user_id}) | Role: {role_str} | {safe_content} | {emotion}"
 
@@ -95,7 +97,21 @@ class MemoryManager:
                     print(f"[Memory Parse Warning] Skipping malformed line (too few fields): {line}")
                     continue
 
-                guild_id, guild_name, channel_id, channel_name, user_id, username, role, content, emotion = parts
+                guild_info = parts[0].split("(", 1)
+                guild_name = guild_info[0].replace("Server:", "").strip()
+                guild_id = guild_info[1].strip(") ")
+
+                channel_info = parts[1].split("(", 1)
+                channel_name = channel_info[0].replace("Channel:", "").strip()
+                channel_id = channel_info[1].strip(") ")
+
+                user_info = parts[2].split("(", 1)
+                username = user_info[0].replace("User:", "").strip()
+                user_id = user_info[1].strip(") ")
+
+                role = parts[3].replace("Role:", "").strip()
+                content = parts[4].replace("Content:", "").replace("\\|", "|").strip()
+                emotion = parts[5].replace("Emotion:", "").strip()
                 # Unescape pipes in content
                 content = content.replace("\\|", "|")
 
