@@ -283,7 +283,7 @@ async def handle_dm_message(message):
     memory.save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion, role="monika")
 
     print(f"{reply_DM}")
-    await message.channel.send(reply_DM)43 e';
+    await message.channel.send(reply_DM)
     # Log to memory channel
     if MEMORY_LOG_CHANNEL_ID:
         mem_chan = bot.get_channel(MEMORY_LOG_CHANNEL_ID)
