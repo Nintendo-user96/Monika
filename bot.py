@@ -111,7 +111,7 @@ NO_CHAT_CHANNELS = [
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-
+client = get_next_openai_client()
 memory = MemoryManager()
 expression_handler = ExpressionHandler()
 sprite_url_cache = {}
@@ -245,6 +245,7 @@ async def handle_dm_message(message):
             emotion = await expression_handler.classify(monika_DMS, get_next_openai_client())
         else:
             print("[OpenAI] Response was invalid or empty.")
+            print(f"[OpenAI Error]: {e}")
             monika_DMS = random.choice(error_messages)
             emotion = random.choice(error_emotions)
     
@@ -362,22 +363,24 @@ async def handle_guild_message(message):
 
     try:
         response = await call_openai_with_retries(conversation)
-
+    
         if response and response.choices and response.choices[0].message and response.choices[0].message.content:
             monika_reply = response.choices[0].message.content.strip()
             if not monika_reply:
-                print(f"[OpenAI Error] Response was invalid or empty in: {e}.")
+                print("[OpenAI] Blank response content. Using safe fallback.")
                 monika_reply = "Hm... that's interesting! Can you tell me more?"
             emotion = await expression_handler.classify(monika_reply, get_next_openai_client())
         else:
             print("[OpenAI] Response was invalid or empty.")
+            print(f"[Error]: {e}")
             monika_reply = random.choice(error_messages)
             emotion = random.choice(error_emotions)
-
+    
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = random.choice(error_messages)
         emotion = random.choice(error_emotions)
+
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
     sprite_path = get_expression_sprite(emotion)
