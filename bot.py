@@ -578,6 +578,11 @@ async def broadcast(
         )
         return
 
+    for guild in bot.guilds:
+        for channel in guild.text_channels:
+            if channel.id in NO_CHAT_CHANNELS:
+                continue
+
     try:
         color_int = int(color_hex, 16)
         color = discord.Color(color_int)
@@ -597,27 +602,21 @@ async def broadcast(
     await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
 
     for guild in bot.guilds:
-        channel_to_use = None
         for channel in guild.text_channels:
-            if channel.id in IMAGE_CHANNEL_URL:
-                continue
-            if channel.permissions_for(guild.me).send_messages:
-                channel_to_use = channel
-                break
-        if not channel_to_use:
-            continue
-    
-        try:
-            await channel_to_use.send(embed=embed)
-            success_count += 1
-            await asyncio.sleep(1)
-        except Exception as e:
-            print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel_to_use.name}, Error: {e}")
-            failure_count += 1
-        await interaction.followup.send(
-            f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
-            ephemeral=True
-        )
+            try:
+                if not channel.permissions_for(guild.me).send_messages:
+                    continue
+                await channel.send(embed=embed)
+                success_count += 1
+                await asyncio.sleep(1)  # prevent rate-limiting
+            except Exception as e:
+                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
+                failure_count += 1
+
+    await interaction.followup.send(
+        f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="export_memory", description="Export all stored memory into a .txt file.")
 async def export_memory(interaction: discord.Interaction):
