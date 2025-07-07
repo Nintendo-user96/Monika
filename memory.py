@@ -9,11 +9,7 @@ class MemoryManager:
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
-            # Distinguish bots properly (string "bot" or actual ID from bot)
-            if str(user_id).lower() == "bot" or str(user_id).startswith("bot"):
-                role = "monika"
-            else:
-                role = "user"
+            role = "assistant" if is_bot or user_id == "bot" else "user"
 
         self.data \
             .setdefault(guild_id, {}) \
@@ -51,7 +47,7 @@ class MemoryManager:
             if i < len(user_messages):
                 messages.append({"role": "user", "content": user_messages[i]["content"]})
             if i < len(bot_messages):
-                messages.append({"role": "monika", "content": bot_messages[i]["content"]})
+                messages.append({"role": "assistant", "content": bot_messages[i]["content"]})
 
         print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
@@ -65,12 +61,11 @@ class MemoryManager:
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         # Detect role again if not passed or override
-        role_str = "monika" if str(user_id).lower() == "bot" or role == "monika" else "user"
 
         log_message = (
             f"[{timestamp}] Server name: {guild_name}, ID: ({guild_id}) | "
             f"Channel name: {channel_name}, ID: ({channel_id}) | "
-            f"User Name: {username}, ID: ({user_id}) | Role: {role_str} | {safe_content} | {emotion}"
+            f"User Name: {username}, ID: ({user_id}) | Role: {role} | {safe_content} | {emotion}"
         )
 
         try:
@@ -121,7 +116,7 @@ class MemoryManager:
                 content = parts[4].replace("\\|", "|").strip()
                 emotion = parts[5].strip()
 
-                role = "monika" if str(user_id).lower() == "bot" else "user"
+                role = "assistant" if role.lower() == "assistant" or user_id == "bot" else "user"
 
                 self.data \
                     .setdefault(guild_id, {}) \
