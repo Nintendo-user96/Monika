@@ -5,11 +5,11 @@ class MemoryManager:
         # Structure: guild_id -> channel_id -> user_id -> list of messages
         self.data = {}
 
-    def save(self, guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion="neutral", role=None):
+    def save(self, guild_id, guild_name, channel_id, channel_name, user_id, username, content, emotion="neutral", role=None, is_bot=False):
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 
         if role is None:
-            role = "monika" if user_id == "bot" else "user"
+            role = "monika" if is_bot or user_id == "bot" else "user"
 
         self.data \
             .setdefault(guild_id, {}) \
@@ -47,7 +47,7 @@ class MemoryManager:
             if i < len(user_messages):
                 messages.append({"role": "user", "content": user_messages[i]["content"]})
             if i < len(bot_messages):
-                messages.append({"role": "monika", "content": bot_messages[i]["content"]})
+                messages.append({"role": "bot", "content": bot_messages[i]["content"]})
 
         print(f"[Memory] Retrieved context: {len(messages)} messages for User={user_id} in Channel={channel_id}")
         return messages
@@ -63,7 +63,11 @@ class MemoryManager:
         role_str = "monika" if user_id == "bot" else "user"
 
         timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-        log_message = f"[{timestamp}] Server name: {guild_name}, ID: ({guild_id}) | Channel name: {channel_name}, ID: ({channel_id}) | User Name: {username}, ID: ( {user_id}) | Role: {role_str} | {safe_content} | {emotion}"
+        log_message = (
+            f"[{timestamp}] Server name: {guild_name}, ID: ({guild_id}) | "
+            f"Channel name: {channel_name}, ID: ({channel_id}) | "
+            f"User Name: {username}, ID: ({user_id}) | Role: {role} | {safe_content} | {emotion}"
+        )
 
         try:
             await memory_channel.send(log_message)
@@ -115,7 +119,7 @@ class MemoryManager:
                 # Unescape pipes in content
                 content = content.replace("\\|", "|")
 
-                role = "monika" if user_id == "bot" else "user"
+                role = "monika" if role.lower() == "monika" or user_id == "bot" else "user"
 
                 self.data \
                     .setdefault(guild_id, {}) \
