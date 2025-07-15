@@ -1,9 +1,0 @@
-discord.py
-python-dotenv
-openai
-flask
-asyncio
-aiofiles
-
-# pip install -r requirements.txt
-# python monika_bot.py
