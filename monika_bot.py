@@ -786,6 +786,25 @@ async def set_personality(interaction: discord.Interaction, modes: str):
         ephemeral=True
     )
 
+@bot.tree.command(name="show_personalities", description="Show all available personality and relationship modes for Monika.")
+async def show_personalities(interaction: discord.Interaction):
+    # Get the modes from monika_traits
+    personality_modes = monika_traits.personality_modes
+    relationship_modes = monika_traits.relationship_modes
+
+    personality_list = "\n".join(f"- **{k}**: {v}" for k, v in personality_modes.items())
+    relationship_list = "\n".join(f"- **{k}**: {v}" for k, v in relationship_modes.items())
+
+    embed = discord.Embed(
+        title="🪷 Monika's Personality & Relationship Modes",
+        description="Here’s everything you can choose from!",
+        color=discord.Color.pink()
+    )
+    embed.add_field(name="✨ Personality Modes", value=personality_list or "No modes defined.", inline=False)
+    embed.add_field(name="❤️ Relationship Modes", value=relationship_list or "No modes defined.", inline=False)
+
+    embed.set_footer(text="Use /set_personality or /set_relationship_mode to customize Monika!")
+    await interaction.response.send_message(embed=embed, ephemeral=True)
     
 @bot.tree.command(name="set_relationship_mode", description="Set Monika's relationship orientation for this server.")
 @app_commands.describe(mode="Choose one: polyamory, lesbian, pansexual, bisexual, straight, asexual")
