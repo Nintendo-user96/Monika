@@ -16,7 +16,7 @@ from expression import User_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
-#import keepalive
+import keepalive
 from monika_personality import MonikaTraits
 
 server_tracker = GuildTracker()
@@ -979,5 +979,5 @@ async def speak_as_monika(interaction: discord.Interaction, guild_id: str, chann
         ephemeral=True
     )
 
-#keepalive.keep_alive()
+keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
