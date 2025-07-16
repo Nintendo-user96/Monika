@@ -5,16 +5,20 @@ Almost like with shapes.inc Monika, but with additional things and tweaks of my 
 Here are all the features you should or need to know:
 
  1. Emotion Detection, Mapping, Display, and Prompting:
-*I have gone through the web and got some sprite cannon or not, and I have gotten some sprites of the following: happy, concerned, scared, sad, nervous, serious, thinking, blushing, and even a gun. more sprites/outfit will be added soon.*
+*I have gone through the web and got some sprite cannon or not, and I have gotten some sprites of the following: happy, concerned, scared, sad, nervous, serious, thinking, blushing, a gun, and even the Infinity Gauntlet. all range from school uniform, casual 1, 2, and 3, pajamas, hoodie, and white dress. more sprite/expressions might be added in the near future.*
+
+*her outfits changes depending on the time*
+
+*her outfits are: pajamas, hoodie, 3 casuals, white summer dress, and her default school uniform*
 
  2. Memory System, Logging, Cross-Channel/Servers Memory Recall:
-*I have made sure that she can remember you from different channel and server that this bot is in. and she can remember the messages you and her sends.(plus certain chatbots) though of you are wondering "where her memories being stored." I have sorted in a html file that is constantly updating*
+*I have made sure that she can remember you from different channel and server that this bot is in. and she can remember the messages you and her sends.(plus certain chatbots) though of you are wondering "where her memories being stored." they are on the cloud constantly updating*
 
  3. Self-Awareness in Replies:
 *To make sure she doesn't say the same thing over and over she self-awareness when she replies to you.(and certain chatbots)*
 
  4. Allow Conversations Between Bots:
-*Yes. If make a channel with Sayori, Natsuki, Yuri, and eventually MC.*
+*not only can Monika talk with the user but she talk with Sayori, Natsuki, Yuri, and eventually MC.*
 
 *She can't talk to others chatbot for now.(Unless you guys want me to but only characters from the DDLC's fan mods but I am thinking about it, just say the name)*
 
@@ -23,8 +27,16 @@ Here are all the features you should or need to know:
 
 *for those of you are wondering "why make her strike up a random conversation?", will its to make the bot and the channels that she is on more interesting and less empty. instead of you making the conversation, she make a conversation. and yes there is a command for it.*
 
- 6. DM's:
-*You can DM monika like you are in a channel*
+ 6. conversation in the DM's:
+*Instead of talking or chatting with Monika in the servers channels you can DM her and pick up your conversation from there.*
+
+ 7. customs personalities traits:
+*you can now give Monika the personality you want instead of just default(the one we all know and love), you can give her up to 5 personality traits how ever you want.*
+
+example: *confident, yandere, smart, and much more.*
+
+ 8. customs relationships:
+*Monika can now be in a relationship of your choosing(if you are the owner). or you can make her be in one than one relationship*
 
  Commands:
 
@@ -34,23 +46,25 @@ Here are all the features you should or need to know:
 
 `reset_server` - Clear all memories for the server.
 
+`set_outfit` - Server owner can set Monika's outfit style.
+
+`set_personality` - set Monika's personality mode(s).
+
+`restart_monika` - Restart Monika *only* in this server, clearing her memory and settings here.
+
+`set_relationship_mode` - Set Monika's relationship orientation for this server.
+
 all commands are admin only to prevent people from change constantly.
 
 the only once that isn't a admin command these:
 
-`status` - Check if she is awake.
+`report <description>` - report if theres any bugs/errors
 
-`report <message>` - report if theres any bugs/errors
+`export_memories` - Export all stored memory into a .txt file.
 
-`export_memory` - Export all stored memory into a .txt file.
+`helpme` - Get help about all of her commands.
 
-`/import_memory file: (attach your .txt file)` - Import memories from a .txt file into my memory.
-
-There is only one command that no one, not even the owner of the server can uses:
-
-`/broadcast` - Send an announcement to all servers/channels Monika can speak in.
-
-"Why can we used it?" - simple. this is to let everyone in every server know if theres any issues or updates going on.
+`check_relationship` - this is to help check on the bond/relationship you have with her.
 
 Sayori, Natsuki, Yuri, and MC are being worked on, you will see them soon.
 
