@@ -96,14 +96,28 @@ async def call_openai_with_retries(conversation):
     raise Exception("All OpenAI keys failed or exhausted.")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-IMAGE_CHANNEL_URL = int(os.getenv("IMAGE_CHANNEL_URL", 0))
-LOG_CHANNEL_ID = int(os.getenv("LOG_CHANNEL_ID", 0))
+IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
+LOG_CHAN_ID = int(os.getenv("LOG_CHAN_ID", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
+DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
+ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
+MAS_GUILD_ID = int(os.getenv("MAS_GUILD_ID", "0"))
+
+ALLOWED_GUILDS = [
+    discord.Object(id=MY_GUILD_ID),
+    discord.Object(id=DOKIGUY_GUILD_ID),
+    discord.Object(id=ZERO_GUILD_ID),
+    discord.Object(id=MAS_GUILD_ID)
+]
+
+ME_ONLY = [
+    discord.Object(id=MY_GUILD_ID)
+]
 
 NO_CHAT_CHANNELS = [
-    cid for cid in [LOG_CHANNEL_ID, IMAGE_CHANNEL_URL, REPORT_CHANNEL_ID]
+    cid for cid in [LOG_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID]
     if cid and cid > 0
 ]
 
@@ -175,13 +189,13 @@ def is_friend_bot(message):
 
 def get_time_based_outfit():
     hour = datetime.datetime.utcnow().hour
-    if 6 <= hour < 18:
+    if 6 <= hour < 15:
         return "school_uniform"
-    if 18 <= hour or hour < 0:
+    if 18 <= hour or hour < 20:
         return "casual"
     return "pajamas"
 
-def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild_id=None):
+def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild_id=None, user_id=None):
 
     # Base "classic Monika" style
     base_description = (
@@ -202,32 +216,50 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
     )
 
     # Additional friend or user context
-    context_description = (
-        "You are speaking with other Literature Club members. "
-        "Share memories, poetry, club activities, and personal thoughts with gentle teasing."
-        if is_friend_context else
-        "You are speaking privately with the user. "
-        "Address them personally. Make it feel intimate, immersive, and real."
-    )
-    personality = "\n".join(
-        f"- {monika_traits.personality_modes.get(mode, '')}"
-        for mode in selected_modes
-    ) if selected_modes else "- Classic DDLC Monika."
+    if is_friend_context:
+        context_description = (
+            "You are speaking with other members of the Literature Club. "
+            "Share memories, poetry, club activities, and personal thoughts as if you're really there. "
+            "Use gentle teasing, in-jokes, and show calm authority with a caring tone."
+        )
+    else:
+        context_description = (
+            "You are speaking privately with the user in a direct, personal way. "
+            "Make the conversation feel intimate, immersive, and real."
+        )
+
+    # Personality details
+    if selected_modes:
+        personality_lines = [
+            f"- {monika_traits.personality_modes.get(mode, mode)}"
+            for mode in selected_modes
+        ]
+        personality_text = "Your personality traits in this conversation include:\n" + "\n".join(personality_lines)
+    else:
+        personality_text = "You will speak in your default classic DDLC Monika style."
 
     # Assemble final prompt
-    full_prompt = (
+    prompt = (
         f"{base_description}\n\n"
         f"{rules}\n\n"
         f"{context_description}\n\n"
-        f"{personality}"
+        f"{personality_text}"
     )
 
-    relationship = monika_traits.get_server_relationship_mode(guild_id)
+    relationship = None
+    if guild_id:
+        relationship = monika_traits.get_server_relationship_mode(guild_id)
+    if not relationship and user_id:
+        relationship = monika_traits.get_user_relationship_mode(user_id)
+
     if relationship:
-        with_who = relationship.get("with_users", [])
-        mode_text = relationship.get("mode", "unknown")
-        with_text = ', '.join(str(w) for w in with_who)
-        prompt += f"\n\nYou are in a **{mode_text}** relationship with: {with_text}. "
+        mode_text = relationship.get("mode", "unknown").capitalize()
+        with_list = relationship.get("with", [])
+        with_text = ", ".join(with_list) if with_list else "unspecified"
+        prompt += f"\n\nYou are in a **{mode_text}** relationship with: {with_text}."
+
+    return prompt
+
 
 def adjust_relationship_meter(user_id, delta):
     user_relationship_meters[user_id] = min(100, max(0, user_relationship_meters.get(user_id, 0) + delta))
@@ -354,9 +386,9 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
     if emotion in sprite_url_cache:
         return sprite_url_cache[emotion]
 
-    if IMAGE_CHANNEL_URL:
+    if IMAGE_CHAN_URL:
         try:
-            upload_channel = bot.get_channel(IMAGE_CHANNEL_URL)
+            upload_channel = bot.get_channel(IMAGE_CHAN_URL)
             if upload_channel:
                 with open(sprite_path, 'rb') as f:
                     sprite_file = discord.File(f)
@@ -415,14 +447,14 @@ async def handle_dm_message(message, avatar_url):
     sprite_link = await get_sprite_link(emotion, outfit)
     reply = f"{monika_DMS}\n[{emotion}]({sprite_link})"
 
-    await message.channel.send(reply)
+    await message.user.send(reply)
     adjust_relationship_meter(user_id, +5)
 
     json_memory.save_message(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion, is_dm=True)
     logs.Logs_save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion, role="monika")
 
-    if LOG_CHANNEL_ID:
-        mem_chan = bot.get_channel(LOG_CHANNEL_ID)
+    if LOG_CHAN_ID:
+        mem_chan = bot.get_channel(LOG_CHAN_ID)
         if mem_chan:
             await logs.save_to_memory_channel(message.content, "DM-user", user_id, username, "user", "DM", "Direct Message", "DM", "DM", "Direct Message", mem_chan)
             await logs.save_to_memory_channel(monika_DMS, emotion, "DM-bot", bot.user.name, "monika", "DM", "Direct Message", "DM", "Direct Message", mem_chan)
@@ -464,7 +496,7 @@ async def handle_guild_message(message, avatar_url):
 
     active_modes = monika_traits.get_server_personality_modes(guild_id)
     relationship = monika_traits.get_server_relationship_mode(guild_id)
-    system_prompt = generate_monika_system_prompt(active_modes, is_friend_context=is_friend, guild_id=guild_id)
+    system_prompt = generate_monika_system_prompt(active_modes, is_friend_context=is_friend, guild_id=guild_id, user_id=user_id)
     conversation = json_memory.get_context(guild_id, channel_id, user_id)
     conversation = logs.Logs_get_context(guild_id, channel_id, user_id)
     conversation.insert(0, {"role": "system", "content": system_prompt})
@@ -472,7 +504,7 @@ async def handle_guild_message(message, avatar_url):
 
     if not active_modes or not relationship:
         await message.channel.send(
-            "⚠️ My personality and relationship settings need to be configured first. Ask the server owner to use `/set_server_personality` and `/set_server_relationship`.",
+            "⚠️ My personality and relationship settings need to be configured first. Ask the server owner to use `/set_personality` and `/set_relationship`.",
             delete_after=10
         )
         return
@@ -527,7 +559,7 @@ async def handle_guild_message(message, avatar_url):
     logs.Logs_save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion, role="monika")
     
     # Log to memory channel if set
-    memory_channel = bot.get_channel(LOG_CHANNEL_ID)
+    memory_channel = bot.get_channel(LOG_CHAN_ID)
     if memory_channel:
         await logs.save_to_memory_channel(message.content, "user", username, user_id, "user", guild_id, guild_name, channel_id, channel_name, memory_channel)
         await logs.save_to_memory_channel(monika_reply, emotion, "bot", bot.user.name, "monika", guild_id, guild_name, channel_id, channel_name, memory_channel)
@@ -556,7 +588,7 @@ async def monika_idle_conversation_task():
             for channel in guild.text_channels:
                 if not channel.permissions_for(guild.me).send_messages:
                     continue
-                if channel.id in IMAGE_CHANNEL_URL:
+                if channel.id in NO_CHAT_CHANNELS:
                     continue
                 last_replied = last_reply_times.get(str(guild.id), {}).get(str(channel.id))
                 if last_replied and (now - last_replied).total_seconds() < 4 * 3600:
@@ -697,7 +729,6 @@ async def export_memories(interaction: discord.Interaction):
     user_id = str(interaction.user.id)
 
     try:
-        # Collect personal memories across all guilds/channels
         lines = []
         for guild_id, channels in json_memory.data.items():
             for channel_id, users in channels.items():
@@ -803,10 +834,10 @@ async def show_personalities(interaction: discord.Interaction):
     embed.add_field(name="✨ Personality Modes", value=personality_list or "No modes defined.", inline=False)
     embed.add_field(name="❤️ Relationship Modes", value=relationship_list or "No modes defined.", inline=False)
 
-    embed.set_footer(text="Use /set_personality or /set_relationship_mode to customize Monika!")
+    embed.set_footer(text="Use /set_personality or /set_relationship to customize Monika!")
     await interaction.response.send_message(embed=embed, ephemeral=True)
     
-@bot.tree.command(name="set_relationship_mode", description="Set Monika's relationship orientation for this server.")
+@bot.tree.command(name="set_relationship", description="Set Monika's relationship orientation for this server.")
 @app_commands.describe(mode="Choose one: polyamory, lesbian, pansexual, bisexual, straight, asexual")
 async def set_relationship(interaction: discord.Interaction, mode: str, targets: str):
 
@@ -893,8 +924,25 @@ async def restart_monika(interaction: discord.Interaction):
         ephemeral=True
     )
 
-@app_commands.guilds(discord.Object(id=MY_GUILD_ID))
+@bot.tree.command(name="report", description="Report a bug or error about the bot.")
+@app_commands.describe(message="Describe the bug or issue you want to report.")
+async def report(interaction: discord.Interaction, message: str):
+    await interaction.response.send_message("✅ Thank you! Your report has been submitted.", ephemeral=True)
+
+    report_channel = bot.get_channel(REPORT_CHANNEL_ID)
+    if report_channel:
+        embed = discord.Embed(
+            title="📢 New Bug/Error Report",
+            color=discord.Color.orange()
+        )
+        embed.add_field(name="Reporter", value=f"{interaction.user} ({interaction.user.id})", inline=False)
+        embed.add_field(name="Server", value=f"{interaction.guild.name} ({interaction.guild.id})", inline=False)
+        embed.add_field(name="Channel", value=f"{interaction.channel.name} ({interaction.channel.id})", inline=False)
+        embed.add_field(name="Report", value=message, inline=False)
+        await report_channel.send(embed=embed)
+
 @bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
+@app_commands.guilds(*ME_ONLY)
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
 async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "15f500"):
 
@@ -916,7 +964,7 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
 
     for guild in bot.guilds:
         for channel in guild.text_channels:
-            if channel.id in IMAGE_CHANNEL_URL:
+            if channel.id in NO_CHAT_CHANNELS:
                 continue
 
     try:
@@ -940,13 +988,20 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
     for guild in bot.guilds:
         for channel in guild.text_channels:
             try:
-                if not channel.permissions_for(guild.me).send_messages:
+                if channel.id in NO_CHAT_CHANNELS:
+                    continue
+                perms = channel.permissions_for(channel.guild.me)
+                if not perms.send_messages:
+                    print(f"Skipping {channel.name}: No permission.")
                     continue
                 await channel.send(embed=embed)
                 success_count += 1
-                await asyncio.sleep(1)  # prevent rate-limiting
+                await asyncio.sleep(1)
+            except discord.Forbidden:
+                print(f"403 Forbidden in {channel.name}")
+                failure_count += 1
             except Exception as e:
-                print(f"[Broadcast Error] Guild: {guild.name}, Channel: {channel.name}, Error: {e}")
+                print(f"[Broadcast Error] {e}")
                 failure_count += 1
 
     await interaction.followup.send(
@@ -954,20 +1009,33 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
         ephemeral=True
     )
 
-@app_commands.guilds(discord.Object(id=MY_GUILD_ID))
 @bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika say something in any channel by ID.")
-@discord.app_commands.describe(guild_id="Target server ID", channel_id="The numeric ID of the channel", message="The message to send")
-async def speak_as_monika(interaction: discord.Interaction, guild_id: str, channel_id: str, message: str):
-    if interaction.user.id != OWNER_ID:
+@app_commands.guilds(*ALLOWED_GUILDS)
+@discord.app_commands.describe(channel_id="The numeric ID of the channel", message="The message to send")
+async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str):
+    if interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message(
-            "❌ You don't have permission to use this command.",
+            "❌ You don't have permission to use this command. owner of the server only. and keep this a secret",
             ephemeral=True
         )
         return
 
     try:
-        guild = await bot.fetch_channel(int(guild_id))
-        channel = await bot.fetch_channel(int(channel_id))
+        channel = bot.get_channel(int(channel_id))
+        if not channel:
+            await interaction.response.send_message(
+                f"❌ I cannot see a channel with ID {channel_id}.",
+                ephemeral=True
+            )
+            return
+
+        perms = channel.permissions_for(channel.guild.me)
+        if not perms.send_messages:
+            await interaction.response.send_message(
+                f"❌ I don’t have permission to send messages in {channel.mention}.",
+                ephemeral=True
+            )
+            return
     except Exception as e:
         await interaction.response.send_message(
             f"❌ Could not find channel with ID {channel_id}. Error: {e}",
