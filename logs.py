@@ -63,9 +63,9 @@ class LogsManager:
         # Detect role again if not passed or override
 
         log_message = (
-            f"[Memory] Saved | Server: {guild_name} ID: ({guild_id}) | "
+            f"[{timestamp}] | Server: {guild_name} ID: ({guild_id}) | "
             f"Channel: {channel_name} ID: ({channel_id}) | "
-            f"User: {username} ID: ({user_id}) | Role: {role} | Emotion: {emotion}"
+            f"User: {username} ID: ({user_id}) | {content} | Role: {role} | Emotion: {emotion}"
         )
 
         try:
