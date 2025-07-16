@@ -3,7 +3,7 @@ import json
 import os
 
 class GuildTracker:
-    def __init__(self, file_path="json/servers.json"):
+    def __init__(self, file_path="servers.json"):
         self.file_path = file_path
         self.servers = {}  # server_id -> server_info
         self.load()
