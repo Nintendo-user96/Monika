@@ -3,141 +3,118 @@ import json
 import os
 
 class GuildTracker:
-    def __init__(self, file_path_1="servers.json", file_path_2="server_personality.json", file_path_3="server_relationship.json"):
+    def __init__(self, file_path_1="server.json"):
         self.file_path = file_path_1
         self.servers = {}
         self.channels = {}
-        
-        # Personality modes per server
-        self.personality_file = file_path_2
+    
         self.personality_modes = {}
 
         # Relationship modes per server
-        self.relationship_file = file_path_3
         self.relationship_modes = {}
 
         self.load()
-        self.load_personality_modes()
-        self.load_relationship_modes()
 
     # ---------------- BASIC SERVER/CHANNEL TRACKING ----------------
 
     def _now(self):
         return datetime.datetime.utcnow().isoformat()
 
-    def track_server(self, server_id, server_name):
-        server_id = str(server_id)
-        now = self._now()
-        if server_id not in self.servers:
-            self.servers[server_id] = {
-                "server_id": server_id,
-                "name": server_name,
-                "channels": {},
-                "last_seen": now
-            }
-        else:
-            self.servers[server_id]["name"] = server_name
-            self.servers[server_id]["last_seen"] = now
-        self.save()
-
-    def track_channel(self, server_id, channel_id, channel_name):
-        server_id = str(server_id)
-        channel_id = str(channel_id)
-        now = self._now()
-
-        if server_id not in self.servers:
-            self.track_server(server_id, f"Unnamed Server {server_id}")
-
-        self.servers[server_id]["channels"][channel_id] = {
-            "name": channel_name,
-            "last_seen": now
-        }
-        self.save()
-
-    def get_server_info(self, server_id):
-        return self.servers.get(str(server_id))
-
-    def save(self):
-        with open(self.file_path, "w") as f:
-            json.dump(self.servers, f, indent=2)
-
     def load(self):
         if os.path.exists(self.file_path):
             with open(self.file_path, "r") as f:
                 try:
-                    data = json.load(f)
-                    self.servers = data.get("servers", {})
-                    self.channels = data.get("channels", {})
+                    self.data = json.load(f)
                 except json.JSONDecodeError:
-                    self.servers = {}
-                    self.channels = {}
+                    self.data = {}
         else:
-            self.servers = {}
-            self.channels = {}
+            self.data = {}
+
+    def save(self):
+        with open(self.file_path, "w") as f:
+            json.dump(self.data, f, indent=2)
+
+    def track_server(self, guild_id, guild_name):
+        guild_id = str(guild_id)
+        if guild_id not in self.data:
+            self.data[guild_id] = {
+                "guild_name": guild_name,
+                "channels": {},
+                "personality_modes": [],
+                "relationship": None
+            }
+            self.save()
+
+    def track_channel(self, guild_id, channel_id, channel_name):
+        guild_id = str(guild_id)
+        channel_id = str(channel_id)
+        if guild_id in self.data:
+            channels = self.data[guild_id]["channels"]
+            channels[channel_id] = channel_name
+            self.save()
         
     # ---------------- PERSONALITY MODE PERSISTENCE ----------------
 
-    def save_personality_modes(self):
-        with open(self.personality_file, "w") as f:
-            json.dump(
-                {k: list(v) for k, v in self.personality_modes.items()},
-                f,
-                indent=2
-            )
-
-    def load_personality_modes(self):
-        if os.path.exists(self.personality_file):
-            with open(self.personality_file, "r") as f:
-                try:
-                    data = json.load(f)
-                    self.personality_modes = {
-                        str(k): set(v) for k, v in data.items()
-                    }
-                except json.JSONDecodeError:
-                    self.personality_modes = {}
-        else:
-            self.personality_modes = {}
-
     def set_personality_modes(self, guild_id, modes):
-        self.personality_modes[str(guild_id)] = set(modes)
-        self.save_personality_modes()
+        guild_id = str(guild_id)
+
+        if guild_id not in self.data or self.data[guild_id] is None:
+            self.data[guild_id] = {}
+        
+        self.data[guild_id]["personality"] = list(modes)
+        self.save()
 
     def get_personality_modes(self, guild_id):
-        return self.personality_modes.get(str(guild_id), set())
+        guild_id = str(guild_id)
+        return self.data.get(guild_id, {}).get("personality", [])
     
     # ---------------- RELATIONSHIP MODE PERSISTENCE ----------------
 
-    def load_relationship_modes(self):
-        if os.path.exists(self.relationship_file):
-            with open(self.relationship_file, "r") as f:
-                try:
-                    data = json.load(f)
-                    self.relationship_modes = {
-                        str(k): v for k, v in data.items()
-                    }
-                except json.JSONDecodeError:
-                    self.relationship_modes = {}
-        else:
-            self.relationship_modes = {}
+    def set_relationship_type(self, guild_id, relationship_type):
+        if guild_id not in self.data or self.data[guild_id] is None:
+            self.data[guild_id] = {}
 
-    def save_relationship_modes(self):
-        with open(self.relationship_file, "w") as f:
-            json.dump(self.relationship_modes, f, indent=2)
+        if "relationship" not in self.data[guild_id] or self.data[guild_id]["relationship"] is None:
+            self.data[guild_id]["relationship"] = {}
 
-    def set_relationship_mode(self, guild_id, mode):
-        self.relationship_modes[str(guild_id)] = set(mode)
-        self.save_relationship_modes()
+        self.data[guild_id]["relationship"]["type"] = relationship_type
+        self.save()
 
-    def get_relationship_mode(self, guild_id):
-        return self.relationship_modes.get(str(guild_id), set())
+    def get_relationship_type(self, guild_id):
+        guild_id = str(guild_id)
+        return self.data.get(guild_id, {}).get("relationship", {})
+
+    def set_relationship_with(self, guild_id, with_list):
+        if guild_id not in self.data or self.data[guild_id] is None:
+            self.data[guild_id] = {}
+
+        if "relationship" not in self.data[guild_id] or self.data[guild_id]["relationship"] is None:
+            self.data[guild_id]["relationship"] = {}
+
+        self.data[guild_id]["relationship"]["with"] = with_list
+        self.save()
+
+    def get_relationship_with(self, guild_id):
+        if guild_id not in self.data or not isinstance(self.data[guild_id], dict):
+            self.data[guild_id] = {}
+
+        self.data[guild_id].setdefault("relationship", {})
+        self.data[guild_id]["relationship"].setdefault("with", [])
+
+        return self.data[guild_id]["relationship"]["with"]
     
     # ---------------- JSON PERSISTENCE ----------------
 
-    def export_json(self, filepath):
-        with open(filepath, "w") as f:
-            json.dump(self.servers, f, indent=2)
+    def export_json(self, file_path=None):
+        if not file_path:
+            file_path = self.file_path
+        with open(file_path, "w") as f:
+            json.dump(self.data, f, indent=2)
 
-    def import_json(self, filepath):
-        if os.path.exists(filepath):
-            with open(filepath, "r") as f:
-                self.servers = json.load(f)
+    def import_json(self, file_path=None):
+        if not file_path:
+            file_path = self.file_path
+        if os.path.exists(file_path):
+            with open(file_path, "r") as f:
+                self.data = json.load(f)
+            
