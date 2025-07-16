@@ -25,8 +25,6 @@ monika_traits = MonikaTraits()
 
 USER_TRACKER_BACKUP = "users.json"
 SERVER_TRACKER_BACKUP = "servers.json"
-PERSONALITY_TRACKER_BACKUP = "server_personality.json"
-RELATIONSHIP_TRACKER_BACKUP = "server_relationship.json"
 
 #DokiTuber_Sprites = {}
 server_outfit_preferences = {}
@@ -248,17 +246,19 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
         f"{personality_text}"
     )
 
-    relationship = None
+    relationship_type = server_tracker.get_relationship_type(guild_id)
+    relationship_with = server_tracker.get_relationship_with(guild_id)
+
     if guild_id:
         relationship = monika_traits.get_server_relationship_mode(guild_id)
     if not relationship and user_id:
         relationship = monika_traits.get_user_relationship_mode(user_id)
 
-    if relationship:
-        mode_text = relationship.get("mode", "unknown").capitalize()
-        with_list = relationship.get("with", [])
-        with_text = ", ".join(with_list) if with_list else "unspecified"
-        prompt += f"\n\nYou are in a **{mode_text}** relationship with: {with_text}."
+    if relationship_type:
+        prompt += f"\n\nYou are in a **{relationship_type}** relationship"
+        if relationship_with:
+            with_text = ", ".join(relationship_with)
+            prompt += f" with: {with_text}."
 
     return prompt
 
@@ -282,12 +282,7 @@ async def on_ready():
 
     try:
         server_tracker.import_json(SERVER_TRACKER_BACKUP)
-        print("[SERVER] Backup loaded.")
-        server_tracker.load_personality_modes(PERSONALITY_TRACKER_BACKUP)
-        print("[PERSONALITY] Backup loaded.")
-        server_tracker.load_relationship_modes(RELATIONSHIP_TRACKER_BACKUP)
-        print("[RELATIONSHIP] Backup loaded.")
-        print("[ALL] Backup loaded.")
+        print("[GuildTracker] Backup loaded.")
     except FileNotFoundError:
         print("[GuildTracker] No backup found, starting fresh.")
 
@@ -318,12 +313,7 @@ async def on_disconnect():
 
     try:
         server_tracker.export_json(SERVER_TRACKER_BACKUP)
-        print("[SERVER] Backup saved.")
-        server_tracker.save_personality_modes(PERSONALITY_TRACKER_BACKUP)
-        print("[PERSONALITY] Backup saved.")
-        server_tracker.save_relationship_modes(RELATIONSHIP_TRACKER_BACKUP)
-        print("[RELATIONSHIP] Backup saved.")
-        print("[ALL] Backup saved.")
+        print("[GuildTracker] Backup saved.")
     except Exception as e:
         print(f"[GuildTracker] Failed to save backup: {e}")
 
@@ -334,8 +324,6 @@ async def periodic_autosave():
         try:
             user_tracker.export_json(USER_TRACKER_BACKUP)
             server_tracker.export_json(SERVER_TRACKER_BACKUP)
-            server_tracker.save_personality_modes(PERSONALITY_TRACKER_BACKUP)
-            server_tracker.save_relationship_modes(RELATIONSHIP_TRACKER_BACKUP)
             print("[Autosave] Trackers backed up.")
         except Exception as e:
             print(f"[Autosave Error] {e}")
@@ -489,8 +477,6 @@ async def handle_guild_message(message, avatar_url):
     try:
         user_tracker.import_json("users.json")
         server_tracker.import_json("servers.json")
-        server_tracker.load_personality_modes("server_personality.json")
-        server_tracker.load_relationship_modes("server_relationship.json")
     except FileNotFoundError:
         print("No backup files found yet.")
 
@@ -510,8 +496,8 @@ async def handle_guild_message(message, avatar_url):
     )
     logs.Logs_save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "user", role="user")
 
-    active_modes = server_tracker.get_personality_modes(guild_id)
-    relationship = server_tracker.get_relationship_mode(guild_id)
+    active_modes = server_tracker.get_personality_modes(guild_id) or {"default"}
+    relationship = server_tracker.get_relationship_type(guild_id)
     system_prompt = generate_monika_system_prompt(active_modes, is_friend_context=is_friend, guild_id=guild_id, user_id=user_id)
     conversation = json_memory.get_context(guild_id, channel_id, user_id)
     conversation = logs.Logs_get_context(guild_id, channel_id, user_id)
@@ -726,7 +712,7 @@ async def helpme(interaction: discord.Interaction):
             "**/reset_memory** – Clear what I remember about *you*.\n"
             "**/set_outfit** - Server owner can set Monika's outfit style\n"
             "**/set_personality** - Server owner can set my personality mode(s).\n"
-            "**/set_relationship_mode** - Set me on a relationship orientation for this server.\n"
+            "**/set_relationship** - Set me on a relationship orientation for this server.\n"
             "**/restart_monika** - Restart me *only* in this server, clearing my memory and settings here.\n"
             "*(non-admins)*\n"
             "**/export_memories** - Export all stored memory into a .txt file.\n"
@@ -792,7 +778,7 @@ async def set_outfit(interaction: discord.Interaction, outfit: str):
         return
 
     outfit = outfit.lower().strip()
-    if outfit not in ["school_uniform", "casual", "white dress", "hoodie", "pajamas", "error"]:
+    if outfit not in ["school_uniform", "casual", "white dress", "hoodie", "pajamas"]:
         await interaction.response.send_message(
             "❌ Invalid outfit. Options are: school_uniform, casual, white dress, hoodie, pajamas.",
             ephemeral=True
@@ -808,34 +794,27 @@ async def set_outfit(interaction: discord.Interaction, outfit: str):
 @bot.tree.command(name="set_personality", description="Server owner can set Monika's personality mode(s).")
 @app_commands.describe(modes="Comma-separated list of modes.")
 async def set_personality(interaction: discord.Interaction, modes: str):
-    if interaction.user.id != interaction.guild.owner_id:
-        await interaction.response.send_message("❌ Only the server owner can set my personality.", ephemeral=True)
+    if interaction.guild is None or interaction.user.id != interaction.guild.owner_id:
+        await interaction.response.send_message(
+            "❌ Only the server owner can set my personality.",
+            ephemeral=True
+        )
         return
 
-    chosen = [m.strip().lower() for m in modes.split(",") if m.strip().lower() in monika_traits.personality_modes]
+    # Split and validate modes
+    chosen = [m.strip().lower() for m in modes.split(",") if m.strip().lower() in PERSONALITY_MODES]
     if not chosen:
         await interaction.response.send_message(
-            f"❌ Invalid modes. Available options:\n{', '.join(monika_traits.personality_modes.keys())}",
-            ephemeral=True
-        )
-        return
-    
-    server_tracker.set_personality_modes(interaction.guild_id, chosen)
-    await interaction.response.send_message(
-        f"✅ Personality modes saved: {', '.join(chosen)}",
-        ephemeral=True
-    )
-
-    if len(chosen) > 5:
-        await interaction.response.send_message(
-            "❌ You can only choose up to 5 personality modes.",
+            f"❌ Invalid modes. Available options are:\n{', '.join(PERSONALITY_MODES.keys())}",
             ephemeral=True
         )
         return
 
-    monika_traits.set_server_personality_modes(str(interaction.guild.id), chosen)
+    # Save to server_tracker
+    server_tracker.set_personality_modes(str(interaction.guild.id), chosen)
+
     await interaction.response.send_message(
-        f"✅ Monika's personality modes for this server set to: **{', '.join(chosen)}**.",
+        f"✅ Monika's personality modes set to: **{', '.join(chosen)}**",
         ephemeral=True
     )
 
@@ -860,41 +839,19 @@ async def show_personalities(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed, ephemeral=True)
     
 @bot.tree.command(name="set_relationship", description="Set Monika's relationship orientation for this server.")
-@app_commands.describe(mode="Choose one: polyamory, lesbian, pansexual, bisexual, straight, asexual")
-async def set_relationship(interaction: discord.Interaction, mode: str, targets: str):
+@app_commands.describe(relationship_type="Choose one: polyamory, lesbian, pansexual, bisexual, straight, asexual")
+async def set_relationship(interaction: discord.Interaction, relationship_type: str, with_users: str):
+    guild_id = str(interaction.guild_id)
 
-    if interaction.user.id != interaction.guild.owner_id:
-        await interaction.response.send_message("❌ Only the server owner can set the relationship.", ephemeral=True)
-        return
+    with_list = [item.strip() for item in with_users.split(",") if item.strip()]
 
-    guild_id = str(interaction.guild.id)
+    server_tracker.set_relationship_type(guild_id, relationship_type.lower())
+    server_tracker.set_relationship_with(guild_id, with_list)
 
-    target_list = [t.strip() for t in targets.split(",") if t.strip()]
-    resolved = []
-
-    for t in target_list:
-        # Allow names like Sayori, Yuri, etc.
-        if t.lower() in ["sayori", "natsuki", "yuri", "mc"]:
-            resolved.append(t.title())
-        elif t.isdigit():
-            resolved.append(int(t))
-        else:
-            # Try to resolve to a member
-            found = discord.utils.get(interaction.guild.members, name=t)
-            if found:
-                resolved.append(found.id)
-
-    server_tracker.set_relationship_mode(interaction.guild_id, mode)
-
-    try:
-        monika_traits.set_server_relationship_mode(guild_id, mode.lower(), resolved)
-        who_text = ', '.join(str(r) for r in resolved)
-        await interaction.response.send_message(
-            f"✅ Relationship mode set to **{mode}** with **{who_text}**.",
-            ephemeral=True
-        )
-    except ValueError as e:
-        await interaction.response.send_message(f"❌ {str(e)}", ephemeral=True)
+    await interaction.response.send_message(
+        f"🔗 Relationship mode set to **{relationship_type}** with: **{', '.join(with_list)}**.",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="check_relationship", description="Check your relationship settings with Monika.")
 async def check_relationship(interaction: discord.Interaction):
