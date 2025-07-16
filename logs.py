@@ -74,8 +74,8 @@ class LogsManager:
         except Exception as e:
             print(f"[Memory Channel Error] {e}")
 
-    async def load_history(self, client, LOG_CHANNEL_ID):
-        log_channel = client.get_channel(LOG_CHANNEL_ID)
+    async def load_history(self, client, LOG_CHAN_ID):
+        log_channel = client.get_channel(LOG_CHAN_ID)
         if not log_channel:
             print("[Memory] Log channel not found.")
             return
