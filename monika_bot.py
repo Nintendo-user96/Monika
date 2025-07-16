@@ -922,8 +922,8 @@ async def report(interaction: discord.Interaction, message: str):
         embed.add_field(name="Report", value=message, inline=False)
         await report_channel.send(embed=embed)
 
-@bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
 @app_commands.guilds(*ME_ONLY)
+@bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
 async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "15f500"):
 
@@ -990,8 +990,8 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
         ephemeral=True
     )
 
-@bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika say something in any channel by ID.")
 @app_commands.guilds(*ALLOWED_GUILDS)
+@bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika say something in any channel by ID.")
 @discord.app_commands.describe(channel_id="The numeric ID of the channel", message="The message to send")
 async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str):
     if interaction.user.id != interaction.guild.owner_id:
