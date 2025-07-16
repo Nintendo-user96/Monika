@@ -103,6 +103,9 @@ class MonikaTraits:
             "with_users": with_users
         }
 
+    def get_user_relationship_mode(self, user_id):
+        return self.user_relationship_modes.get(user_id, None)
+
     def get_server_relationship_mode(self, guild_id):
         return self.server_relationship_modes.get(guild_id, None)
 
