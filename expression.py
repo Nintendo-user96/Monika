@@ -11,6 +11,8 @@ class User_SpritesManager:
     def __init__(self):
         self.sprites_by_outfit = self._load_sprites()
         self.valid = self._extract_all_emotions()
+        self._selected_casual_variant = None
+        self._last_casual_date  = None
 
     def _load_sprites(self):
         return {
@@ -429,8 +431,6 @@ class User_SpritesManager:
                 "nervous laughing eyes close": f"{SPRITE_DIR}/dress/Mon12.png",
             }
         }
-        self._selected_casual_variant = None
-        self._last_casual_dat  = None
 
     def _pick_casual_variant(self):
         today = _today_date()
@@ -456,14 +456,14 @@ class User_SpritesManager:
 
         outfit_sprites = self.sprites_by_outfit.get(outfit)
         if not outfit_sprites:
-            outfit_sprites = self.sprites_by_outfit.get("school_uniform", {})
+            return None
 
         path = outfit_sprites.get(emotion)
         if path:
             return path
 
         # fallback to neutral
-        return outfit_sprites.get("neutral", None)
+        return outfit_sprites.get(emotion, outfit_sprites.get("neutral"))
 
     async def classify(self, text, openai_client):
         try:
