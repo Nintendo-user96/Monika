@@ -12,7 +12,7 @@ from openai import OpenAI
 from memory import JsonManager
 from logs import LogsManager
 from expression import User_SpritesManager
-#from expression_dokitubers import ExpressionHandler, DOKITUBER_MANAGERS
+#from expression_dokitubers import DOKITUBER_MANAGERS
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
@@ -353,7 +353,7 @@ async def on_message(message):
     if message.author.bot and message.author.id == bot.user.id:
         return
     
-    if message.channel.id in NO_CHAT_CHANNELS:
+    if message.channel.id != NO_CHAT_CHANNELS:
         return
     
     await bot.process_commands(message)
@@ -946,7 +946,7 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
     for guild in bot.guilds:
         for channel in guild.text_channels:
             if channel.id in NO_CHAT_CHANNELS:
-                continue
+                return
 
     try:
         color_int = int(color_hex, 16)
