@@ -3,7 +3,7 @@ import os
 import threading
 
 class JsonManager:
-    def __init__(self, user_tracker, server_tracker, file_path="json/memory.json"):
+    def __init__(self, user_tracker, server_tracker, file_path="memory.json"):
         self.file_path = file_path
         self.lock = threading.RLock()
         self.user_tracker = user_tracker
