@@ -25,6 +25,8 @@ monika_traits = MonikaTraits()
 
 USER_TRACKER_BACKUP = "users.json"
 SERVER_TRACKER_BACKUP = "servers.json"
+PERSONALITY_TRACKER_BACKUP = "server_personality.json"
+RELATIONSHIP_TRACKER_BACKUP = "server_relationship.json"
 
 #DokiTuber_Sprites = {}
 server_outfit_preferences = {}
@@ -280,7 +282,12 @@ async def on_ready():
 
     try:
         server_tracker.import_json(SERVER_TRACKER_BACKUP)
-        print("[GuildTracker] Backup loaded.")
+        print("[SERVER] Backup loaded.")
+        server_tracker.load_personality_modes(PERSONALITY_TRACKER_BACKUP)
+        print("[PERSONALITY] Backup loaded.")
+        server_tracker.load_relationship_modes(RELATIONSHIP_TRACKER_BACKUP)
+        print("[RELATIONSHIP] Backup loaded.")
+        print("[ALL] Backup loaded.")
     except FileNotFoundError:
         print("[GuildTracker] No backup found, starting fresh.")
 
@@ -311,7 +318,12 @@ async def on_disconnect():
 
     try:
         server_tracker.export_json(SERVER_TRACKER_BACKUP)
-        print("[GuildTracker] Backup saved.")
+        print("[SERVER] Backup saved.")
+        server_tracker.save_personality_modes(PERSONALITY_TRACKER_BACKUP)
+        print("[PERSONALITY] Backup saved.")
+        server_tracker.save_relationship_modes(RELATIONSHIP_TRACKER_BACKUP)
+        print("[RELATIONSHIP] Backup saved.")
+        print("[ALL] Backup saved.")
     except Exception as e:
         print(f"[GuildTracker] Failed to save backup: {e}")
 
@@ -322,6 +334,8 @@ async def periodic_autosave():
         try:
             user_tracker.export_json(USER_TRACKER_BACKUP)
             server_tracker.export_json(SERVER_TRACKER_BACKUP)
+            server_tracker.save_personality_modes(PERSONALITY_TRACKER_BACKUP)
+            server_tracker.save_relationship_modes(RELATIONSHIP_TRACKER_BACKUP)
             print("[Autosave] Trackers backed up.")
         except Exception as e:
             print(f"[Autosave Error] {e}")
@@ -473,8 +487,10 @@ async def handle_guild_message(message, avatar_url):
     channel_name = message.channel.name
 
     try:
-        user_tracker.import_json("users_backup.json")
-        server_tracker.import_json("servers_backup.json")
+        user_tracker.import_json("users.json")
+        server_tracker.import_json("servers.json")
+        server_tracker.load_personality_modes("server_personality.json")
+        server_tracker.load_relationship_modes("server_relationship.json")
     except FileNotFoundError:
         print("No backup files found yet.")
 
@@ -494,8 +510,8 @@ async def handle_guild_message(message, avatar_url):
     )
     logs.Logs_save(guild_id, guild_name, channel_id, channel_name, user_id, username, message.content, "user", role="user")
 
-    active_modes = monika_traits.get_server_personality_modes(guild_id)
-    relationship = monika_traits.get_server_relationship_mode(guild_id)
+    active_modes = server_tracker.get_personality_modes(guild_id)
+    relationship = server_tracker.get_relationship_mode(guild_id)
     system_prompt = generate_monika_system_prompt(active_modes, is_friend_context=is_friend, guild_id=guild_id, user_id=user_id)
     conversation = json_memory.get_context(guild_id, channel_id, user_id)
     conversation = logs.Logs_get_context(guild_id, channel_id, user_id)
@@ -803,6 +819,12 @@ async def set_personality(interaction: discord.Interaction, modes: str):
             ephemeral=True
         )
         return
+    
+    server_tracker.set_personality_modes(interaction.guild_id, chosen)
+    await interaction.response.send_message(
+        f"✅ Personality modes saved: {', '.join(chosen)}",
+        ephemeral=True
+    )
 
     if len(chosen) > 5:
         await interaction.response.send_message(
@@ -861,6 +883,8 @@ async def set_relationship(interaction: discord.Interaction, mode: str, targets:
             found = discord.utils.get(interaction.guild.members, name=t)
             if found:
                 resolved.append(found.id)
+
+    server_tracker.set_relationship_mode(interaction.guild_id, mode)
 
     try:
         monika_traits.set_server_relationship_mode(guild_id, mode.lower(), resolved)
