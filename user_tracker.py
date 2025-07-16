@@ -3,7 +3,7 @@ import json
 import os
 
 class UserTracker:
-    def __init__(self, file_path="json/users.json"):
+    def __init__(self, file_path="users.json"):
         self.file_path = file_path
         self.users = {}  # user_id -> user_info
         self.load()
