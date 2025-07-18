@@ -154,8 +154,6 @@ friends_relationship_meters = {}
 def error_emotion():
     return ["error", "glitching"]
 
-emotion = random.choice(error_emotion())
-
 error_messages = [
     "Ahaha... Sorry, I glitched there.",
     "Oops! Something broke, teehee~",
@@ -439,7 +437,7 @@ async def handle_dm_message(message, avatar_url):
 
     # Default fallback values BEFORE try
     monika_DMS = random.choice(error_messages)
-    emotion = random.choice(error_emotion)
+    emotion = random.choice(error_emotion())
 
     try:
         response = await call_openai_with_retries(conversation)
@@ -523,7 +521,7 @@ async def handle_guild_message(message, avatar_url):
         return
 
     monika_reply = random.choice(error_messages)
-    emotion = random.choice(error_emotion)
+    emotion = random.choice(error_emotion())
 
     try:
         response = await call_openai_with_retries(conversation)
@@ -540,7 +538,7 @@ async def handle_guild_message(message, avatar_url):
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = random.choice(error_messages)
-        emotion = random.choice(error_emotion)
+        emotion = random.choice(error_emotion())
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
