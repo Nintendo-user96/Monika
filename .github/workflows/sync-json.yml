@@ -30,6 +30,18 @@ jobs:
         run: |
           python bot/monika_bot.py  # or a separate exporter script
 
+      - name: Run your bot memories
+        run: |
+          python bot/memory.py
+
+      - name: Run your bot user tracker
+        run: |
+          python bot/user_tracker.py
+
+      - name: Run your bot server tracker
+        run: |
+          python bot/servers_tracker.py
+
       - name: Commit changes
         run: |
           git config --global user.name 'github-actions[bot]'
