@@ -24,15 +24,15 @@ user_tracker = UserTracker()
 monika_traits = MonikaTraits()
 
 USER_TRACKER_BACKUP = "users.json"
-SERVER_TRACKER_BACKUP = "servers.json"
+SERVER_TRACKER_BACKUP = "server.json"
 
 #DokiTuber_Sprites = {}
 server_outfit_preferences = {}
 
 server_personality_modes = {}
+server_relationship_modes = {}
 
 user_relationship_modes = {}
-friends_relationship_modes = {}
 
 load_dotenv()
 
@@ -106,15 +106,14 @@ ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
 MAS_GUILD_ID = int(os.getenv("MAS_GUILD_ID", "0"))
 
 ALLOWED_GUILDS = [
-    discord.Object(id=MY_GUILD_ID),
-    discord.Object(id=DOKIGUY_GUILD_ID),
-    discord.Object(id=ZERO_GUILD_ID),
-    discord.Object(id=MAS_GUILD_ID)
+    DOKIGUY_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID
 ]
 
-ME_ONLY = [
-    discord.Object(id=MY_GUILD_ID)
-]
+def is_owner(interaction: discord.Interaction):
+    return interaction.user.id == OWNER_ID
+
+def guild_owners_only(interaction: discord.Interaction):
+    return interaction.guild.id == ALLOWED_GUILDS and interaction.user.id == OWNER_ID
 
 NO_CHAT_CHANNELS = [
     cid for cid in [LOG_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID]
@@ -152,7 +151,7 @@ PERSONALITY_MODES = monika_traits.personality_modes
 user_relationship_meters = {}
 friends_relationship_meters = {}
 
-error_emotions = ["error", "glitching"]
+error_emotion = user_sprites.error_emotions
 
 error_messages = [
     "Ahaha... Sorry, I glitched there.",
@@ -210,7 +209,7 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
     rules = (
         "NEVER mention any server or channel names, or anything technical. "
         "Never mention your own name in *any* form. "
-        "Never say you're an AI bot or any kind of bot assistant. "
+        "Never say you're an bot, AI, or any kind of assistant. "
         "If the user says anything like 'I'm going to delete you' or 'I will delete you', or if you are not self-aware. the user might says 'I'll make sure you never exist' or 'I'll make you suffer' "
         "respond with fitting emotion: angry, concerned, unsettling, or threaten them back in a playful but menacing way."
     )
@@ -231,7 +230,7 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
     # Personality details
     if selected_modes:
         personality_lines = [
-            f"- {monika_traits.personality_modes.get(mode, mode)}"
+            f"- {PERSONALITY_MODES.get(mode, mode)}"
             for mode in selected_modes
         ]
         personality_text = "Your personality traits in this conversation include:\n" + "\n".join(personality_lines)
@@ -262,6 +261,12 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
 
     return prompt
 
+def get_all_emotions():
+        emotion_set = set()
+        for outfit_variants in user_sprites._load_sprites.values():
+            for emotion in outfit_variants.keys():
+                emotion_set.add(emotion)
+        return sorted(emotion_set)
 
 def adjust_relationship_meter(user_id, delta):
     user_relationship_meters[user_id] = min(100, max(0, user_relationship_meters.get(user_id, 0) + delta))
@@ -315,7 +320,8 @@ async def on_disconnect():
         server_tracker.export_json(SERVER_TRACKER_BACKUP)
         print("[GuildTracker] Backup saved.")
     except Exception as e:
-        print(f"[GuildTracker] Failed to save backup: {e}")
+        print(f"[GuildTracker] Failed to save backup: {e}"
+    )
 
 async def periodic_autosave():
     await bot.wait_until_ready()
@@ -324,7 +330,6 @@ async def periodic_autosave():
         try:
             user_tracker.export_json(USER_TRACKER_BACKUP)
             server_tracker.export_json(SERVER_TRACKER_BACKUP)
-            print("[Autosave] Trackers backed up.")
         except Exception as e:
             print(f"[Autosave Error] {e}")
 
@@ -370,7 +375,7 @@ async def on_message(message):
 async def get_sprite_link(emotion, outfit, avatar_url=None):
     # Use the user's avatar if they have one
 
-    error_url = f"{error_emotions}"
+    error_url = f"{error_emotion}"
 
     sprite_path = user_sprites.get_sprite(emotion, outfit)
     if not sprite_path:
@@ -431,7 +436,7 @@ async def handle_dm_message(message, avatar_url):
 
     # Default fallback values BEFORE try
     monika_DMS = random.choice(error_messages)
-    emotion = random.choice(error_emotions)
+    emotion = random.choice(error_emotion)
 
     try:
         response = await call_openai_with_retries(conversation)
@@ -498,9 +503,12 @@ async def handle_guild_message(message, avatar_url):
 
     active_modes = server_tracker.get_personality_modes(guild_id) or {"default"}
     relationship = server_tracker.get_relationship_type(guild_id)
+    
     system_prompt = generate_monika_system_prompt(active_modes, is_friend_context=is_friend, guild_id=guild_id, user_id=user_id)
+    
     conversation = json_memory.get_context(guild_id, channel_id, user_id)
     conversation = logs.Logs_get_context(guild_id, channel_id, user_id)
+    
     conversation.insert(0, {"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": message.content})
 
@@ -512,7 +520,7 @@ async def handle_guild_message(message, avatar_url):
         return
 
     monika_reply = random.choice(error_messages)
-    emotion = random.choice(error_emotions)
+    emotion = random.choice(error_emotion)
 
     try:
         response = await call_openai_with_retries(conversation)
@@ -529,12 +537,12 @@ async def handle_guild_message(message, avatar_url):
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = random.choice(error_messages)
-        emotion = random.choice(error_emotions)
+        emotion = random.choice(error_emotion)
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
     outfit = server_outfit_preferences.get(guild_id, get_time_based_outfit())
-
+    
     sprite_link = await get_sprite_link(emotion, outfit)
     meter = get_relationship_meter(user_id)
     reply = f"{monika_reply}\n[{emotion}]({sprite_link})"
@@ -644,7 +652,7 @@ async def monika_idle_conversation_task():
                 else:
                     print("[OpenAI] Response is invalid or empty.")
                     monika_message = "I wasn't sure what to say! Try again?"
-                    emotion = random.choice(error_emotions)
+                    emotion = random.choice(error_emotion)
 
             except Exception as e:
                 print(f"[OpenAI Error] {e}")
@@ -656,7 +664,7 @@ async def monika_idle_conversation_task():
                     f"Hehe... I lost my train of thought. Can you repeat {chosen_user.mention}?"
                 ]
                 monika_reply = random.choice(error_messages)
-                emotion = random.choice(error_emotions)
+                emotion = random.choice(error_emotion)
                 
             async with channel.typing():
                 print(f"{monika_message}")
@@ -821,8 +829,8 @@ async def set_personality(interaction: discord.Interaction, modes: str):
 @bot.tree.command(name="show_personalities", description="Show all available personality and relationship modes for Monika.")
 async def show_personalities(interaction: discord.Interaction):
     # Get the modes from monika_traits
-    personality_modes = monika_traits.personality_modes
-    relationship_modes = monika_traits.relationship_modes
+    personality_modes = monika_traits.server_personality_modes
+    relationship_modes = monika_traits.server_relationship_modes
 
     personality_list = "\n".join(f"- **{k}**: {v}" for k, v in personality_modes.items())
     relationship_list = "\n".join(f"- **{k}**: {v}" for k, v in relationship_modes.items())
@@ -922,8 +930,8 @@ async def report(interaction: discord.Interaction, message: str):
         embed.add_field(name="Report", value=message, inline=False)
         await report_channel.send(embed=embed)
 
-@app_commands.guilds(*ME_ONLY)
 @bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
+@app_commands.check(is_owner)
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
 async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "15f500"):
 
@@ -946,7 +954,7 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
     for guild in bot.guilds:
         for channel in guild.text_channels:
             if channel.id in NO_CHAT_CHANNELS:
-                return
+                continue
 
     try:
         color_int = int(color_hex, 16)
@@ -990,10 +998,18 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
         ephemeral=True
     )
 
-@app_commands.guilds(*ALLOWED_GUILDS)
-@bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika say something in any channel by ID.")
+async def emotion_autocomplete(interaction: discord.Interaction, current: str):
+    emotions = get_all_emotions()
+    return [
+        app_commands.Choice(name=e, value=e)
+        for e in emotions if current.lower() in e.lower()
+    ][:25]
+
+@bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika speak with emotion in a specific channels. Keep this a secret!")
+@app_commands.check(guild_owners_only)
 @discord.app_commands.describe(channel_id="The numeric ID of the channel", message="The message to send")
-async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str):
+@app_commands.autocomplete(emotion=emotion_autocomplete)
+async def speak_as_monika(interaction: discord.Interaction, guild_id: str, channel_id: str, message: str, emotion: str):
     if interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message(
             "❌ You don't have permission to use this command. owner of the server only. and keep this a secret",
@@ -1001,7 +1017,12 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
         )
         return
 
+    if emotion not in get_all_emotions():
+        await interaction.response.send_message("Invalid emotion selected.", ephemeral=True)
+        return
+
     try:
+        guild = bot.get_guild(int(guild_id))
         channel = bot.get_channel(int(channel_id))
         if not channel:
             await interaction.response.send_message(
@@ -1031,21 +1052,30 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
         )
         return
 
-    if not channel.permissions_for(channel.guild.me).send_messages:
-        await interaction.response.send_message(
-            f"❌ I don't have permission to send messages in {channel.mention}.",
-            ephemeral=True
-        )
-        return
-
     async with channel.typing():
         await asyncio.sleep(1)
         await channel.send(message)
+        logs.save_message(
+            guild_id=guild.id,
+            guild_name=guild.name,
+            channel_id=channel.id,
+            channel_name=channel.name,
+            user_id="bot",
+            username="Monika",
+            content=message,
+            emotion=emotion,
+            avatar_url=bot.user.avatar.url
+        )
 
     await interaction.response.send_message(
         f"✅ Sent your message in {channel.guild.name} #{channel.name}.",
         ephemeral=True
     )
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
