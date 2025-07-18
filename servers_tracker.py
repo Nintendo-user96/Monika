@@ -95,13 +95,14 @@ class GuildTracker:
         self.save()
 
     def get_relationship_with(self, guild_id):
-        if guild_id not in self.data or not isinstance(self.data[guild_id], dict):
-            self.data[guild_id] = {}
+        if guild_id not in self.data:
+            return []
 
-        self.data[guild_id].setdefault("relationship", {})
-        self.data[guild_id]["relationship"].setdefault("with", [])
+        # Fix: ensure "relationship" exists and is a dict
+        if not isinstance(self.data[guild_id].get("relationship"), dict):
+            self.data[guild_id]["relationship"] = {}
 
-        return self.data[guild_id]["relationship"]["with"]
+        return self.data[guild_id]["relationship"].setdefault("with", [])
     
     # ---------------- JSON PERSISTENCE ----------------
 
