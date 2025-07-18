@@ -89,10 +89,6 @@ class User_SpritesManager:
                 "don't sure": f"{SPRITE_DIR}/school_uniform/Full_sprite/IDK.png",
                 "Infinity Gauntlet": f"{SPRITE_DIR}/school_uniform/Full_sprite/Monika_Infinity_Gauntlet_Sprite_Animation.webp"
             },
-            "error": {
-                "error": f"{SPRITE_DIR}/school_uniform/Full_sprite/G1.png",
-                "glitching": f"{SPRITE_DIR}/school_uniform/Full_sprite/G5.gif"
-            },
             "casual_variants": {
                 "casual 1": {
                     "happy": f"{SPRITE_DIR}/casual/1/Mon1.png",
@@ -432,6 +428,12 @@ class User_SpritesManager:
             }
         }
 
+    def error_emotions(self):
+        return {
+            "error": f"{SPRITE_DIR}/school_uniform/Full_sprite/G1.png",
+            "glitching": f"{SPRITE_DIR}/school_uniform/Full_sprite/G5.gif"
+        }
+
     def _pick_casual_variant(self):
         today = _today_date()
         if self._last_casual_date != today:
@@ -440,7 +442,6 @@ class User_SpritesManager:
             self._selected_casual_variant = random.choice(variants)
             self._last_casual_date = today
         return self._selected_casual_variant
-
     
     def _extract_all_emotions(self):
         all_emotions = set()
@@ -453,6 +454,8 @@ class User_SpritesManager:
             variant = self._pick_casual_variant()
             variant_map = self.sprites_by_outfit["casual_variants"].get(variant, {})
             return variant_map.get(emotion, variant_map.get("neutral"))
+        if outfit == "error":
+            return self.sprites_by_outfit["error"].get(emotion, self.error_emotions["error" or"glitching"])
 
         outfit_sprites = self.sprites_by_outfit.get(outfit)
         if not outfit_sprites:
