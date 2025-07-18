@@ -16,7 +16,7 @@ from expression import User_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
-#import keepalive
+import keepalive
 from monika_personality import MonikaTraits
 
 server_tracker = GuildTracker()
@@ -1077,5 +1077,5 @@ async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
 
-#keepalive.keep_alive()
+keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
