@@ -151,7 +151,8 @@ PERSONALITY_MODES = monika_traits.personality_modes
 user_relationship_meters = {}
 friends_relationship_meters = {}
 
-error_emotion = user_sprites.error_emotions
+def error_emotion():
+    return ["error", "glitching"]
 
 error_messages = [
     "Ahaha... Sorry, I glitched there.",
