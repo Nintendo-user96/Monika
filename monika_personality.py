@@ -1,12 +1,23 @@
-# monika_traits.py
+import json
+import os
 
 class MonikaTraits:
     def __init__(self):
-        # Keep a simple meter system for each user ID
+        self.data = {}
         self.relationship_meter = {}
         self.user_relationship_modes = {}
         self.dokituber_relationship_modes = {}
         self.friends_relationship_modes = {}
+        self.server_relationship_modes = {}
+
+        def save(self, file_path="traits.json"):
+            with open(file_path, "w") as f:
+                json.dump(self.data, f, indent=2)
+
+        def load(self, file_path="traits.json"):
+            if os.path.exists(file_path):
+                with open(file_path, "r") as f:
+                    self.data = json.load(f)
 
         # Define personality modes (minus "gay", plus extras you wanted)
         self.personality_modes = {
@@ -78,36 +89,36 @@ class MonikaTraits:
         }
 
         # Define relationship modes
-        self.relationship_modes_list = [
-            "polyamory", "lesbian", "pansexual", "bisexual", "straight", "asexual"
+        self.relationship_modes = [
+            "Polyamory", "Lesbian", "Pansexual",
+            "Bisexual", "Straight", "Asexual"
         ]
+        self.relationship_meter = {}
 
-        self.server_personality_modes = {}  # guild_id -> set of modes
-        self.server_relationship_modes = {}  # guild_id -> {mode, with_user}
+    def set_personality(self, guild_id, personality_list):
+        self.data.setdefault(guild_id, {})
 
-    def set_server_personality_modes(self, guild_id, modes):
-        if len(modes) > 5:
-            raise ValueError("You can only choose up to 5 personality modes.")
-        self.server_personality_modes[guild_id] = set(modes)
+        if len(personality_list) > 5:
+            raise ValueError("You can only choose up to 5 personalities.")
 
-    def get_server_personality_modes(self, guild_id):
-        return self.server_personality_modes.get(guild_id, None)
+        self.data[guild_id]["personality"] = personality_list
+
+    def get_personality(self, guild_id):
+        return self.data.get(guild_id, {}).get("personality", [])
     
-    def set_server_relationship_mode(self, guild_id, mode, with_users):
-        if mode not in self.relationship_modes_list:
-            raise ValueError(f"Invalid relationship mode. Options: {', '.join(self.relationship_modes_list)}")
-        if not isinstance(with_users, list):
-            raise ValueError("with_users must be a list of user IDs or names.")
-        self.server_relationship_modes[guild_id] = {
-            "mode": mode,
-            "with_users": with_users
-        }
+    def set_server_relationship_mode(self, guild_id, with_list):
+        self.data.setdefault(guild_id, {})
+
+        if not isinstance(self.data[guild_id].get("relationship"), dict):
+            self.data[guild_id]["relationship"] = {}
+
+        self.data[guild_id]["relationship"]["with"] = with_list
 
     def get_user_relationship_mode(self, user_id):
         return self.user_relationship_modes.get(user_id, None)
 
     def get_server_relationship_mode(self, guild_id):
-        return self.server_relationship_modes.get(guild_id, None)
+        return self.server_relationship_modes.get(guild_id, {}).get("mode")
 
     def get_relationship_meter(self, user_id):
         return self.relationship_meter.get(user_id, 50)
@@ -120,6 +131,17 @@ class MonikaTraits:
 
     def decrease_relationship_meter(self, user_id, amount=2):
         self.set_relationship_meter(user_id, self.get_relationship_meter(user_id) - amount)
+
+    def get_relationship_with(self, guild_id):
+        return self.data.get(guild_id, {}).get("relationship", {}).get("with", [])
+
+    def set_relationship_with(self, guild_id, with_list):
+        self.data.setdefault(guild_id, {})
+
+        if "relationship" not in self.data[guild_id]:
+            self.data[guild_id]["relationship"] = {}
+
+        self.data[guild_id]["relationship"]["with"] = with_list
 
     def get_relationship_description(self, mode):
         descriptions = {
