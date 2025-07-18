@@ -16,7 +16,7 @@ from expression import User_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
-import keepalive
+#import keepalive
 from monika_personality import MonikaTraits
 
 server_tracker = GuildTracker()
@@ -263,7 +263,7 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
 
 def get_all_emotions():
         emotion_set = set()
-        for outfit_variants in user_sprites._load_sprites.values():
+        for outfit_variants in user_sprites.sprites_by_outfit.values():
             for emotion in outfit_variants.keys():
                 emotion_set.add(emotion)
         return sorted(emotion_set)
@@ -1007,7 +1007,7 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
 
 @bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika speak with emotion in a specific channels. Keep this a secret!")
 @app_commands.check(guild_owners_only)
-@discord.app_commands.describe(channel_id="The numeric ID of the channel", message="The message to send")
+@discord.app_commands.describe(guild_id= "The numeric ID of the server", channel_id="The numeric ID of the channel", message="The message to send", emotion="The emotion to express in the message")
 @app_commands.autocomplete(emotion=emotion_autocomplete)
 async def speak_as_monika(interaction: discord.Interaction, guild_id: str, channel_id: str, message: str, emotion: str):
     if interaction.user.id != interaction.guild.owner_id:
@@ -1077,5 +1077,5 @@ async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
 
-keepalive.keep_alive()
+#keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
