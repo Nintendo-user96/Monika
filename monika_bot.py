@@ -154,6 +154,8 @@ friends_relationship_meters = {}
 def error_emotion():
     return ["error", "glitching"]
 
+emotion = random.choice(error_emotion())
+
 error_messages = [
     "Ahaha... Sorry, I glitched there.",
     "Oops! Something broke, teehee~",
