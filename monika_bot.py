@@ -717,12 +717,6 @@ async def monika_idle_conversation_task():
             # Update last reply time
             last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
 
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        print(f"[Check Failure] {error}")
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-
 # Idle chat command
 @bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
 @app_commands.describe(state="Set to true or false")
@@ -924,43 +918,41 @@ async def check_relationship(interaction: discord.Interaction):
 
 @bot.tree.command(name="restart_monika", description="Restart Monika *only* in this server, clearing her memory and settings here.")
 async def restart_monika(interaction: discord.Interaction):
-    if interaction.user.id != interaction.guild.owner_id:
-        await interaction.response.send_message(
-            "You can not restart monika.",
-            ephemeral=True
-        )
+    await interaction.response.defer(ephemeral=True)
+
+    if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
+        await interaction.followup.send("❌ You cannot restart Monika. Owner only.", ephemeral=True)
         return
 
-    guild_id = str(interaction.guild_id)
-    if not guild_id:
-        await interaction.response.send_message(
-            "❌ This command can only be used in a server.",
-            ephemeral=True
-        )
-        return
+    guild_id = str(interaction.guild.id)
 
-    # Remove her memory for this guild
-    if guild_id in json_memory.data:
-        del json_memory.data[guild_id]
-        json_memory.save()
+    try:
+        # Clear memory
+        if guild_id in json_memory.data:
+            del json_memory.data[guild_id]
+            json_memory.save()
 
-    # Remove any personality settings for this guild
-    if guild_id in monika_traits.server_personality_modes:
-        del monika_traits.server_personality_modes[guild_id]
+        if guild_id in server_tracker.data:
+            del server_tracker.data[guild_id]
+            server_tracker.save()
 
-    # Remove outfit preferences
-    if guild_id in server_outfit_preferences:
-        del server_outfit_preferences[guild_id]
+        # Clear personality
+        if guild_id in monika_traits.personality_modes:
+            del monika_traits.personality_modes[guild_id]
 
-    # Remove relationship modes for all users in this guild
-    for user_id in list(monika_traits.user_relationship_modes.keys()):
-        if monika_traits.user_relationship_modes[user_id].get("guild_id") == guild_id:
-            del monika_traits.user_relationship_modes[user_id]
+        # Clear outfit preferences
+        if guild_id in server_outfit_preferences:
+            del server_outfit_preferences[guild_id]
 
-    await interaction.response.send_message(
-        "♻️ Monika has been *fully restarted* for this server. Her memory and settings here are now cleared.",
-        ephemeral=True
-    )
+        # Clear user relationship modes for this guild
+        for user_id in list(monika_traits.user_relationship_modes.keys()):
+            if monika_traits.user_relationship_modes[user_id].get("guild_id") == guild_id:
+                del monika_traits.user_relationship_modes[user_id]
+
+        await interaction.followup.send("✅ Monika has been restarted in this server.", ephemeral=True)
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Restart failed: {e}", ephemeral=True)
 
 @bot.tree.command(name="report", description="Report a bug or error about the bot.")
 @app_commands.describe(message="Describe the bug or issue you want to report.")
@@ -1068,6 +1060,8 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
 @app_commands.autocomplete(emotion=emotion_autocomplete)
 @app_commands.check(guild_owners_only)
 async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str, emotion: str):
+    await interaction.response.defer(ephemeral=True)
+
     if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message(
             "❌ You don't have permission to use this command. owner of the server only. and keep this a secret",
@@ -1107,25 +1101,19 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
     sprite_link = await get_sprite_link(emotion, outfit)
     mon_reply = f"{message}\n[{emotion}]({sprite_link})"
 
-    async with channel.typing():
-        await asyncio.sleep(1)
-        await channel.send(mon_reply)
-        logs.save_to_memory_channel(
-            guild_id=channel.guild.id,
-            guild_name=channel.guild.name,
-            channel_id=channel.id,
-            channel_name=channel.name,
-            user_id="bot",
-            username="Monika",
-            content=message,
-            emotion=emotion,
-            avatar_url=bot.user.avatar.url if bot.user.avatar else None
-        )
+    try:
+        async with channel.typing():
+            await asyncio.sleep(1)
+            await channel.send(mon_reply)
+        await interaction.response.send_message(f"✅ Sent your message in {channel.guild.name} #{channel.name}.", ephemeral=True)
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
-    await interaction.response.send_message(
-        f"✅ Sent your message in {channel.guild.name} #{channel.name}.",
-        ephemeral=True
-    )
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        print(f"[Check Failure] {error}")
+        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
