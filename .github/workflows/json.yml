@@ -24,10 +24,12 @@ jobs:
         run: python servers_tracker.py
       - name: Commit and push changes
         run: |
-          git config --global user.name "github-actions"
-          git config --global user.email "github-actions@github.com"
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
           git add memory.json
           git add server.json
           git add users.json
-          git commit -m "Auto-update output.json" || echo "No changes to commit"
+          git commit -m "Auto-update memory.json" || echo "No changes to commit"
+          git commit -m "Auto-update users.json" || echo "No changes to commit"
+          git commit -m "Auto-update server.json" || echo "No changes to commit"
           git push
