@@ -105,15 +105,20 @@ DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
 ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
 MAS_GUILD_ID = int(os.getenv("MAS_GUILD_ID", "0"))
 
-ALLOWED_GUILDS = [
-    DOKIGUY_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID
-]
-
 def is_owner(interaction: discord.Interaction):
     return interaction.user.id == OWNER_ID
 
-def guild_owners_only(interaction: discord.Interaction):
-    return interaction.guild.id == ALLOWED_GUILDS and interaction.user.id == OWNER_ID
+ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
+
+def guild_owners_only(interaction: discord.Interaction) -> bool:
+    return (
+        interaction.user.id == OWNER_ID or
+        (
+            interaction.guild and
+            interaction.guild.id in ALLOWED_GUILD_IDS and
+            interaction.user.id == interaction.guild.owner_id
+        )
+    )
 
 NO_CHAT_CHANNELS = [
     cid for cid in [LOG_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID]
@@ -263,11 +268,11 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
     return prompt
 
 def get_all_emotions():
-        emotion_set = set()
-        for outfit_variants in user_sprites.sprites_by_outfit.values():
-            for emotion in outfit_variants.keys():
-                emotion_set.add(emotion)
-        return sorted(emotion_set)
+    emotion_set = set()
+    for outfit_variants in user_sprites.sprites_by_outfit.values():
+        for emotion in outfit_variants.keys():
+            emotion_set.add(emotion)
+    return sorted(emotion_set)
 
 def adjust_relationship_meter(user_id, delta):
     user_relationship_meters[user_id] = min(100, max(0, user_relationship_meters.get(user_id, 0) + delta))
@@ -376,7 +381,7 @@ async def on_message(message):
 async def get_sprite_link(emotion, outfit, avatar_url=None):
     # Use the user's avatar if they have one
 
-    error_url = f"{error_emotion}"
+    error_url = f"{error_emotion()}"
 
     sprite_path = user_sprites.get_sprite(emotion, outfit)
     if not sprite_path:
@@ -537,8 +542,12 @@ async def handle_guild_message(message, avatar_url):
             raise ValueError("OpenAI returned empty response")
     except Exception as e:
         print(f"[OpenAI Error] {e}")
-        monika_reply = random.choice(error_messages)
-        emotion = random.choice(error_emotion())
+        
+        if monika_reply == Exception:
+            monika_reply = random.choice(error_messages)
+        
+        if emotion == Exception:
+            emotion = random.choice(error_emotion)
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
@@ -675,6 +684,12 @@ async def monika_idle_conversation_task():
             # Update last reply time
             last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
 
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.CheckFailure):
+        print(f"[Check Failure] {error}")
+        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+
 # Idle chat command
 @bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
 @app_commands.describe(state="Set to true or false")
@@ -777,7 +792,7 @@ async def export_memories(interaction: discord.Interaction):
         )
 
 @bot.tree.command(name="set_outfit", description="Server owner can set Monika's outfit style.")
-@app_commands.describe(outfit="Choose an outfit style: school_uniform, casual, horror, error")
+@app_commands.describe(outfit="Choose an outfit style: school_uniform, casual, horror, pajamas, hoodie, white dress")
 async def set_outfit(interaction: discord.Interaction, outfit: str):
     if interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message(
@@ -931,6 +946,7 @@ async def report(interaction: discord.Interaction, message: str):
         embed.add_field(name="Report", value=message, inline=False)
         await report_channel.send(embed=embed)
 
+@app_commands.guilds(*[discord.Object(id=guild_id) for guild_id in ALLOWED_GUILD_IDS])
 @bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
 @app_commands.check(is_owner)
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
@@ -1005,25 +1021,32 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
         app_commands.Choice(name=e, value=e)
         for e in emotions if current.lower() in e.lower()
     ][:25]
-
-@bot.tree.command(name="speak_as_monika", description="OWNER ONLY. Make Monika speak with emotion in a specific channels. Keep this a secret!")
-@app_commands.check(guild_owners_only)
-@discord.app_commands.describe(guild_id= "The numeric ID of the server", channel_id="The numeric ID of the channel", message="The message to send", emotion="The emotion to express in the message")
+    
+@app_commands.guilds(*[discord.Object(id=guild_id) for guild_id in ALLOWED_GUILD_IDS])
+@bot.tree.command(
+    name="speak_as_monika", 
+    description="OWNER ONLY. Make Monika speak with emotion in a specific channels. Keep this a secret!"
+)
+@app_commands.describe(
+    channel_id="The numeric ID of the channel",
+    message="The message to send",
+    emotion="Emotion Monika should express"
+)
 @app_commands.autocomplete(emotion=emotion_autocomplete)
-async def speak_as_monika(interaction: discord.Interaction, guild_id: str, channel_id: str, message: str, emotion: str):
-    if interaction.user.id != interaction.guild.owner_id:
+@app_commands.check(guild_owners_only)
+async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str, emotion: str):
+    if not interaction.guild or interaction.user.id != interaction.guild.owner_id:
         await interaction.response.send_message(
             "❌ You don't have permission to use this command. owner of the server only. and keep this a secret",
             ephemeral=True
         )
         return
 
-    if emotion not in get_all_emotions():
+    if emotion.lower() not in map(str.lower, get_all_emotions()):
         await interaction.response.send_message("Invalid emotion selected.", ephemeral=True)
         return
 
     try:
-        guild = bot.get_guild(int(guild_id))
         channel = bot.get_channel(int(channel_id))
         if not channel:
             await interaction.response.send_message(
@@ -1040,43 +1063,36 @@ async def speak_as_monika(interaction: discord.Interaction, guild_id: str, chann
             )
             return
     except Exception as e:
+        print(f"[Channel Error] {e}")
         await interaction.response.send_message(
-            f"❌ Could not find channel with ID {channel_id}. Error: {e}",
+            f"❌ Error finding channel: {e}",
             ephemeral=True
         )
         return
-
-    if not isinstance(channel, discord.TextChannel):
-        await interaction.response.send_message(
-            f"❌ That ID is not a text channel.",
-            ephemeral=True
-        )
-        return
+    
+    outfit = server_outfit_preferences.get(channel.guild.id, get_time_based_outfit())
+    sprite_link = await get_sprite_link(emotion, outfit)
+    mon_reply = f"{message}\n[{emotion}]({sprite_link})"
 
     async with channel.typing():
         await asyncio.sleep(1)
-        await channel.send(message)
-        logs.save_message(
-            guild_id=guild.id,
-            guild_name=guild.name,
+        await channel.send(mon_reply)
+        logs.save_to_memory_channel(
+            guild_id=channel.guild.id,
+            guild_name=channel.guild.name,
             channel_id=channel.id,
             channel_name=channel.name,
             user_id="bot",
             username="Monika",
             content=message,
             emotion=emotion,
-            avatar_url=bot.user.avatar.url
+            avatar_url=bot.user.avatar.url if bot.user.avatar else None
         )
 
     await interaction.response.send_message(
         f"✅ Sent your message in {channel.guild.name} #{channel.name}.",
         ephemeral=True
     )
-
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
