@@ -359,7 +359,7 @@ async def on_message(message):
     if message.author.bot and message.author.id == bot.user.id:
         return
     
-    if message.channel.id != NO_CHAT_CHANNELS:
+    if message.channel.id == NO_CHAT_CHANNELS:
         return
     
     await bot.process_commands(message)
