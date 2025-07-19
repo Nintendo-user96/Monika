@@ -17,8 +17,8 @@ jobs:
         run: python user_tracker.py
       - name: Commit changes
         run: |
-          git config --global user.name 'github-actions'
-          git config --global user.email 'github-actions@github.com'
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
           git add .
           git commit -m "Auto-update"
           git push
