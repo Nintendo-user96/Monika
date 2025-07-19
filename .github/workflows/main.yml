@@ -1,0 +1,24 @@
+name: Auto Update
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # every day at midnight UTC
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run update memory
+        run: python memory.py
+      - name: run update server 
+        run: python servers_tracker.py
+      - name: run update user 
+        run: python user_tracker.py
+      - name: Commit changes
+        run: |
+          git config --global user.name 'github-actions'
+          git config --global user.email 'github-actions@github.com'
+          git add .
+          git commit -m "Auto-update"
+          git push
