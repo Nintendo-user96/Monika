@@ -28,15 +28,15 @@ jobs:
 
       - name: Run your bot script (or export handler)
         run: |
-          python bot/monika_bot.py  # or a separate exporter script
+          python monika_bot.py  # or a separate exporter script
 
       - name: Run your bot memories
         run: |
-          python bot/memory.py
+          python memory.py
 
       - name: Run your bot user tracker
         run: |
-          python bot/user_tracker.py
+          python user_tracker.py
 
       - name: Run your bot server tracker
         run: |
