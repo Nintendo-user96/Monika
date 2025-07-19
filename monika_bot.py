@@ -84,6 +84,9 @@ async def call_openai_with_retries(conversation):
             if "429" in err_str or "rate limit" in err_str.lower():
                 print("[OpenAI] 429 Rate Limit error detected. Rotating to next key...")
                 await asyncio.sleep(2)  # Longer delay to be polite
+            elif "400" in err_str or "rate limit" in err_str.lower():
+                print("[OpenAI] 429 Rate Limit error detected. Rotating to next key...")
+                await asyncio.sleep(2)
             else:
                 print(f"[OpenAI Error] {err_str}")
                 # For other errors, we might want to retry but let's wait a bit
@@ -269,8 +272,8 @@ def generate_monika_system_prompt(selected_modes, is_friend_context=False, guild
 
 def get_all_emotions():
     emotion_set = set()
-    for outfit_variants in user_sprites.sprites_by_outfit.values():
-        for emotion in outfit_variants.keys():
+    for outfit in user_sprites.EXPRESSION_SPRITES.values():
+        for emotion in outfit.keys():
             emotion_set.add(emotion)
     return sorted(emotion_set)
 
@@ -359,12 +362,11 @@ async def on_message(message):
     # Simple simulated Monika response using system prompt
     if bot.user.mentioned_in(message):
         await handle_guild_message(message, avatar_url=None)
+        if bot.user.mentioned_in == NO_CHAT_CHANNELS:
+            return
         return
 
     if message.author.bot and message.author.id == bot.user.id:
-        return
-    
-    if message.channel.id == NO_CHAT_CHANNELS:
         return
     
     await bot.process_commands(message)
@@ -467,10 +469,13 @@ async def handle_dm_message(message, avatar_url):
     logs.Logs_save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_DMS, emotion, role="monika")
 
     if LOG_CHAN_ID:
-        mem_chan = bot.get_channel(LOG_CHAN_ID)
-        if mem_chan:
-            await logs.save_to_memory_channel(message.content, "DM-user", user_id, username, "user", "DM", "Direct Message", "DM", "DM", "Direct Message", mem_chan)
-            await logs.save_to_memory_channel(monika_DMS, emotion, "DM-bot", bot.user.name, "monika", "DM", "Direct Message", "DM", "Direct Message", mem_chan)
+        forward_channel = bot.get_channel(LOG_CHAN_ID)
+        if not forward_channel:
+            print("[Error] Forward channel not found.")
+            return
+        
+        content = f"**From {message.author} in #{message.channel.name}, ID: ({message.channel.id}):**\n{message.content}"
+        await forward_channel.send(content)
             
 async def handle_guild_message(message, avatar_url):
     global last_reply_times
@@ -578,12 +583,40 @@ async def handle_guild_message(message, avatar_url):
     )
     logs.Logs_save(guild_id, guild_name, channel_id, channel_name, "bot", bot.user.name, monika_reply, emotion, role="monika")
     
-    # Log to memory channel if set
-    memory_channel = bot.get_channel(LOG_CHAN_ID)
-    if memory_channel:
-        await logs.save_to_memory_channel(message.content, "user", username, user_id, "user", guild_id, guild_name, channel_id, channel_name, memory_channel)
-        await logs.save_to_memory_channel(monika_reply, emotion, "bot", bot.user.name, "monika", guild_id, guild_name, channel_id, channel_name, memory_channel)
+    if LOG_CHAN_ID:
+        dest_channel = bot.get_channel(LOG_CHAN_ID)
+        if not dest_channel:
+            print(f"[Error] {e}")
+            return
         
+        try:
+            # Create header
+            header = f"📩 **{message.author.display_name}** from `{message.guild.name} > (name: #{message.channel.name} | ID: {message.channel.id})`"
+
+            # Build the reference quote if it's a reply
+            quote = ""
+            if message.reference and message.reference.resolved:
+                ref = message.reference.resolved
+                if isinstance(ref, discord.Message):
+                    ref_author = ref.author.display_name
+                    ref_content = ref.content or "*[No text]*"
+                    quote = f"> 🗨️ __Reply to {ref_author}__: {ref_content}\n\n"
+
+                if message.content.have(f"{message.bot.mention}"):
+                    # Remove the mention from the content
+                    message.content = message.content.replace(f"{message.bot.mention}", f"{message.author.display_name}").strip()
+                            
+                if message.attachments:
+                    for attachment in message.attachments:
+                        await dest_channel.send(attachment.url)
+            
+            # Combine and send
+            full_content = f"{header}:\n{quote}> `{message.content}`"
+            await dest_channel.send(full_content)
+
+        except Exception as e:
+            print(f"[Forwarding Error] {e}")
+
 async def monika_idle_conversation_task():
     await bot.wait_until_ready()
     global last_user_interaction
