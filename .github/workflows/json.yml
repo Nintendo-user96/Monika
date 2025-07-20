@@ -3,7 +3,9 @@ name: Auto Update JSON
 on:
   schedule:
     - cron: '0 0 * * *' # Runs daily at midnight UTC
-  workflow_dispatch: # Allows manual trigger
+    
+permissions:
+  contents: write
 
 jobs:
   update-json:
