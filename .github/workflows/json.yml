@@ -28,6 +28,7 @@ jobs:
         run: |
           git config --global user.name "Nintendo-user96"
           git config --global user.email "sterlingcharlebois@outlook.com"
+          git remote set-url origin https://x-access-token:${{ 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 }}@github.com/Nintendo-user96/Monika.git
           if [ ! -f memory.json ]; then
             echo "{}" > memory.json
           fi
