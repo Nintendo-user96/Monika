@@ -49,7 +49,7 @@ class GuildTracker:
         guild_id = str(guild_id)
         channel_id = str(channel_id)
         if guild_id in self.data:
-            channels = self.data[guild_id]["channels"]
+            channels = self.data.setdefault(guild_id, {}).setdefault("channels", {})
             channels[channel_id] = channel_name
             self.save()
         
