@@ -19,6 +19,8 @@ jobs:
         run: |
           git config --global user.name "Nintendo-user96"
           git config --global user.email "sterlingcharlebois@outlook.com"
-          git add .
+          git add memory.json
+          git add users.json
+          git add server.json
           git commit -m "Auto-update"
           git push
