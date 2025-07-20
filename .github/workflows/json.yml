@@ -33,7 +33,7 @@ jobs:
             echo "{}" > memory.json
           fi
           git commit -m "Auto-update memory.json" || echo "No changes to commit"
-          git push https://x-access-token:${{ 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 }}@github.com/Nintendo-user96/Monika.git HEAD:main
+          git push 
       - name: Ensure server.json & users.json exists
         run: |
           git config --global user.name "Nintendo-user96"
@@ -42,4 +42,4 @@ jobs:
           git add server.json
           git commit -m "Auto-update users.json" || echo "No changes to commit"
           git commit -m "Auto-update server.json" || echo "No changes to commit"
-          git push
+          git push https://x-access-token:${{ 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 }}@github.com/Nintendo-user96/Monika.git HEAD:main
