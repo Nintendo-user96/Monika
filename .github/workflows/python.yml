@@ -22,5 +22,5 @@ jobs:
           git add memory.json
           git add users.json
           git add server.json
-          git commit -m "Auto-update"
+          git commit -m "Auto-update" || true
           git push
