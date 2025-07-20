@@ -22,14 +22,30 @@ jobs:
         run: python user_tracker.py
       - name: Run script to generate/update JSON (server's)
         run: python servers_tracker.py
-      - name: Commit and push changes
+      - name: Ensure memory.json exists
         run: |
           git config --global user.name "Nintendo-user96"
           git config --global user.email "sterlingcharlebois@outlook.com"
-          git add memory.json
-          git add server.json
-          git add users.json
+          if [ ! -f memory.json ]; then
+            echo "{}" > memory.json
+          fi
           git commit -m "Auto-update memory.json" || echo "No changes to commit"
+          git push
+      - name: Ensure user_tracker.json exists
+        run: |
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
+          if [ ! -f user_tracker.json ]; then
+            echo "{}" > user_tracker.json
+          fi
           git commit -m "Auto-update users.json" || echo "No changes to commit"
+          git push
+      - name: Ensure servers_tracker.json exists
+        run: |
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
+          if [ ! -f servers_tracker.json ]; then
+            echo "{}" > servers_tracker.json
+          fi
           git commit -m "Auto-update server.json" || echo "No changes to commit"
           git push
