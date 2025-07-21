@@ -38,5 +38,3 @@ jobs:
           git add server.json
           git commit -m "Auto-update server.json" || echo "No changes to commit"
           git push 
-          env:
-    GITHUB_TOKEN: ${{ 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 }}
