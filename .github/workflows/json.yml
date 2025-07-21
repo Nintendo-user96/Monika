@@ -1,0 +1,47 @@
+name: Auto Update JSON
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
+
+permissions:
+  contents: write
+
+jobs:
+  update-json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install -r requirements.txt || true
+      - name: Run script to generate/update JSON (memory)
+        run: python memory.py
+      - name: Run script to generate/update JSON (user's)
+        run: python user_tracker.py
+      - name: Run script to generate/update JSON (server's)
+        run: python servers_tracker.py
+      - name: Ensure .json files exist
+        run: |
+          if [ ! -f memory.json ]; then
+            echo "{}" > memory.json
+          fi
+          if [ ! -f users.json ]; then
+            echo "{}" > users.json
+          fi
+          if [ ! -f server.json ]; then
+            echo "{}" > server.json
+      - name: Commit and push changes
+        env:
+          GH_PAT: ${{ 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 }}
+        run: |
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
+          git add memory.json users.json server.json
+          git diff --cached --quiet || (
+            git commit -m "Auto-update JSON files"
+            git push https://x-access-token:${GH_PAT}@github.com/Nintendo-user96/Monika.git HEAD:main
+          )
