@@ -52,13 +52,13 @@ example: *confident, yandere, smart, and much more.*
 
 `restart_monika` - Restart Monika *only* in this server, clearing her memory and settings here.
 
-`set_relationship_mode` - Set Monika's relationship orientation for this server.
+`set_relationship` - Set Monika's relationship orientation for this server.
 
 all commands are admin only to prevent people from change constantly.
 
 the only once that isn't a admin command these:
 
-`report <description>` - report if theres any bugs/errors
+`report <message>` - report if theres any bugs/errors
 
 `export_memories` - Export all stored memory into a .txt file.
 
