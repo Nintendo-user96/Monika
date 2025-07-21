@@ -1,0 +1,45 @@
+name: Auto Update JSON
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Runs daily at midnight UTC
+    
+permissions:
+  contents: write
+
+jobs:
+  update-json:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: pip install -r requirements.txt || true
+      - name: Run script to generate/update JSON (memory)
+        run: python memory.py
+      - name: Run script to generate/update JSON (user's)
+        run: python user_tracker.py
+      - name: Run script to generate/update JSON (server's)
+        run: python servers_tracker.py
+      - name: Ensure memory.json exists
+        run: |
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
+          git remote set-url origin https://x-access-token:${{ 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 }}@github.com/Nintendo-user96/Monika.git
+          if [ ! -f memory.json ]; then
+            echo "{}" > memory.json
+          fi
+          git commit -m "Auto-update memory.json" || echo "No changes to commit"
+          git push 
+      - name: Ensure server.json & users.json exists
+        run: |
+          git config --global user.name "Nintendo-user96"
+          git config --global user.email "sterlingcharlebois@outlook.com"
+          git add users.json
+          git add server.json
+          git commit -m "Auto-update users.json" || echo "No changes to commit"
+          git commit -m "Auto-update server.json" || echo "No changes to commit"
+          git push https://x-access-token:${{ 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 }}@github.com/Nintendo-user96/Monika.git HEAD:main
