@@ -18,6 +18,9 @@ jobs:
         run: python servers_tracker.py
       - name: run update user 
         run: python user_tracker.py
+      - name: Ensure memory.json exists
+        run: |
+          if [ ! -f memory.json ]; then echo "[]" > memory.json; fi
       - name: Commit changes
         run: |
           git config --global user.name "Nintendo-user96"
