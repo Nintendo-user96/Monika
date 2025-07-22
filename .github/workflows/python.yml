@@ -19,8 +19,8 @@ jobs:
         run: |
           git config --global user.name "Nintendo-user96"
           git config --global user.email "sterlingcharlebois@outlook.com"
-          git add memory.json
-          git add users.json
-          git add server.json
-          git commit -m "Auto-update" || true
-          git push
+          git diff --quiet || (
+              git add memory.json users.json server.json
+              git commit -m "Auto-update"
+              git push
+          )
