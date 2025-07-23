@@ -487,8 +487,8 @@ async def handle_guild_message(message, avatar_url):
     author_bots = message.author.bot
     bots_user = bot.user.name
     username = message.author.display_name
-    guild_name = message.guild.name
-    channel_name = message.channel.name
+    guild_name = message.guild.name if message.guild else "Direct Message"
+    channel_name = message.channel.name if hasattr(message.channel, "name") else "DM"
 
     try:
         user_tracker.import_json("users.json")
