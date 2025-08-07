@@ -101,7 +101,6 @@ class UserTracker:
         
     def set_pronouns(self, user_id, pronouns):
         self.data.setdefault(str(user_id), {})["pronouns"] = pronouns
-        self.save()
 
     def get_pronouns(self, user_id):
         return self.data.get(user_id, {}).get("pronouns")
@@ -189,3 +188,4 @@ class UserTracker:
             self.data[str(user.id)]["last_seen"] = datetime.utcnow().isoformat()
         else:
             self.register_user(user)
+
