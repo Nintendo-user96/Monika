@@ -18,7 +18,7 @@ from expression import User_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
-#import keepalive
+import keepalive
 from monika_personality import MonikaTraits
 
 #DokiTuber_server_outfit_preferences = {}
@@ -1903,7 +1903,8 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
-#keepalive.keep_alive()
+keepalive.keep_alive()
 
 bot.run(TOKEN, reconnect=True)
+
 
