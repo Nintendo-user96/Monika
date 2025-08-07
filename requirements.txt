@@ -5,6 +5,8 @@ flask
 asyncio
 aiofiles
 pynacl
+requests
 
 # pip install -r requirements.txt
+
 # python monika_bot.py
