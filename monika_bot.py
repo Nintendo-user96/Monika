@@ -139,7 +139,7 @@ NO_CHAT_CHANNELS = [
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-client = get_next_openai_client()
+client = call_openai_with_retries()
 
 server_tracker = GuildTracker(bot, server_channel_id=SERVER_TRACKER_CHAN)
 user_tracker = UserTracker(bot, user_channel_id=USER_TRACKER_CHAN)
@@ -1904,4 +1904,5 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
         await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
 #keepalive.keep_alive()
+
 bot.run(TOKEN, reconnect=True)
