@@ -1802,7 +1802,6 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
     emotion="Emotion Monika should express"
 )
 @app_commands.autocomplete(outfit=outfit_autocomplete, emotion=emotion_autocomplete)
-@app_commands.checks.has_permissions(administrator=True)
 @app_commands.check(guild_owners_only)
 async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str, outfit: str, emotion: str):
     await interaction.response.defer(ephemeral=True)
@@ -1906,5 +1905,6 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 keepalive.keep_alive()
 
 bot.run(TOKEN, reconnect=True)
+
 
 
