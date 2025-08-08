@@ -642,7 +642,8 @@ async def on_shutdown():
 async def on_message(message):
     global last_user_interaction
 
-    if message.author.bot and message.author.id == bot.user.id:
+    if bot.user.mentioned_in(message):
+        await handle_guild_message(message, avatar_url=None)
         return
     
     guild_name = str(message.guild.name) if message.guild else "dm"
@@ -1916,3 +1917,4 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
