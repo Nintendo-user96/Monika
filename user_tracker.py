@@ -105,40 +105,6 @@ class UserTracker:
     def get_pronouns(self, user_id):
         return self.data.get(user_id, {}).get("pronouns")
 
-    def auto_detect_pronouns(self, user_id: int, message: str):
-        message = message.lower()
-        pronoun_map = {
-            "she/her": ["she", "her", "hers"],
-            "he/him": ["he", "him", "his"],
-            "they/them": ["they", "them", "theirs"],
-        }
-        # First, check for explicit statements
-        explicit_map = {
-            "she/her": ["she/her", "i’m a girl", "im a girl", "i am a girl", "i'm female", "i am female"],
-            "he/him": ["he/him", "i’m a boy", "im a boy", "i am a boy", "i'm male", "i am male"],
-            "they/them": ["they/them", "i’m nonbinary", "i am nonbinary", "i use they"],
-        }
-        for pronouns, triggers in explicit_map.items():
-            if any(trigger in message for trigger in triggers):
-                self.set_pronouns(user_id, pronouns)
-                return pronouns
-
-        # Next, try to infer from pronoun usage
-        pronoun_counts = {key: 0 for key in pronoun_map}
-        words = message.split()
-        for pronouns, pronoun_words in pronoun_map.items():
-            for word in words:
-                if word in pronoun_words:
-                    pronoun_counts[pronouns] += 1
-
-        # Pick the pronoun set with the highest count, if any
-        likely = max(pronoun_counts, key=pronoun_counts.get)
-        if pronoun_counts[likely] > 0:
-            self.set_pronouns(user_id, likely)
-            return likely
-
-        return None
-
     def update_relationship_level(self, user_id, interaction_strength=1):
         entry = self.data.setdefault(str(user_id), {})
         entry["relationship_score"] = entry.get("relationship_score", 0) + interaction_strength
@@ -188,4 +154,3 @@ class UserTracker:
             self.data[str(user.id)]["last_seen"] = datetime.utcnow().isoformat()
         else:
             self.register_user(user)
-
