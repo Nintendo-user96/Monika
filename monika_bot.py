@@ -1159,17 +1159,6 @@ async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discor
             return None
     return role
 
-
-@bot.tree.command(name="nomral_talk", description="Toggle whether she is talking with mention only or without it for this server.")
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(state="Set to true or false")
-async def nomral_talk(interaction: discord.Interaction, state: bool):
-
-    await interaction.response.send_message(
-        f"✅ normal talk mode set to **{state}** for this server. Now you can talk to monika normally",
-        ephemeral=True
-    )
-
 # Idle chat command
 @bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1966,3 +1955,4 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
