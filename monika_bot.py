@@ -64,13 +64,15 @@ async def call_openai_with_retries(user, relationship, personality, conversation
                 system_prompt = await generate_monika_system_prompt(
                     guild=user.guild if hasattr(user, "guild") else None,
                     user=user,
-                    is_friend_context=False  # or use is_friend_bot(message) when available
+                    relationship_type=relationship,
+                    selected_modes=personality
                 )
             else:
                 system_prompt = generate_monika_system_prompt(
                     guild=user.guild if hasattr(user, "guild") else None,
                     user=user,
-                    is_friend_context=False
+                    relationship_type=relationship,
+                    selected_modes=personality
                 )
 
             full_conversation = [{"role": "system", "content": system_prompt}] + conversation
@@ -1962,5 +1964,3 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
-
-
