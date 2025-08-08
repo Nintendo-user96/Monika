@@ -747,7 +747,7 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
     sprite_url_cache[cache_key] = error_url
     return error_url
 
-async def handle_dm_message(message, avatar_url):
+async def handle_dm_message(message: discord.Message, avatar_url):
     user_id = str(message.author.id)
     username = message.author.display_name
     user = message.author
@@ -807,7 +807,7 @@ async def handle_dm_message(message, avatar_url):
             print("[Error] Forward channel not found.")
             return
         
-        content = f"**From {message.author} in DM's:**\n{message.content}"
+        content = f"**From {user} in DM's:**\n{message.content}"
         await forward_channel.send(content)
             
 async def handle_guild_message(message: discord.Message, avatar_url):
@@ -1038,6 +1038,8 @@ async def on_app_command_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         print(f"[Check Failure] {error}")
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+    if discord.Forbidden:
+        await interaction.response.send_message("A Missing Permissions has appear for @Monika#8657", ephemeral=True)
 
 class SelectedPaginator(discord.ui.View):
     def __init__(self, embeds, user: discord.User, timeout=60):
@@ -1494,6 +1496,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
             try:
                 await monika_member.remove_roles(role, reason="Resetting old personality roles")
             except discord.Forbidden:
+                await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
     # 🔄 Add only the chosen roles
@@ -1506,6 +1509,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
                 monika_role = await guild.create_role(name=monika_role_name, color=discord.Color.dark_blue())
                 print(f"[Roles] Created role: {monika_role_name}")
             except discord.Forbidden:
+                await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
                 print(f"[Roles] Missing permission to create role: {monika_role_name}")
                 continue
 
@@ -1955,4 +1959,3 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
-
