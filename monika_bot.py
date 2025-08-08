@@ -978,7 +978,7 @@ async def monika_idle_conversation_task():
             # Choose a random non-bot member to address
             candidates = [
                 m for m in guild.members
-                if not m.bot and m.status in (discord.Status.online, discord.Status.idle)
+                if not m.bot and m.status in (discord.Status.online, discord.Status.do_not_disturb, discord.Status.idle)
             ]
             if not candidates:
                 print(f"[Monika] No suitable users in {guild.name}.")
@@ -1962,4 +1962,5 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
 
