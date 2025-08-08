@@ -1648,6 +1648,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
                         user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
                         print(f"[Roles] Created role: {user_role_name}")
                     except discord.Forbidden:
+                        await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
                         print(f"[Roles] Missing permission to create {user_role_name}")
                         continue
 
@@ -1659,6 +1660,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
                         bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_orange())
                         print(f"[Roles] Created role: {bot_role_name}")
                     except discord.Forbidden:
+                        await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
                         print(f"[Roles] Missing permission to create {bot_role_name}")
                         continue
 
@@ -1667,6 +1669,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
                     await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
                     await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
                 except discord.Forbidden:
+                    await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
                     print(f"[Roles] Missing permission to assign roles {user_role_name} / {bot_role_name}")
 
         await interaction.response.send_message(
@@ -1959,3 +1962,4 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
