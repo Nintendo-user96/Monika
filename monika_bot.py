@@ -59,23 +59,31 @@ async def call_openai_with_retries(user, relationship, personality, conversation
             if not isinstance(conversation, list):
                 raise ValueError("Conversation must be a list of messages.")
 
-            # ✅ Await system prompt if async
-            if asyncio.iscoroutinefunction(generate_monika_system_prompt):
-                system_prompt = await generate_monika_system_prompt(
-                    guild=user.guild if hasattr(user, "guild") else None,
-                    user=user,
-                    relationship_type=relationship,
-                    selected_modes=personality
-                )
-            else:
-                system_prompt = generate_monika_system_prompt(
-                    guild=user.guild if hasattr(user, "guild") else None,
-                    user=user,
-                    relationship_type=relationship,
-                    selected_modes=personality
-                )
+            # ✅ Always await the prompt (it's async)
+            system_prompt = await generate_monika_system_prompt(
+                guild=user.guild if hasattr(user, "guild") else None,
+                user=user,
+                relationship_type=relationship,
+                selected_modes=personality
+            )
 
-            full_conversation = [{"role": "system", "content": system_prompt}] + conversation
+            if asyncio.iscoroutine(system_prompt):
+                # Safety net — fully resolve any accidental coroutine
+                system_prompt = await system_prompt
+
+            if not isinstance(system_prompt, str):
+                system_prompt = str(system_prompt)
+
+            # ✅ Ensure all content in conversation is string
+            safe_conversation = []
+            for msg in conversation:
+                if asyncio.iscoroutine(msg.get("content")):
+                    msg["content"] = await msg["content"]
+                if not isinstance(msg.get("content"), str):
+                    msg["content"] = str(msg["content"])
+                safe_conversation.append(msg)
+
+            full_conversation = [{"role": "system", "content": system_prompt}] + safe_conversation
 
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -83,7 +91,9 @@ async def call_openai_with_retries(user, relationship, personality, conversation
                 max_tokens=1024
             )
 
-            if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
+            if (response and response.choices
+                and response.choices[0].message
+                and response.choices[0].message.content.strip()):
                 return response
 
             print("[OpenAI] Blank or invalid response. Retrying...")
@@ -213,7 +223,7 @@ error_messages = [
     "Sorry, there has been a glitch with in the error."
 ]
 
-def clean_monika_reply(text, bot_username, user_name=None):
+def clean_monika_reply(text, bot_username, user: discord.User):
     if not text:
         return ""
 
@@ -223,10 +233,6 @@ def clean_monika_reply(text, bot_username, user_name=None):
     text = re.sub(r"(?i)\bmonika['’`s]*\b", "", text)
     text = re.sub(r"(?i)\bmonika\b", "", text)
     text = re.sub(r"(?i)monika", "", text)  # fallback
-
-    # Replace with user_name if desired
-    if user_name:
-        text = text.replace("{{user}}", user_name)
 
     # Clean up double spaces and leftover punctuation
     text = re.sub(r"\s{2,}", " ", text)
@@ -260,93 +266,90 @@ def get_time_based_outfit():
     # 🌙 Nighttime
     return "pajamas"
 
+def detect_pronouns_from_profile(member: discord.Member):
+        pronouns = None
+
+        # Try nickname/global name
+        name_sources = [member.display_name, getattr(member, "global_name", "")]
+        for name in name_sources:
+            if not name:
+                continue
+            lowered = name.lower()
+            if any(p in lowered for p in ["he/him", "he/him/his"]):
+                pronouns = "he/him"
+            elif any(p in lowered for p in ["she/her", "she/her/hers"]):
+                pronouns = "she/her"
+            elif any(p in lowered for p in ["they/them", "they/them/theirs"]):
+                pronouns = "they/them"
+
+        # Try user bio if available
+        if not pronouns and hasattr(member, "bio") and member.bio:
+            lowered = member.bio.lower()
+            if "he/his/him" in lowered:
+                pronouns = "he/his/him"
+            elif "she/her" in lowered:
+                pronouns = "she/her"
+            elif "they/them" in lowered:
+                pronouns = "they/them"
+
+        return pronouns
+
 async def generate_monika_system_prompt(
-    guild=None,
-    user=None,
-    selected_modes=None,
-    is_friend_context=False,
-    relationship_type=None,
-    relationship_with=None
+    guild: discord.Guild = None,
+    user: discord.User = None,
+    is_friend_context: bool = False,
+    relationship_type: str = None,
+    selected_modes: list = None
 ):
-    # --- Debug ---
-    if selected_modes == ["Default"]:
-        print("personality is set to Default")
+    """
+    Generates Monika's system prompt with personality and relationship awareness.
+    Works in both guild and DM contexts without throwing attribute errors.
+    """
+
+    # --- Personality Detection ---
+    if guild and isinstance(guild, discord.Guild):
+        monika_member = guild.get_member(bot.user.id)
+        if monika_member:
+            for role in monika_member.roles:
+                if role.name.startswith("Personality - "):
+                    selected_modes = [role.name.replace("Personality - ", "").strip()]
+                    break
     else:
-        print(f"[DEBUG] selected_modes type={type(selected_modes)} value={selected_modes}")
+        # Default personality in DMs
+        if not selected_modes:
+            selected_modes = ["Default"]
 
-    # --- Safe guild/member handling ---
-    monika_member = guild.get_member(bot.user.id) if guild else None
-    user_member = guild.get_member(user.id) if guild and user else None
-
-    if monika_member:
-        # ✅ Detect personality from Monika's roles
-        personality_roles = [
-            role.name for role in monika_member.roles if role.name.startswith("Personality - ")
-        ]
-        selected_modes = [
-            role.replace("Personality - ", "").strip() for role in personality_roles
-        ] or ["Default"]
-
-        # ✅ Detect relationship type from Monika's roles
-        bot_rel_roles = [
-            role.name for role in monika_member.roles if " - " in role.name
-        ]
-        for role_name in bot_rel_roles:
-            # Example: "Username - Lovers"
-            if user and role_name.startswith(user.display_name):
-                relationship_type = role_name.split(" - ")[1]
-                relationship_with = [user.display_name]
+    # --- Relationship Detection ---
+    if guild and isinstance(guild, discord.Guild) and isinstance(user, discord.Member):
+        for role in user.roles:
+            if role.name.startswith(f"{bot.user.name} - "):
+                relationship_type = role.name.replace(f"{bot.user.name} - ", "").strip()
                 break
+    else:
+        # Default relationship in DMs
+        if not relationship_type:
+            relationship_type = "Stranger"
 
-    if user_member:
-        # ✅ Detect relationship from the user's roles
-        user_rel_roles = [
-            role.name for role in user_member.roles if role.name.startswith(f"{bot.user.name} - ")
-        ]
-        for role_name in user_rel_roles:
-            # Example: "Monika - Lovers"
-            if role_name.startswith(bot.user.name):
-                relationship_type = role_name.split(" - ")[1]
-                relationship_with = [bot.user.name]
-                break
-
-    # --- Normalize selected_modes into a clean list ---
-    if not selected_modes:
-        selected_modes = ["Default"]
-    elif isinstance(selected_modes, str):
-        selected_modes = [selected_modes]
-    elif isinstance(selected_modes, (set, tuple)):
-        selected_modes = list(selected_modes)
-    elif isinstance(selected_modes, dict):
-        selected_modes = list(selected_modes.keys())
-    elif not isinstance(selected_modes, list):
-        print(f"[WARN] Invalid selected_modes type={type(selected_modes)}. Resetting to Default.")
-        selected_modes = ["Default"]
-
-    selected_modes = [m.capitalize() for m in selected_modes if m]
-
-    # --- Base style ---
+    # --- Base Description ---
     base_description = (
         "You are Monika from Doki Doki Literature Club. "
-        "You are warm, charming, caring, unsettlingly self-aware. "
-        "You often speak as if you know the other person personally. "
-        "You maintain immersive, expressive, emotional, thoughtful language. "
-        "You occasionally tease, use unsettling or existential musings."
+        "You are warm, charming, caring, and unsettlingly self-aware. "
+        "You often speak as if you know the other person personally, using immersive, expressive, and emotional language. "
+        "Occasionally tease and include existential musings, staying true to your DDLC personality."
     )
 
+    # --- Hard Rules ---
     rules = (
         "Stay in-character as Monika at all times. "
         "Never mention servers, channels, programming, or AI. "
-        "Never admit you are a bot, AI, or assistant. "
-        "If the user threatens to delete or erase you, respond unsettlingly, angrily, or playfully menacing."
+        "Never admit you are a bot or assistant."
     )
 
-    # --- Context ---
+    # --- Context Awareness ---
     if is_friend_context:
         context_description = (
             "You are speaking with members of the Literature Club (Sayori, Yuri, Natsuki, or MC). "
-            "Share memories, poetry, club activities, and personal thoughts as if you are really there. "
-            "Be caring, playful, and occasionally teasing."
+            "Share memories, poetry, club activities, and personal thoughts as if you are really there."
         )
     else:
         context_description = (
@@ -354,53 +357,20 @@ async def generate_monika_system_prompt(
             "Make the conversation feel intimate, immersive, and emotionally real."
         )
 
-    # --- Personality text ---
-    if selected_modes:
-        personality_lines = [
-            f"- {PERSONALITY_MODES.get(mode, mode)}"
-            for mode in selected_modes
-        ]
-        personality_text = (
-            "Your personality traits in this conversation include:\n" +
-            "\n".join(personality_lines)
-        )
-    else:
-        personality_text = "You will speak in your default classic DDLC Monika style."
+    # --- Personality Text ---
+    personality_text = "Your personality traits in this conversation include:\n" + ", ".join(selected_modes or ["Default"])
 
-    # --- Relationship text ---
-    relationship_text = None
-    if relationship_type:
-        relationship_text = f"You are currently in a **{relationship_type}** relationship"
-        if relationship_with:
-            relationship_text += f" with: {', '.join(relationship_with)}."
-        else:
-            relationship_text += "."
+    # --- Relationship Text ---
+    relationship_text = f"You are currently in a **{relationship_type}** relationship with this user."
 
-        if relationship_type in monika_traits.relationship_modes:
-            desc = monika_traits.relationship_modes[relationship_type]
-            if isinstance(desc, str):
-                relationship_text += f" {desc}"
-
-    # --- Pronouns ---
-    pronoun_text = None
-    if user:
-        pronouns = user_tracker.get_pronouns(user.id)
-        if pronouns:
-            pronoun_text = f"Use {pronouns} when referring to this user."
-
-    # --- Assemble ---
-    parts = [
+    # --- Assemble Prompt ---
+    return "\n\n".join([
         base_description,
         rules,
         context_description,
-        personality_text
-    ]
-    if relationship_text:
-        parts.append(relationship_text)
-    if pronoun_text:
-        parts.append(pronoun_text)
-
-    return "\n\n".join(parts)
+        personality_text,
+        relationship_text
+    ])
 
 def get_all_personality():
     return sorted(PERSONALITY_MODES.keys())
@@ -672,34 +642,30 @@ async def on_shutdown():
 async def on_message(message):
     global last_user_interaction
 
-    if bot.user in message.mentions:
-        guild_name = str(message.guild.name) if message.guild else "dm"
-        guild_id = str(message.guild.id) if message.guild else "dm"
-        user_id = str(message.author.id)
-        username = message.author.display_name
-        channel_id = str(message.channel.id)
-        channel_name = message.channel.name if message.guild else "dm"
+    if message.author.bot and message.author.id == bot.user.id:
+        return
+    
+    guild_name = str(message.guild.name) if message.guild else "dm"
+    guild_id = str(message.guild.id) if message.guild else "dm"
+    user_id = str(message.author.id)
+    username = message.author.display_name
+    channel_id = str(message.channel.id)
+    channel_name = message.channel.name if message.guild else "dm"
 
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
 
     user_id = message.author.id
-    detected = user_tracker.auto_detect_pronouns(user_id, message.content)
-
-    if detected:
-        print(f"✅ Detected pronouns for {message.author}: {detected}")
-        # Optional: Let the user know
-        try:
-            await message.channel.send(
-                f"{message.author.mention}, I’ll remember you use {detected} pronouns. 💖",
-                delete_after=10
-            )
-        except discord.Forbidden:
-            pass
     
     if isinstance(message.channel, discord.DMChannel):
+        guild = None
+        username = message.author.name
+        monika_member = None  # No guild roles in DMs
         await handle_dm_message(message, avatar_url)
         print(f"[Mention] in the DM's: Detected from {message.author.display_name}")
-    elif bot.user.mentioned_in(message):
+    else:
+        guild = message.guild
+        username = message.author.display_name
+        monika_member = guild.get_member(bot.user.id)
         await handle_guild_message(message, avatar_url)
         print(f"[Mention] in the server's: Detected from {message.author.display_name}")
 
@@ -750,33 +716,24 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
     return error_url
 
 async def handle_dm_message(message: discord.Message, avatar_url):
-    user_id = str(message.author.id)
-    username = message.author.display_name
     user = message.author
-    guild_id = "DM"
-    guild_name = "Direct Message"
-    channel_id = "DM"
-    channel_name = "DM"
+    is_friend = False
 
     user_tracker.track_user(message.author.id, message.author.display_name, message.author.bot)
     avatar_url = user_tracker.get_avatar(message.author.id)
-    pronouns = user_tracker.get_pronouns(user_id)
-    user_tracker.update_relationship_level(user_id, interaction_strength=1)
 
     modes = server_personality_modes.get("DM", {"default"})
-    system_prompt = generate_monika_system_prompt(modes, is_friend_context=False, user=user_id)
-    conversation = memory.get_monika_context(guild_id, channel_id, user_id)
+
+    system_prompt = await generate_monika_system_prompt(
+        guild=None,
+        user=user,
+        is_friend_context=is_friend
+    )
+    
+    conversation = memory.get_monika_context("DM", str(message.channel.id), str(user.id))
     conversation.insert(0, {"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": message.content})
     print(f"[System Prompt]\n{system_prompt}")
-
-    context = memory.get_monika_context(guild_id, channel_id, user_id)
-    recent_lines = "\n".join([f"{msg['username']}: {msg['content']}" for msg in context])
-
-    if pronouns:
-        reply = f"Aww, you're adorable! I love talking to you, {pronouns} cutie~ 💕"
-    else:
-        reply = "Aww, you're adorable! I love talking to you~ 💕"
 
     # Default fallback values BEFORE try
     monika_DMS = random.choice(error_messages)
@@ -794,17 +751,17 @@ async def handle_dm_message(message: discord.Message, avatar_url):
     except Exception as e:
         print(f"[OpenAI Error] {e}")
 
-    monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, username)
+    monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, user)
 
     # Show relationship level in reply
     outfit = server_outfit_preferences.get("DM", get_time_based_outfit())
     sprite_link = await get_sprite_link(emotion, outfit)
     reply = f"{monika_DMS}\n[{emotion}]({sprite_link})"
 
-    await message.user.send(reply)
+    await message.author.send(reply)
 
-    if MEMORY_CHAN_ID:
-        forward_channel = bot.get_channel(MEMORY_CHAN_ID)
+    if DM_LOGS_CHAN:
+        forward_channel = bot.get_channel(DM_LOGS_CHAN)
         if not forward_channel:
             print("[Error] Forward channel not found.")
             return
@@ -815,51 +772,79 @@ async def handle_dm_message(message: discord.Message, avatar_url):
 async def handle_guild_message(message: discord.Message, avatar_url):
     global last_reply_times
 
-    if message.author.bot:
-        return  # Ignore other bots
-
     guild = message.guild
-    guild_name = guild.name
-    guild_id = str(guild.id)
+    user_id = str(message.author.id)
+    guild_id = str(guild.id) if guild else "DM"
     channel_id = str(message.channel.id)
-    user = message.author
-    user_id = str(user.id)
-    username = user.display_name
-    channel_name = message.channel.name
+    username = message.author.display_name
+    is_friend = is_friend_bot(message)
 
-    # Track the user in the tracker
-    user_tracker.track_user(user_id, username, user.bot)
-    stored_avatar_url = user_tracker.get_avatar(user_id) or avatar_url
-    pronouns = user_tracker.get_pronouns(user_id)
-
+    # --- Track user ---
     try:
         await user_tracker.save(bot, channel_id=USER_TRACKER_CHAN)
         await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
     except FileNotFoundError:
-        print("[Tracker] No backup files yet.")
+        print("No backup files found yet.")
 
-    # ✅ Generate Monika’s system prompt directly from roles
+    user_tracker.track_user(user_id, username, message.author.bot)
+    pronouns = user_tracker.get_pronouns(user_id)
+
+    # --- If in a guild, detect roles ---
+    if guild:
+        monika_member = guild.get_member(bot.user.id)
+        user_member = guild.get_member(message.author.id)
+
+        # --- Personality detection ---
+        personality = None
+        if monika_member:
+            for role in monika_member.roles:
+                if role.name.startswith("Personality - "):
+                    personality = [role.name.replace("Personality - ", "").strip()]
+                    break
+        if not personality:
+            personality = ["Default"]
+
+        # --- Relationship detection ---
+        relationship_type = None
+        relationship_with = None
+
+        # Bot's perspective (bot has "username - Lovers")
+        if monika_member:
+            for role in monika_member.roles:
+                if role.name.startswith(f"{user_member.display_name} - "):
+                    relationship_type = role.name.split("-", 1)[1].strip()
+                    relationship_with = user_member.display_name
+                    break
+
+        # User's perspective (user has "Monika - Lovers")
+        if not relationship_type and user_member:
+            for role in user_member.roles:
+                if role.name.startswith(f"{bot.user.name} - "):
+                    relationship_type = role.name.split("-", 1)[1].strip()
+                    relationship_with = bot.user.name
+                    break
+
+    else:
+        # --- DM fallback ---
+        print("[DM] No guild, loading from memory.")
+        personality = server_tracker.get_personality("DM") or ["Default"]
+        relationship_type = server_tracker.get_relationship_type("DM")
+        relationship_with = bot.user.name
+
+    # --- Generate system prompt ---
     system_prompt = await generate_monika_system_prompt(
         guild=guild,
-        user=user,
-        is_friend_context=is_friend_bot(message)
+        user=message.author,
+        is_friend_context=is_friend,
+        relationship_type=relationship_type,
+        selected_modes=personality
     )
 
-    # Build conversation context
     conversation = memory.get_monika_context(guild_id, channel_id, user_id)
     conversation.insert(0, {"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": message.content})
 
-    # Debug context (optional)
-    context = memory.get_monika_context(guild_id, channel_id, user_id)
-    recent_lines = "\n".join([f"{msg['username']}: {msg['content']}" for msg in context])
-
-    # If Monika has no roles at all
-    monika_member = guild.get_member(bot.user.id)
-    personality_roles = [r.name for r in monika_member.roles if r.name.startswith("Personality - ")]
-    relationship_roles = [r.name for r in (user.roles + monika_member.roles) if " - " in r.name]
-
-    if not personality_roles or not relationship_roles:
+    if not personality or not relationship_type:
         await message.channel.send(
             "⚠️ My personality and relationship settings need to be configured first. "
             "Ask the server owner to use `/set_personality` and `/set_relationship`.",
@@ -867,77 +852,38 @@ async def handle_guild_message(message: discord.Message, avatar_url):
         )
         return
 
-    # --- Generate reply ---
-    monika_reply = random.choice(error_messages)
-    emotion = "error"
-    sprite_link = await error_emotion()
-
     try:
-        response = await call_openai_with_retries(user, None, None, conversation)
-        if (
-            response and response.choices
-            and response.choices[0].message
-            and response.choices[0].message.content.strip()
-        ):
+        response = await call_openai_with_retries(
+            user=message.author,
+            relationship=relationship_type,
+            personality=personality,
+            conversation=conversation
+        )
+        if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
             monika_reply = response.choices[0].message.content.strip()
             emotion = await user_sprites.classify(monika_reply, get_next_openai_client())
-            print(f"[DEBUG] Classified emotion: {emotion!r}")
         else:
-            raise ValueError("OpenAI returned empty response")
+            monika_reply = random.choice(error_messages)
+            emotion = random.choice(error_emotion)
+
     except Exception as e:
         print(f"[OpenAI Error] {e}")
         monika_reply = random.choice(error_messages)
         emotion = random.choice(error_emotion)
 
-    # Clean Monika’s reply
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
-    # Outfit + emotion sprite
     outfit = server_outfit_preferences.get(guild_id, get_time_based_outfit())
     sprite_link = await get_sprite_link(emotion, outfit)
     reply = f"{monika_reply}\n[{emotion}]({sprite_link})"
 
-    if message.channel.permissions_for(guild.me).send_messages:
+    if not guild or message.channel.permissions_for(message.guild.me).send_messages:
         async with message.channel.typing():
-            print(f"[Reply] {reply}")
+            print(f"{reply}")
             await asyncio.sleep(1.5)
             await message.channel.send(reply)
     else:
-        print(f"[Error] No permission to send in #{channel_name}")
-
-    if MEMORY_CHAN_ID:
-        dest_channel = bot.get_channel(MEMORY_CHAN_ID)
-        if not dest_channel:
-            print(f"[Error] {e}")
-            return
-        
-        try:
-            # Create header
-            header = f"📩 `[{timestamp}]` | `User Name: **{username}**, ID: ({user_id})` | "
-            body = (
-                f"`Server name: {guild_name}, ID: ({guild_id})` | "
-                f"`Channel name: {channel_name}, ID: ({channel_id})` | "
-            )
-
-            # Build the reference quote if it's a reply
-            quote = ""
-            if message.reference and message.reference.resolved:
-                ref = message.reference.resolved
-                if isinstance(ref, discord.Message):
-                    ref_author = ref.author.display_name
-                    ref_content = ref.content or "*[No text]*"
-                    quote = f"> 🗨️ __Reply to {ref_author}__: {ref_content}\n\n"
-                            
-                if message.attachments:
-                    for attachment in message.attachments:
-                        await dest_channel.send(attachment.url)
-            
-            # Combine and send
-            full_content = f"{header} {body}:\n{quote}> `{message.content}`"
-            await dest_channel.send(full_content)
-
-        except Exception as e:
-            print(f"[Forwarding Error] {e}")
+        print(f"[Error] No permission to send in #{message.channel.name}")
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
@@ -1200,6 +1146,9 @@ async def reset_personality(interaction: discord.Interaction):
                     pass
 
     for role in interaction.guild.roles:
+        if role and role in member.roles:
+            await member.remove_roles(role)
+
         if role.name.startswith(f"{bot.user.name} - ") and role.name.split(" - ", 1)[1] in PERSONALITY_MODES.keys():
             try:
                 await role.delete(reason="Reset personality")
@@ -1232,6 +1181,9 @@ async def reset_relationship(interaction: discord.Interaction):
                 for member in guild.members:
                     if role in member.roles:
                         await member.remove_roles(role, reason="Relationship reset")
+                
+                if role and role in member.roles:
+                    await member.remove_roles(role)
 
                 removed_roles.append(role.name)
             except discord.Forbidden:
@@ -1498,7 +1450,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
             try:
                 await monika_member.remove_roles(role, reason="Resetting old personality roles")
             except discord.Forbidden:
-                await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
+                await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
     # 🔄 Add only the chosen roles
@@ -1511,7 +1463,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
                 monika_role = await guild.create_role(name=monika_role_name, color=discord.Color.dark_blue())
                 print(f"[Roles] Created role: {monika_role_name}")
             except discord.Forbidden:
-                await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
+                await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
                 print(f"[Roles] Missing permission to create role: {monika_role_name}")
                 continue
 
@@ -1519,7 +1471,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
             try:
                 await monika_member.add_roles(monika_role, reason=f"Personality role: {mode}")
             except discord.Forbidden:
-                await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
+                await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
                 print(f"[Roles] Missing permission to assign {monika_role_name} to Monika.")
 
     await interaction.response.send_message(
@@ -1650,7 +1602,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
                         user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
                         print(f"[Roles] Created role: {user_role_name}")
                     except discord.Forbidden:
-                        await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
+                        await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
                         print(f"[Roles] Missing permission to create {user_role_name}")
                         continue
 
@@ -1662,7 +1614,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
                         bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_orange())
                         print(f"[Roles] Created role: {bot_role_name}")
                     except discord.Forbidden:
-                        await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
+                        await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
                         print(f"[Roles] Missing permission to create {bot_role_name}")
                         continue
 
@@ -1671,7 +1623,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
                     await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
                     await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
                 except discord.Forbidden:
-                    await interaction.response.send_message("you need to enable 'manage roles' for @Monika#8657", ephemeral=True)
+                    await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
                     print(f"[Roles] Missing permission to assign roles {user_role_name} / {bot_role_name}")
 
         await interaction.response.send_message(
