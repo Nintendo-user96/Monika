@@ -642,16 +642,21 @@ async def on_shutdown():
 async def on_message(message):
     global last_user_interaction
 
+    if bot.user.mentioned_in(message):
+        await handle_guild_message(message, avatar_url=None)
+        return
+
     if message.author.bot and message.author.id == bot.user.id:
         return
     
-    guild_name = str(message.guild.name) if message.guild else "dm"
-    guild_id = str(message.guild.id) if message.guild else "dm"
-    user_id = str(message.author.id)
-    username = message.author.display_name
-    channel_id = str(message.channel.id)
-    channel_name = message.channel.name if message.guild else "dm"
-
+    if bot.user in message.mentions:
+        guild_name = str(message.guild.name) if message.guild else "dm"
+        guild_id = str(message.guild.id) if message.guild else "dm"
+        user_id = str(message.author.id)
+        username = message.author.display_name
+        channel_id = str(message.channel.id)
+        channel_name = message.channel.name if message.guild else "dm"
+        
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
 
     user_id = message.author.id
@@ -1916,5 +1921,6 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
 
 
