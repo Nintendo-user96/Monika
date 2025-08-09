@@ -549,36 +549,33 @@ class User_SpritesManager:
         return list(self.sprites_by_outfit.get((outfit or "").lower().strip(), {}).keys())
 
     async def classify(self, text, openai_client):
-        """
-        Ask an LLM to classify the 'emotion' label for `text`.
-        This function gracefully degrades to 'neutral' on error.
-        """
-        try:
-            if not self.valid:
-                # safe fallback: recompute
-                self.valid = self._extract_all_emotions()
+        model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
+        prompt = (
+            "Return ONLY one label from this list:\n"
+            + ", ".join(self.valid) +
+            "\nDescribe this message's emotion using one of the labels only."
+        )
 
-            prompt = (
-                "Return ONLY one label from this list:\n"
-                + ", ".join(self.valid) +
-                "\nDescribe this message's emotion using one of the labels only."
-            )
+        for model in model_priority:
+            try:
+                response = openai_client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": prompt},
+                        {"role": "user", "content": text}
+                    ],
+                )
 
-            # The calling code expects a Chat-style completion API (kept compatible)
-            response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": text}
-                ],
-                temperature=0
-            )
+                emotion = response.choices[0].message.content.strip().lower()
+                if emotion in self.valid:
+                    print(f"[Emotion Classifier] {model} → {emotion}")
+                    return emotion
 
-            emotion = response.choices[0].message.content.strip().lower()
-            if emotion in self.valid:
-                return emotion
-            # If model returns something unexpected, fallback to 'neutral'
-            return "neutral"
-        except Exception as e:
-            print(f"[CLASSIFY ERROR] {e}")
-            return "neutral"
+                print(f"[Emotion Classifier] {model} returned invalid label: {emotion}")
+
+            except Exception as e:
+                print(f"[Emotion Classifier Error] {model} → {e}")
+                continue
+
+        print("[Emotion Classifier] All models failed, returning 'neutral'")
+        return "neutral"
