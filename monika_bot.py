@@ -48,68 +48,63 @@ def get_next_openai_client():
     return OpenAI(api_key=key)
 
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    attempts = len(OPENAI_KEYS)
+    # Model priority list
+    model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
+
     last_exception = None
 
-    for attempt in range(attempts):
-        client = get_next_openai_client()
-        print(f"[OpenAI] Attempt {attempt+1}/{attempts} using key index {openai_key_index}")
+    for model in model_priority:
+        for attempt in range(len(OPENAI_KEYS)):
+            client = get_next_openai_client()
+            print(f"[OpenAI] Attempt {attempt+1}/{len(OPENAI_KEYS)} using {model} with key index {openai_key_index}")
 
-        try:
-            if not isinstance(conversation, list):
-                raise ValueError("Conversation must be a list of messages.")
+            try:
+                if not isinstance(conversation, list):
+                    raise ValueError("Conversation must be a list of messages.")
 
-            # ✅ Always await the prompt (it's async)
-            system_prompt = await generate_monika_system_prompt(
-                guild=user.guild if hasattr(user, "guild") else None,
-                user=user,
-                relationship_type=relationship,
-                selected_modes=personality
-            )
+                # ✅ Await system prompt if async
+                if asyncio.iscoroutinefunction(generate_monika_system_prompt):
+                    system_prompt = await generate_monika_system_prompt(
+                        guild=user.guild if hasattr(user, "guild") else None,
+                        user=user,
+                        relationship_type=relationship,
+                        selected_modes=personality
+                    )
+                else:
+                    system_prompt = generate_monika_system_prompt(
+                        guild=user.guild if hasattr(user, "guild") else None,
+                        user=user,
+                        relationship_type=relationship,
+                        selected_modes=personality
+                    )
 
-            if asyncio.iscoroutine(system_prompt):
-                # Safety net — fully resolve any accidental coroutine
-                system_prompt = await system_prompt
+                full_conversation = [{"role": "system", "content": system_prompt}] + conversation
 
-            if not isinstance(system_prompt, str):
-                system_prompt = str(system_prompt)
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=full_conversation,
+                )
 
-            # ✅ Ensure all content in conversation is string
-            safe_conversation = []
-            for msg in conversation:
-                if asyncio.iscoroutine(msg.get("content")):
-                    msg["content"] = await msg["content"]
-                if not isinstance(msg.get("content"), str):
-                    msg["content"] = str(msg["content"])
-                safe_conversation.append(msg)
+                if (response and response.choices and response.choices[0].message 
+                    and response.choices[0].message.content.strip()):
+                    return response
 
-            full_conversation = [{"role": "system", "content": system_prompt}] + safe_conversation
+                print(f"[OpenAI] Blank or invalid response from {model}. Retrying...")
+                await asyncio.sleep(1)
 
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=full_conversation,
-                max_tokens=1024
-            )
+            except Exception as e:
+                last_exception = e
+                err_str = str(e)
+                if "429" in err_str or "rate limit" in err_str.lower():
+                    print(f"[OpenAI] 429 Rate Limit on {model}. Rotating to next key...")
+                    await asyncio.sleep(2)
+                else:
+                    print(f"[OpenAI Error] {model} → {err_str}")
+                    await asyncio.sleep(2)
 
-            if (response and response.choices
-                and response.choices[0].message
-                and response.choices[0].message.content.strip()):
-                return response
+        print(f"[OpenAI] All keys exhausted for {model}, moving to next model.")
 
-            print("[OpenAI] Blank or invalid response. Retrying...")
-            await asyncio.sleep(1)
-
-        except Exception as e:
-            last_exception = e
-            err_str = str(e)
-            if "429" in err_str or "rate limit" in err_str.lower():
-                print("[OpenAI] 429 Rate Limit. Rotating to next key...")
-                await asyncio.sleep(2)
-            else:
-                print(f"[OpenAI Error] {err_str}")
-                await asyncio.sleep(2)
-
-    print("[OpenAI] All keys exhausted or all attempts failed.")
+    print("[OpenAI] All models exhausted or failed.")
     if last_exception:
         raise last_exception
     raise Exception("All OpenAI keys failed or exhausted.")
@@ -251,7 +246,7 @@ def get_time_based_outfit():
 
     # 🎉 Weekend override (Sat=5, Sun=6)
     if weekday in (5, 6):
-        random.seed(now.date())  # ensures same choice all day
+        random.seed(str(now.date()))  # ensures same choice all day
         return random.choice(["casual 1", "casual 2", "casual 3"])
 
     # 🌞 Morning/School
@@ -642,21 +637,16 @@ async def on_shutdown():
 async def on_message(message):
     global last_user_interaction
 
-    if bot.user.mentioned_in(message):
-        await handle_guild_message(message, avatar_url=None)
-        return
-
     if message.author.bot and message.author.id == bot.user.id:
         return
     
-    if bot.user in message.mentions:
-        guild_name = str(message.guild.name) if message.guild else "dm"
-        guild_id = str(message.guild.id) if message.guild else "dm"
-        user_id = str(message.author.id)
-        username = message.author.display_name
-        channel_id = str(message.channel.id)
-        channel_name = message.channel.name if message.guild else "dm"
-        
+    guild_name = str(message.guild.name) if message.guild else "dm"
+    guild_id = str(message.guild.id) if message.guild else "dm"
+    user_id = str(message.author.id)
+    username = message.author.display_name
+    channel_id = str(message.channel.id)
+    channel_name = message.channel.name if message.guild else "dm"
+
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
 
     user_id = message.author.id
@@ -1119,6 +1109,9 @@ async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discor
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(state="Set to true or false")
 async def idlechat(interaction: discord.Interaction, state: bool):
+    user = interaction.user.display_name
+    print(f"{user} used a command: `idlechat`: set `{state}`")
+
     idle_settings[interaction.guild_id] = state
     await interaction.response.send_message(
         f"✅ Idle chat mode set to **{state}** for this server.",
@@ -1131,6 +1124,9 @@ async def idlechat(interaction: discord.Interaction, state: bool):
 @bot.tree.command(name="reset_memory", description="Reset all memory for yourself.")
 @app_commands.checks.has_permissions(administrator=True)
 async def reset_memory(interaction: discord.Interaction):
+    user = interaction.user.display_name
+    print(f"{user} used a command: `reset_memory`")
+
     guild_id = str(interaction.guild.id)
     memory.data[guild_id] = {}
     await interaction.response.send_message("🗑️ Monika's memory has been cleared in this server.", ephemeral=True)
@@ -1140,6 +1136,8 @@ async def reset_memory(interaction: discord.Interaction):
 async def reset_personality(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
     server_tracker.set_personality(guild_id, [])
+    user = interaction.user.display_name
+    print(f"{user} used a command: `reset_personality`")
 
     # Remove personality roles
     for member in interaction.guild.members:
@@ -1168,6 +1166,8 @@ async def reset_relationship(interaction: discord.Interaction):
     guild = interaction.guild
     guild_id = str(guild.id)
     monika_member = guild.get_member(interaction.client.user.id)
+    user = interaction.user.display_name
+    print(f"{user} used a command: `reset_relationship`")
 
     # 🔄 Reset stored data
     server_tracker.clear_relationship(guild_id)
@@ -1201,6 +1201,8 @@ async def reset_relationship(interaction: discord.Interaction):
 
 @bot.tree.command(name="helpme", description="Get help about all of my commands.")
 async def helpme(interaction: discord.Interaction):
+    user = interaction.user.display_name
+    print(f"{user} used a command: `helpme`")
 
     hidden_cmds = {"broadcast", "speak_as_monika"}
 
@@ -1243,6 +1245,9 @@ async def export_memories(interaction: discord.Interaction):
     logs = memory.data.get(guild_id, {})
     personalities = server_tracker.get_personality(guild_id)
     relationships = server_tracker.get_relationship(guild_id)
+    
+    user = interaction.user.display_name
+    print(f"{user} used a command: `export_memories`")
 
     # --- Monika's roles ---
     monika_member = guild.get_member(bot.user.id)
@@ -1318,6 +1323,9 @@ async def export_memories(interaction: discord.Interaction):
 @app_commands.checks.has_permissions(administrator=True)
 async def import_memories(interaction: discord.Interaction, file: discord.Attachment):
     await interaction.response.defer(ephemeral=True)
+
+    user = interaction.user.display_name
+    print(f"{user} used a command: `import_memories`")
 
     if not file.filename.endswith(".txt"):
         await interaction.followup.send("❌ Please upload a `.txt` file.", ephemeral=True)
@@ -1404,6 +1412,10 @@ async def outfit_autocomplete(interaction: discord.Interaction, current: str):
 @app_commands.describe(outfit="Choose an outfit style: school_uniform, casual, pajamas, hoodie, white dress")
 async def set_outfit(interaction: discord.Interaction, outfit: str):
     outfit = outfit.lower().strip()
+    
+    user = interaction.user.display_name
+    print(f"{user} used a command: `set_outfit`: set `{outfit}`")
+
     if outfit not in ["school_uniform", "casual 1", "casual 2", "casual 3", "white dress", "hoodie", "pajamas"]:
         await interaction.response.send_message(
             "❌ Invalid outfit. Options are: school_uniform, casual's, white dress, hoodie, pajamas.",
@@ -1434,6 +1446,8 @@ async def personality_autocomplete(interaction: discord.Interaction, current: st
 async def set_personality(interaction: discord.Interaction, modes: str):
     guild = interaction.guild
     guild_id = str(guild.id)
+    user = interaction.user.display_name
+    print(f"{user} used a command: `set_personality`: set `{mode}`")
 
     # Normalize + validate
     chosen = [m.strip() for m in modes.split(",") if m.strip() in PERSONALITY_MODES]
@@ -1490,6 +1504,9 @@ async def set_personality(interaction: discord.Interaction, modes: str):
 )
 async def personalities_description(interaction: discord.Interaction):
     personality_modes = PERSONALITY_MODES  # assuming you keep it in monika_personality.py
+
+    user = interaction.user.display_name
+    print(f"{user} used a command: `personalities_description`")
 
     # Group into categories
     categories = {
@@ -1566,6 +1583,9 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
     guild = interaction.guild
     guild_id = str(guild.id)
 
+    user = interaction.user.display_name
+    print(f"{user} used a command: `set_relationship`: set `{relationship_type}` with `{with_users}`")
+
     with_list = [item.strip() for item in with_users.split(",") if item.strip()]
 
     try:
@@ -1582,7 +1602,7 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
 
         # --- Remove ALL old relationship roles first ---
         for role in guild.roles:
-            if role.name.startswith("Monika - ") or role.name.endswith(f" - {interaction.user.display_name}"):
+            if role.name.startswith("Monika - ") or role.name.endswith(f" - {user}"):
                 try:
                     if monika_member and role in monika_member.roles:
                         await monika_member.remove_roles(role, reason="Resetting old relationship roles")
@@ -1645,6 +1665,9 @@ async def set_relationship(interaction: discord.Interaction, relationship_type: 
 async def restart_monika(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
 
+    user = interaction.user.display_name
+    print(f"{user} used a command: ``")
+
     # Reset trackers
     server_tracker.clear_relationship(guild_id)
     server_tracker.set_personality(guild_id, [])
@@ -1671,6 +1694,10 @@ async def restart_monika(interaction: discord.Interaction):
     ideas="you can put a list of your or your friends ideas from Monika here (comma or new line separated, optional)"
 )
 async def report(interaction: discord.Interaction, bugs: str = "", errors: str = "", ideas: str = ""):
+
+    user = interaction.user.display_name
+    print(f"{user} used a command: `report`")
+
     await interaction.response.send_message(
         "✅ Thank you for your report! Our team will review it shortly.",
         ephemeral=True
@@ -1823,6 +1850,9 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
 async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str, outfit: str, emotion: str):
     await interaction.response.defer(ephemeral=True)
 
+    user = interaction.user.display_name
+    print(f"{user} used a command: `speak_as_monika`")
+
     # Normalize and validate emotion
     outfit = outfit.lower().strip()
     emotion = emotion.lower().strip()
@@ -1921,6 +1951,3 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
-
-
-
