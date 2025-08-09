@@ -166,8 +166,9 @@ timestamp = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
 last_reply_times = {}
 idle_settings = {}
 user_memory = {}
-relationship_settings = {}
-relationship_level_settings = {}
+# relationship_settings = {}
+# relationship_level_settings = {}
+mention_only_mode = {}
 
 FRIENDS = [
     1375064525396775004,  # Sayori
@@ -636,10 +637,7 @@ async def on_shutdown():
 @bot.event
 async def on_message(message):
     global last_user_interaction
-
-    if message.author.bot and message.author.id == bot.user.id:
-        return
-    
+        
     guild_name = str(message.guild.name) if message.guild else "dm"
     guild_id = str(message.guild.id) if message.guild else "dm"
     user_id = str(message.author.id)
@@ -647,9 +645,11 @@ async def on_message(message):
     channel_id = str(message.channel.id)
     channel_name = message.channel.name if message.guild else "dm"
 
-    avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
+    if mention_only_mode.get(guild_id, True):  # Default True = mention only
+        if bot.user not in message.mentions:
+            return  # Ignore messages without @Monika
 
-    user_id = message.author.id
+    avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
     
     if isinstance(message.channel, discord.DMChannel):
         guild = None
@@ -770,7 +770,9 @@ async def handle_guild_message(message: discord.Message, avatar_url):
     guild = message.guild
     user_id = str(message.author.id)
     guild_id = str(guild.id) if guild else "DM"
+    guild_name = guild.name
     channel_id = str(message.channel.id)
+    channel_name = message.channel.name
     username = message.author.display_name
     is_friend = is_friend_bot(message)
 
@@ -879,6 +881,40 @@ async def handle_guild_message(message: discord.Message, avatar_url):
             await message.channel.send(reply)
     else:
         print(f"[Error] No permission to send in #{message.channel.name}")
+
+    if MEMORY_CHAN_ID:
+        dest_channel = bot.get_channel(MEMORY_CHAN_ID)
+        if not dest_channel:
+            print(f"[Error] {e}")
+            return
+        
+        try:
+            # Create header
+            header = f"📩 `[{timestamp}]` | `User Name: **{username}**, ID: ({user_id})` | "
+            body = (
+                f"`Server name: {guild_name}, ID: ({guild_id})` | "
+                f"`Channel name: {channel_name}, ID: ({channel_id})` | "
+            )
+
+            # Build the reference quote if it's a reply
+            quote = ""
+            if message.reference and message.reference.resolved:
+                ref = message.reference.resolved
+                if isinstance(ref, discord.Message):
+                    ref_author = ref.author.display_name
+                    ref_content = ref.content or "*[No text]*"
+                    quote = f"> 🗨️ __Reply to {ref_author}__: {ref_content}\n\n"
+                            
+                if message.attachments:
+                    for attachment in message.attachments:
+                        await dest_channel.send(attachment.url)
+            
+            # Combine and send
+            full_content = f"{header} {body}:\n{quote}> `{message.content}`"
+            await dest_channel.send(full_content)
+
+        except Exception as e:
+            print(f"[Forwarding Error] {e}")
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
@@ -1103,6 +1139,21 @@ async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discor
             print(f"[Roles] Missing permission to create role {full_name}")
             return None
     return role
+
+@bot.tree.command(name="normal_talk", description="Toggle mention-only to chat mode for this server.")
+@app_commands.checks.has_permissions(administrator=True)
+async def normal_talk(interaction: discord.Interaction, enable: bool):
+    user = interaction.user.display_name
+    print(f"{user} used a command: `normal_talk`")
+
+    guild_id = str(interaction.guild.id)
+    mention_only_mode[guild_id] = enable
+    state = "ON" if enable else "OFF"
+
+    await interaction.response.send_message(
+        f"✅ normal talk mode set to **{state}** for this server. Now you can talk to monika normally",
+        ephemeral=True
+    )
 
 # Idle chat command
 @bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
