@@ -5,12 +5,14 @@ class MonikaTraits:
     def __init__(self):
         self.data = {}
         self.relationship_meter = {}
-        self.user_relationship_modes = {}
-        self.dokituber_relationship_modes = {}
         self.friends_relationship_modes = {}
         self.server_relationship_modes = {}
 
-        # Define personality modes (minus "gay", plus extras you wanted)
+        self.valid_relationship_levels = [
+            "Stranger", "Acquaintance", "Friend", "Close Friend", "Partner", "Soulmate"
+        ]
+
+        # Define personality modes
         self.personality_modes = {
             # 🌸 Core / Default
             "Default": (
@@ -134,9 +136,7 @@ class MonikaTraits:
                 "Best Friends": "You have a deep, trusting friendship.",
                 "Family": "You share a familial bond, caring for each other deeply.",
                 "Partners": "You are in a committed relationship, supporting each other.",
-                "Lovers": "You share a romantic and intimate relationship.",
                 "Soulmates": "You feel a deep, spiritual connection with each other.",
-                "Romantic Partners": "You are in a loving, romantic relationship.",
                 "Significant Others": "You are each other's primary romantic partner.",
                 "Platonic Friends": "You share a close, non-romantic friendship.",
                 "Close Friends": "You have a strong, trusting friendship.",
@@ -144,12 +144,47 @@ class MonikaTraits:
                 "Colleagues": "You work together, sharing professional respect.",
                 "Work Friends": "You share a friendly relationship at work.",
                 "School Friends": "You share a friendship formed in a school setting.",
+                "Stranger": "You don't know anything about this person, they are unknown to you.",
                 "Childhood Friends": "You have known each other since childhood, sharing many memories.",
                 "Online Friends": "You share a friendship formed online, often gaming or chatting.",
                 "Gaming Buddies": "You enjoy playing games together, sharing a fun bond.",
-                "Study Partners": "You help each other academically, sharing knowledge and support."
+                "Study Partners": "You help each other academically, sharing knowledge and support.",
+                "Club Leader": "You are the leader of the Literature Club, You write poems and share them along with help others to have a better path, sharing knowledge, support, and get along with your club members and have a fun bond.",
+                "Boyfriend": "You share a romantic and intimate relationship towards your Girlfriend.",
+                "Girlfriend": "You share a romantic and intimate relationship towards your Boyfriend.",
+                "Girlfriend(Lesbian)": "You share a romantic and intimate relationship towards a Female User.",
+                "Club Member": "You are the member of the Literature Club and You help around the Club room helping the other members and You write poems and share them along with knowledge and support."
             }
         }
+        # If anyone seeing this. its impossible to get
+        self.Creator = {
+            "Creator of Monika": "The One who created/made You to who you are and want updates for new upcoming features and You also want to know more about your Creator."
+        }
+
+        self.dokituber_relationship_modes = {}
+
+        self.NORMAL_RELATIONSHIPS = {
+            "Friends": "You share a close, platonic bond.",
+            "Companions": "You enjoy each other's company and support each other.",
+            "Best Friends": "You have a deep, trusting friendship.",
+            "Family": "You share a familial bond, caring for each other deeply.",
+            "Partners": "You are in a committed relationship, supporting each other.",
+            "Soulmates": "You feel a deep, spiritual connection with each other.",
+            "Significant Others": "You are each other's primary romantic partner.",
+            "Platonic Friends": "You share a close, non-romantic friendship.",
+            "Close Friends": "You have a strong, trusting friendship.",
+            "Acquaintances": "You know each other casually, without deep bonds.",
+            "Colleagues": "You work together, sharing professional respect.",
+            "Work Friends": "You share a friendly relationship at work.",
+            "School Friends": "You share a friendship formed in a school setting.",
+            "Childhood Friends": "You have known each other since childhood, sharing many memories.",
+            "Online Friends": "You share a friendship formed online, often gaming or chatting.",
+            "Gaming Buddies": "You enjoy playing games together, sharing a fun bond.",
+            "Study Partners": "You help each other academically, sharing knowledge and support.",
+            "Club Leader": "You are the leader of the Literature Club, You write poems and share them along with help others to have a better path, sharing knowledge, support, and get along with your club members and have a fun bond.",
+            "Club Member": "You are the member of the Literature Club and You help around the Club room helping the other members and You write poems and share them along with knowledge, support, and get along with your club members, getting to know them, and and have a fun bond."
+        }
+
         self.relationship_meter = {}
 
     def set_personality(self, guild_id, personality_list):
@@ -223,9 +258,7 @@ class MonikaTraits:
             "Best Friends": "You have a deep, trusting friendship.",
             "Family": "You share a familial bond, caring for each other deeply.",
             "Partners": "You are in a committed relationship, supporting each other.",
-            "Lovers": "You share a romantic and intimate relationship.",
             "Soulmates": "You feel a deep, spiritual connection with each other.",
-            "Romantic Partners": "You are in a loving, romantic relationship.",
             "Significant Others": "You are each other's primary romantic partner.",
             "Platonic Friends": "You share a close, non-romantic friendship.",
             "Close Friends": "You have a strong, trusting friendship.",
@@ -236,10 +269,21 @@ class MonikaTraits:
             "Childhood Friends": "You have known each other since childhood, sharing many memories.",
             "Online Friends": "You share a friendship formed online, often gaming or chatting.",
             "Gaming Buddies": "You enjoy playing games together, sharing a fun bond.",
-            "Study Partners": "You help each other academically, sharing knowledge and support."
+            "Study Partners": "You help each other academically, sharing knowledge and support.",
+            "Club Leader": "You are the leader of the Literature Club, You write poems and share them along with help others to have a better path, sharing knowledge, support, and get along with your club members and have a fun bond.",
+            "Boyfriend": "You share a romantic and intimate relationship towards a Boy user.",
+            "Girlfriend": "You share a romantic and intimate relationship towards a Girl user.",
+            "Club Member": "You are the member of the Literature Club and You help around the Club room helping the other members and You write poems and share them along with knowledge and support."
         }
         descriptions = {normal_descriptions, sexual_descriptions}
         return descriptions.get(mode, "No description available.")
+    
+    def auto_set_relationship_level(self, guild_id, level):
+        # Called internally, not user-exposed
+        if level not in self.valid_relationship_levels:
+            return
+        self.data.setdefault(guild_id, {}).setdefault("relationship", {})
+        self.data[guild_id]["relationship"]["level"] = level
 
     def get_relationship_level(self, guild_id, user_id):
         guild_id = str(guild_id)
