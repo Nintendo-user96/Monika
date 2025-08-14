@@ -142,7 +142,7 @@ intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 def is_owner(interaction: discord.Interaction):
-    return interaction.user.id in OWNER_ID
+    return interaction.user.id == OWNER_ID
 
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
@@ -874,42 +874,23 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
     sprite_url_cache[cache_key] = error_url
     return error_url
 
-async def get_avatar_link(avatar_url=None):
-    avatar_url_cache = (avatar_url)
+async def avatar_to_emoji(bot, guild: discord.Guild, avatar_url: str, emoji_name: str = "tempavatar"):
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(avatar_url) as resp:
+                if resp.status != 200:
+                    raise Exception(f"HTTP {resp.status}")
+                image_bytes = await resp.read()
 
-    sprite_path = user_sprites.get_avatar(avatar_url)
+        # Create the emoji
+        emoji = await guild.create_custom_emoji(name=emoji_name, image=image_bytes)
+        print(f"[DEBUG] ✅ Created emoji {emoji} from {avatar_url}")
+        return emoji
 
-    if not sprite_path:
-        print(f"[DEBUG] ❌ No avatar path, trying 'neutral' fallback")
-        sprite_path = user_sprites.get_avatar(avatar_url)
-
-    print(f"[DEBUG] ✅ Avatar path resolved: {sprite_path}")
-
-    # cached URL exists
-    if avatar_key in avatar_url_cache:
-        print(f"[DEBUG] 🔄 Using cached URL for {avatar_key}")
-        return avatar_url_cache[avatar_key]
-
-    # upload file once to image channel and reuse URL
-    if AVATAR_URL_CHAN:
-        try:
-            avatar_key = (avatar_url)
-            upload_channel = bot.get_channel(AVATAR_URL_CHAN)
-            if not upload_channel:
-                print(f"[DEBUG] ⚠️ Could not find upload channel ID={AVATAR_URL_CHAN}")
-            else:
-                print(f"[DEBUG] ⬆️ Uploading '{avatar_url}' to channel {upload_channel.name}")
-                with open(avatar_url, "rb") as f:
-                    avatar_file = discord.File(f)
-                    sent_message = await upload_channel.send(file=avatar_file)
-                    avatar_link = sent_message.attachments[0].url
-                    avatar_url_cache[avatar_key] = avatar_link
-                    print(f"[DEBUG] ✅ Upload success, cached URL: {avatar_link}")
-                    return avatar_link
-        except Exception as e:
-            print(f"[DEBUG] ❌ Upload failed: {e}")
-
-    return
+    except Exception as e:
+        print(f"[DEBUG] ❌ Failed to create emoji from avatar: {e}")
+        return None
 
 async def handle_dm_message(message: discord.Message, avatar_url):
     user = message.author
@@ -964,12 +945,18 @@ async def handle_dm_message(message: discord.Message, avatar_url):
         
         content = f"**From {user} in DM's:**\n{message.content}"
         await forward_channel.send(content)
+    
+    emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
+    if emoji:
+        await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
+        await emoji.delete()  # optional cleanup
             
 async def handle_guild_message(message: discord.Message, avatar_url):
     global last_reply_times
 
     guild = message.guild
     user_id = str(message.author.id)
+    user = message.author
     guild_id = str(guild.id) if guild else "DM"
     guild_name = guild.name
     channel_id = str(message.channel.id)
@@ -1118,6 +1105,11 @@ async def handle_guild_message(message: discord.Message, avatar_url):
 
         except Exception as e:
             print(f"[Forwarding Error] {e}")
+
+    emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
+    if emoji:
+        await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
+        await emoji.delete()  # optional cleanup
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
@@ -2110,7 +2102,8 @@ async def report(interaction: discord.Interaction, bugs: str = "", errors: str =
     await report_channel.send(embed=embed)
 
 @app_commands.check(is_owner)
-@bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.", guild=discord.Object(id=MY_GUILD_ID))
+@bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
+@commands.is_owner()
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
 async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "15f500"):
 
