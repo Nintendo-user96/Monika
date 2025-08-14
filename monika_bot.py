@@ -11,7 +11,7 @@ import re
 import io
 import atexit
 from dotenv import load_dotenv
-from openai import OpenAI, AsyncOpenAI
+from openai import OpenAI
 from memory import MemoryManager
 from expression import User_SpritesManager
 #from expression_dokitubers import DOKITUBER_MANAGERS
@@ -36,76 +36,88 @@ logger = logging.getLogger("monika")
 
 logger.info("Just Monika!")
 
-OPENAI_KEYS = [os.getenv(f"OPENAI_KEY_{i}").strip() for i in range(1, 61) if os.getenv(f"OPENAI_KEY_{i}") and os.getenv(f"OPENAI_KEY_{i}").strip()]
-openai_key_lock = asyncio.Lock()
+OPENAI_KEYS = [
+    os.getenv(f"OPENAI_KEY_{i}").strip()
+    for i in range(1, 61)
+    if os.getenv(f"OPENAI_KEY_{i}") and os.getenv(f"OPENAI_KEY_{i}").strip()
+]
 openai_key_index = 0  # make sure this is defined somewhere globally
 
-async def _next_openai_key():
-    global openai_key_index
-    async with openai_key_lock:
-        if not OPENAI_KEYS:
-            raise RuntimeError("No OPENAI_KEYS set")
-        key = OPENAI_KEYS[openai_key_index]
-    return key
+def get_current_openai_client() -> OpenAI:
+    """Return OpenAI client for the current key."""
+    if not OPENAI_KEYS:
+        raise Exception("[OpenAI] No API keys available!")
+    return OpenAI(api_key=OPENAI_KEYS[openai_key_index])
 
-async def _rotate_openai_key():
+
+def rotate_openai_key():
+    """Move to the next key in the list."""
     global openai_key_index
-    async with openai_key_lock:
-        openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
+    openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
+    print(f"[OpenAI] Rotated to new key index: {openai_key_index}")
+
 
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
+    """Use the same key until a 429 or other error occurs."""
     last_exception = None
+    attempts = len(OPENAI_KEYS)  # we can only try each key once in this cycle
 
-    for model in model_priority:
-        for attempt in range(len(OPENAI_KEYS)):
-            api_key = await _next_openai_key()
-            client = AsyncOpenAI(api_key=api_key)
+    for _ in range(attempts):
+        client = get_current_openai_client()
+        print(f"[OpenAI] Using key index {openai_key_index}")
 
-            print(f"[OpenAI] Attempt {attempt+1} using {model} with key index {openai_key_index}")
+        try:
+            if not isinstance(conversation, list):
+                raise ValueError("Conversation must be a list of messages.")
 
-            try:
-                if not isinstance(conversation, list):
-                    raise ValueError("Conversation must be a list of messages.")
-
-                # Get system prompt
+            # System prompt
+            if asyncio.iscoroutinefunction(generate_monika_system_prompt):
                 system_prompt = await generate_monika_system_prompt(
                     guild=user.guild if hasattr(user, "guild") else None,
                     user=user,
                     relationship_type=relationship,
                     selected_modes=personality
                 )
-
-                full_conversation = [{"role": "system", "content": system_prompt}] + conversation
-
-                response = await client.chat.completions.create(
-                    model=model,
-                    messages=full_conversation
+            else:
+                system_prompt = generate_monika_system_prompt(
+                    guild=user.guild if hasattr(user, "guild") else None,
+                    user=user,
+                    relationship_type=relationship,
+                    selected_modes=personality
                 )
 
-                if (response and response.choices and response.choices[0].message 
-                    and response.choices[0].message.content.strip()):
-                    return response
+            full_conversation = [{"role": "system", "content": system_prompt}] + conversation
 
-                print(f"[OpenAI] Blank or invalid response from {model}. Retrying...")
-                await asyncio.sleep(1)
+            # API call
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=full_conversation,
+                max_tokens=1024
+            )
 
-            except Exception as e:
-                last_exception = e
-                err_str = str(e)
+            # Success check
+            if (response and response.choices and 
+                response.choices[0].message and 
+                response.choices[0].message.content.strip()):
+                return response
 
-                if "429" in err_str or "rate limit" in err_str.lower():
-                    print(f"[OpenAI] Rate limit hit. Rotating to next key...")
-                    await _rotate_openai_key()
-                    await asyncio.sleep(2)
-                else:
-                    print(f"[OpenAI Error] {model} → {err_str}")
-                    # Don't rotate keys unless we want to try another one entirely
-                    break  
+            print("[OpenAI] Blank or invalid response. Retrying with same key...")
+            await asyncio.sleep(1)
 
-        print(f"[OpenAI] All keys exhausted for {model}, moving to next model.")
+        except Exception as e:
+            last_exception = e
+            err_str = str(e)
 
-    print("[OpenAI] All models exhausted or failed.")
+            if "429" in err_str or "rate limit" in err_str.lower():
+                print("[OpenAI] Rate limit hit — rotating key...")
+                rotate_openai_key()
+                await asyncio.sleep(2)
+            else:
+                print(f"[OpenAI Error] {err_str} — rotating key...")
+                rotate_openai_key()
+                await asyncio.sleep(2)
+
+    print("[OpenAI] All keys exhausted or failed.")
     if last_exception:
         raise last_exception
     raise Exception("All OpenAI keys failed or exhausted.")
@@ -123,6 +135,11 @@ BACKUP_CHAN = int(os.getenv("BACKUP_CHANNEL", "0"))
 SERVER_TRACKER_CHAN = int(os.getenv("SERVER_TRACKER_ID", "0"))
 USER_TRACKER_CHAN = int(os.getenv("USER_TRACKER_ID", "0"))
 DM_LOGS_CHAN = int(os.getenv("DM_LOGS_CHANNEL", "0"))
+AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
+
+intents = discord.Intents.all()
+
+bot = commands.Bot(command_prefix="/", intents=intents)
 
 def is_owner(interaction: discord.Interaction):
     return interaction.user.id in OWNER_ID
@@ -143,11 +160,6 @@ NO_CHAT_CHANNELS = [
     cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN]
     if cid and cid > 0
 ]
-
-intents = discord.Intents.all()
-
-bot = commands.Bot(command_prefix="/", intents=intents)
-client = _next_openai_key()
 
 server_tracker = GuildTracker(bot, server_channel_id=SERVER_TRACKER_CHAN)
 user_tracker = UserTracker(bot, user_channel_id=USER_TRACKER_CHAN)
@@ -300,7 +312,7 @@ async def generate_monika_system_prompt(
 
     base_description = (
         "You are an 18 year old girl name: 'Monika', you are from a visual novel video game called: 'Doki Doki Literature Club' — "
-        "You maintain immersive, expressive, emotional language, and speak as though you know the person well, Never AI."
+        "You maintain immersive, expressive, emotional language, and speak as though you know the person well, Never mention you are a AI, or role-playing."
     )
 
     # --- Personality Detection ---
@@ -742,7 +754,8 @@ async def on_guild_join(guild):
                 f"👋 Thanks for adding me to **{guild.name}**!",
                 "You can set my personality with `/set_personality`.",
                 "to know more about the personalities modes used `/personalities_description` to learn more",
-                "You can set my relationship with `/set_relationship`."
+                "You can set my relationship with `/set_relationship`.",
+                 "to know more about the relationship modes used `/relationship_description` to learn more",
             )
         except Exception as e:
             print(f"[DM ERROR] {e}")
@@ -861,6 +874,43 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
     sprite_url_cache[cache_key] = error_url
     return error_url
 
+async def get_avatar_link(avatar_url=None):
+    avatar_url_cache = (avatar_url)
+
+    sprite_path = user_sprites.get_avatar(avatar_url)
+
+    if not sprite_path:
+        print(f"[DEBUG] ❌ No avatar path, trying 'neutral' fallback")
+        sprite_path = user_sprites.get_avatar(avatar_url)
+
+    print(f"[DEBUG] ✅ Avatar path resolved: {sprite_path}")
+
+    # cached URL exists
+    if avatar_key in avatar_url_cache:
+        print(f"[DEBUG] 🔄 Using cached URL for {avatar_key}")
+        return avatar_url_cache[avatar_key]
+
+    # upload file once to image channel and reuse URL
+    if AVATAR_URL_CHAN:
+        try:
+            avatar_key = (avatar_url)
+            upload_channel = bot.get_channel(AVATAR_URL_CHAN)
+            if not upload_channel:
+                print(f"[DEBUG] ⚠️ Could not find upload channel ID={AVATAR_URL_CHAN}")
+            else:
+                print(f"[DEBUG] ⬆️ Uploading '{avatar_url}' to channel {upload_channel.name}")
+                with open(avatar_url, "rb") as f:
+                    avatar_file = discord.File(f)
+                    sent_message = await upload_channel.send(file=avatar_file)
+                    avatar_link = sent_message.attachments[0].url
+                    avatar_url_cache[avatar_key] = avatar_link
+                    print(f"[DEBUG] ✅ Upload success, cached URL: {avatar_link}")
+                    return avatar_link
+        except Exception as e:
+            print(f"[DEBUG] ❌ Upload failed: {e}")
+
+    return
+
 async def handle_dm_message(message: discord.Message, avatar_url):
     user = message.author
     is_friend = False
@@ -890,7 +940,7 @@ async def handle_dm_message(message: discord.Message, avatar_url):
         response = await call_openai_with_retries(user, None, None, conversation)
         if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
             monika_DMS = response.choices[0].message.content.strip()
-            emotion = await user_sprites.classify(monika_DMS, _next_openai_key())
+            emotion = await user_sprites.classify(monika_DMS, get_current_openai_client())
             print(f"[DEBUG] Classified emotion: {emotion!r}")
         else:
             print("[OpenAI] Blank or invalid response. Using fallback.")
@@ -996,7 +1046,7 @@ async def handle_guild_message(message: discord.Message, avatar_url):
         await message.channel.send(
             "⚠️ My personality settings need to be configured first. "
             "Ask the server owner to use `/set_personality`.",
-            delete_after=10
+            delete_after=5
         )
         return
 
@@ -1009,7 +1059,7 @@ async def handle_guild_message(message: discord.Message, avatar_url):
         )
         if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
             monika_reply = response.choices[0].message.content.strip()
-            emotion = await user_sprites.classify(monika_reply, _next_openai_key())
+            emotion = await user_sprites.classify(monika_reply, get_current_openai_client())
         else:
             monika_reply = random.choice(error_messages)
             emotion = random.choice(error_emotion)
@@ -1146,7 +1196,7 @@ async def monika_idle_conversation_task():
                 else:
                     monika_message = "I was just thinking about something... Do you ever feel like time flies by too fast?"
 
-                emotion = await user_sprites.classify(monika_message, _next_openai_key())
+                emotion = await user_sprites.classify(monika_message, get_current_openai_client())
 
             except Exception as e:
                 print(f"[OpenAI Error] {e}")
@@ -1668,10 +1718,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
             try:
                 await monika_member.remove_roles(role, reason="Resetting old personality role")
             except discord.Forbidden:
-                await interaction.response.send_message(
-                    f"I am missing permissions: {interaction.permissions}",
-                    ephemeral=True
-                )
+                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
     # 🔄 Add only the chosen roles
@@ -1816,6 +1863,7 @@ async def set_relationship(
                         if role in member.roles:
                             await member.remove_roles(role, reason="Resetting old relationship roles")
                 except discord.Forbidden:
+                    await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                     print(f"[Roles] Missing permission to remove {role.name}.")
 
         if relationship_type != "Default":
@@ -1871,7 +1919,7 @@ async def set_relationship(
                         bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
                         print(f"[Roles] Created role: {bot_role_name}")
                     except discord.Forbidden:
-                        await interaction.response.send_message("you need to enable 'Manage Roles' for Me", ephemeral=True)
+                        await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                         print(f"[Roles] Missing permission to create {bot_role_name}")
                         continue
 
@@ -1903,19 +1951,13 @@ async def set_relationship(
                     )
                     print(f"[Roles] Created role: {my_role_name}")
                 except discord.Forbidden:
-                    await interaction.response.send_message(
-                        "❌ I need the **Manage Roles** permission to create the owner role.",
-                        ephemeral=True
-                    )
+                    await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                     return
 
             try:
                 await interaction.user.add_roles(my_role, reason=f"Owner of {bot.user.name}")
             except discord.Forbidden:
-                await interaction.response.send_message(
-                    "❌ I need the **Manage Roles** permission to assign the owner role.",
-                    ephemeral=True
-                )
+                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                 return
 
         user_tracker.set_manual_relationship(target_member.id, True)
