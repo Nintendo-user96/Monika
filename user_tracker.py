@@ -10,6 +10,15 @@ class UserTracker:
         self.users = {}
         self.last_backup_message = None
 
+        self.RELATIONSHIP_LEVELS = [
+            "Stranger",
+            "Friend",
+            "Close Friend",
+            "Best Friend",
+            "Partner",
+            "Soulmate"
+        ]
+
     def _now(self):
         return datetime.utcnow().isoformat()
     
@@ -21,9 +30,9 @@ class UserTracker:
             return
 
         async for message in channel.history(limit=50):
-            if message.author == self.bot.user and message.content.startswith("```json"):
+            if message.author == self.bot.user and message.content.startswith("```"):
                 try:
-                    json_text = message.content.strip("```json\n").strip("```")
+                    json_text = message.content.strip("```\n").strip("```")
                     self.data = eval(json_text)
                     self.last_backup_message = message
                     print("[UserTracker] Data loaded from channel.")
@@ -39,8 +48,8 @@ class UserTracker:
             return
 
         formatted = "```\n"
-        for user_id, info in self.data.items():
-            formatted += f"User: {info.get('name', user_id)} (ID: {user_id})\n"
+        for username, user_id, info in self.data.items():
+            formatted += f"Username: {info.get('name', username)} (User ID: {user_id})\n"
             for key, value in info.items():
                 formatted += f"  {key}: {value}\n"
             formatted += "\n"
@@ -72,25 +81,26 @@ class UserTracker:
         if pronouns:
             self.data[user_id]["pronouns"] = pronouns
 
-    def track_user(self, user_id, username, pronouns, is_bot=False, avatar_url=None):
-        user_id = str(user_id)
-        now = self._now()
-
+    def track_user(self, user_id, name, is_bot=False):
         if user_id not in self.users:
             self.users[user_id] = {
-                "user_id": user_id,
-                "name": username,
-                "pronouns": pronouns,
-                "is_bot": is_bot,
-                "avatar_url": avatar_url,
-                "last_seen": now
+                "name": name,
+                "avatar": None,
+                "pronouns": None,
+                "relationship": None,  # 0 = Stranger
+                "has_manual_relationship": False,  # New field
+                "is_bot": is_bot
             }
         else:
-            self.users[user_id]["name"] = username
-            self.users[user_id]["pronouns"] = pronouns
+            self.users[user_id]["name"] = name
             self.users[user_id]["is_bot"] = is_bot
-            self.users[user_id]["avatar_url"] = avatar_url
-            self.users[user_id]["last_seen"] = now
+
+    def set_manual_relationship(self, user_id, value=True):
+        if user_id in self.users:
+            self.users[user_id]["has_manual_relationship"] = value
+
+    def has_manual_relationship(self, user_id):
+        return self.users.get(user_id, {}).get("has_manual_relationship", False)
 
     def get_user_data(self, user_id):
         return self.data.get(user_id, {})
@@ -105,28 +115,18 @@ class UserTracker:
     def get_pronouns(self, user_id):
         return self.data.get(user_id, {}).get("pronouns")
 
-    def update_relationship_level(self, user_id, interaction_strength=1):
-        entry = self.data.setdefault(str(user_id), {})
-        entry["relationship_score"] = entry.get("relationship_score", 0) + interaction_strength
+    def add_relationship_xp(self, user_id: str, amount: int = 1):
+        data = self.load()
+        if "xp" not in data.get(user_id, {}):
+            data[user_id]["xp"] = 0
+        data[user_id]["xp"] += amount
+        self.save()
 
-        RELATIONSHIP_TIERS = ["stranger", "acquaintance", "friend", "close friend", "Soulmates"]
-
-        score = entry["relationship_score"]
-        if score < 5:
-            level = RELATIONSHIP_TIERS[0]
-        elif score < 15:
-            level = RELATIONSHIP_TIERS[1]
-        elif score < 25:
-            level = RELATIONSHIP_TIERS[2]
-        elif score < 50:
-            level = RELATIONSHIP_TIERS[3]
-        else:
-            level = RELATIONSHIP_TIERS[4]
-
-        entry["relationship_level"] = level
-
-    def get_relationship_level(self, user_id):
-        return self.data.get(str(user_id), {}).get("relationship_level", "stranger")
+    def get_relationship_level(self, user_id: str):
+        data = self.load()
+        xp = data.get(user_id, {}).get("xp", 0)
+        level_index = min(xp // 50, len(self.RELATIONSHIP_LEVELS) - 1)  # 50 XP per level
+        return self.RELATIONSHIP_LEVELS[level_index]
 
     def enable_relationship_levels(self, user_id: int):
         if user_id not in self.data:
