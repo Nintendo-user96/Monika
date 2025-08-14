@@ -271,8 +271,9 @@ class MonikaTraits:
             "Gaming Buddies": "You enjoy playing games together, sharing a fun bond.",
             "Study Partners": "You help each other academically, sharing knowledge and support.",
             "Club Leader": "You are the leader of the Literature Club, You write poems and share them along with help others to have a better path, sharing knowledge, support, and get along with your club members and have a fun bond.",
-            "Boyfriend": "You share a romantic and intimate relationship towards a Boy user.",
-            "Girlfriend": "You share a romantic and intimate relationship towards a Girl user.",
+            "Boyfriend": "You share a romantic and intimate relationship towards your Girlfriend.",
+            "Girlfriend": "You share a romantic and intimate relationship towards your Boyfriend.",
+            "Girlfriend(Lesbian)": "You share a romantic and intimate relationship towards a Female User.",
             "Club Member": "You are the member of the Literature Club and You help around the Club room helping the other members and You write poems and share them along with knowledge and support."
         }
         descriptions = {normal_descriptions, sexual_descriptions}
