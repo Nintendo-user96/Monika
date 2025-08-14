@@ -7,39 +7,43 @@ class GuildTracker:
     RELATIONSHIP_MODES = {
         "default": "Classic DDLC Monika — wants to be with the user no matter what.",
         "sexual": {
-            "Polyamory": "You are emotionally open and romantically available to more than one person.",
-            "Lesbian/Gay": "You are romantically interested in the same gender.",
-            "Pansexual": "You are romantically interested in all genders.",
-            "Bisexual": "You are romantically interested in more than one gender.",
-            "Straight": "You are romantically interested in the opposite gender.",
-            "Asexual": "You experience little or no sexual attraction, but still connect emotionally.",
-            "Demisexual": "You only experience sexual attraction after forming a strong emotional bond.",
-            "Queer": "You embrace a fluid understanding of sexuality.",
-            "Questioning": "You are exploring your sexual orientation.",
-            "Romantic": "You seek emotional connections without sexual attraction.",
-            "Platonic": "You value deep friendships without romantic feelings.",
-            "Autosexual": "You are primarily attracted to yourself.",
-        },
-        "normal": {
-            "Friends": "You share a close, platonic bond.",
-            "Best Friends": "You have a deep, trusting friendship.",
-            "Family": "You share a familial bond, caring for each other deeply.",
-            "Partners": "You are in a committed relationship, supporting each other.",
-            "Lovers": "You share a romantic and intimate relationship.",
-            "Soulmates": "You feel a deep, spiritual connection with each other.",
-            "Romantic Partners": "You are in a loving, romantic relationship.",
-            "Significant Others": "You are each other's primary romantic partner.",
-            "Platonic Friends": "You share a close, non-romantic friendship.",
-            "Close Friends": "You have a strong, trusting friendship.",
-            "Acquaintances": "You know each other casually, without deep bonds.",
-            "Colleagues": "You work together, sharing professional respect.",
-            "Work Friends": "You share a friendly relationship at work.",
-            "School Friends": "You share a friendship formed in a school setting.",
-            "Childhood Friends": "You have known each other since childhood, sharing many memories.",
-            "Online Friends": "You share a friendship formed online, often gaming or chatting.",
-            "Gaming Buddies": "You enjoy playing games together, sharing a fun bond.",
-            "Study Partners": "You help each other academically, sharing knowledge and support."
-        }
+                "Polyamory": "You are emotionally open and romantically available to more than one person.",
+                "Lesbian/Gay": "You are romantically interested in the same gender.",
+                "Pansexual": "You are romantically interested in all genders.",
+                "Bisexual": "You are romantically interested in more than one gender.",
+                "Straight": "You are romantically interested in the opposite gender.",
+                "Asexual": "You experience little or no sexual attraction, but still connect emotionally.",
+                "Demisexual": "You only experience sexual attraction after forming a strong emotional bond.",
+                "Queer": "You embrace a fluid understanding of sexuality.",
+                "Questioning": "You are exploring your sexual orientation.",
+                "Romantic": "You seek emotional connections without sexual attraction.",
+                "Platonic": "You value deep friendships without romantic feelings.",
+                "Autosexual": "You are primarily attracted to yourself.",
+            },
+            "normal": {
+                "Friends": "You share a close, platonic bond.",
+                "Companions": "You enjoy each other's company and support each other.",
+                "Best Friends": "You have a deep, trusting friendship.",
+                "Family": "You share a familial bond, caring for each other deeply.",
+                "Partners": "You are in a committed relationship, supporting each other.",
+                "Soulmates": "You feel a deep, spiritual connection with each other.",
+                "Significant Others": "You are each other's primary romantic partner.",
+                "Platonic Friends": "You share a close, non-romantic friendship.",
+                "Close Friends": "You have a strong, trusting friendship.",
+                "Acquaintances": "You know each other casually, without deep bonds.",
+                "Colleagues": "You work together, sharing professional respect.",
+                "Work Friends": "You share a friendly relationship at work.",
+                "School Friends": "You share a friendship formed in a school setting.",
+                "Childhood Friends": "You have known each other since childhood, sharing many memories.",
+                "Online Friends": "You share a friendship formed online, often gaming or chatting.",
+                "Gaming Buddies": "You enjoy playing games together, sharing a fun bond.",
+                "Study Partners": "You help each other academically, sharing knowledge and support.",
+                "Club Leader": "You are the leader of the Literature Club, You write poems and share them along with help others to have a better path, sharing knowledge, support, and get along with your club members and have a fun bond.",
+                "Boyfriend": "You share a romantic and intimate relationship towards your Girlfriend.",
+                "Girlfriend": "You share a romantic and intimate relationship towards your Boyfriend.",
+                "Girlfriend(Lesbian)": "You share a romantic and intimate relationship towards a Female User.",
+                "Club Member": "You are the member of the Literature Club and You help around the Club room helping the other members and You write poems and share them along with knowledge and support."
+            }
     }
 
     def __init__(self, bot, server_channel_id):
@@ -62,10 +66,10 @@ class GuildTracker:
             "default", "Polyamory", "Lesbian/Gay", "Pansexual", "Bisexual", "Straight",
             "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic",
             "Autosexual", "Friends", "Companions", "Best Friends", "Family", "Partners",
-            "Lovers", "Soulmates", "Romantic Partners", "Significant Others",
+            "Soulmates", "Romantic Partners", "Significant Others",
             "Platonic Friends", "Close Friends", "Acquaintances", "Colleagues",
             "Work Friends", "School Friends", "Childhood Friends", "Online Friends",
-            "Gaming Buddies", "Study Partners"
+            "Gaming Buddies", "Study Partners", "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Creator of Monika"
         ]
 
         # Relationship modes per server
@@ -90,6 +94,7 @@ class GuildTracker:
                 f"[Server ID: {guild_id}]\n"
                 f"Personality: {', '.join(personality)}\n"
                 f"Relationship Type: {relationship.get('type')}\n"
+                f"Relationship SubType: {relationship.get('subtype')}\n"
                 f"With: {', '.join(relationship.get('with', []))}\n"
             )
             await channel.send(formatted)
@@ -175,7 +180,7 @@ class GuildTracker:
                 if canonical_type in [
                     "Polyamory", "Lesbian/Gay", "Pansexual", "Bisexual", "Straight",
                     "Asexual", "Demisexual", "Queer", "Questioning", "Romantic",
-                    "Platonic", "Autosexual"
+                    "Platonic", "Autosexual", "Creator of Monika"
                 ]:
                     self.data[guild_id]["relationship"]["type"] = "sexual"
                 else:
