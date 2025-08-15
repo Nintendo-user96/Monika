@@ -49,73 +49,76 @@ def get_current_openai_client() -> OpenAI:
         raise Exception("[OpenAI] No API keys available!")
     return OpenAI(api_key=OPENAI_KEYS[openai_key_index])
 
-
 def rotate_openai_key():
     """Move to the next key in the list."""
     global openai_key_index
     openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
     print(f"[OpenAI] Rotated to new key index: {openai_key_index}")
 
-
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    """Use the same key until a 429 or other error occurs."""
+    global openai_key_index  # ✅ declare immediately at the start
+
+    """Stay on same key until 429 or hard error, try all models before switching key."""
+    model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
     last_exception = None
-    attempts = len(OPENAI_KEYS)  # we can only try each key once in this cycle
+    attempts = len(OPENAI_KEYS)
 
     for _ in range(attempts):
         client = get_current_openai_client()
         print(f"[OpenAI] Using key index {openai_key_index}")
 
-        try:
-            if not isinstance(conversation, list):
-                raise ValueError("Conversation must be a list of messages.")
+        for model in model_priority:
+            try:
+                if not isinstance(conversation, list):
+                    raise ValueError("Conversation must be a list of messages.")
 
-            # System prompt
-            if asyncio.iscoroutinefunction(generate_monika_system_prompt):
-                system_prompt = await generate_monika_system_prompt(
-                    guild=user.guild if hasattr(user, "guild") else None,
-                    user=user,
-                    relationship_type=relationship,
-                    selected_modes=personality
+                if asyncio.iscoroutinefunction(generate_monika_system_prompt):
+                    system_prompt = await generate_monika_system_prompt(
+                        guild=user.guild if hasattr(user, "guild") else None,
+                        user=user,
+                        relationship_type=relationship,
+                        selected_modes=personality
+                    )
+                else:
+                    system_prompt = generate_monika_system_prompt(
+                        guild=user.guild if hasattr(user, "guild") else None,
+                        user=user,
+                        relationship_type=relationship,
+                        selected_modes=personality
+                    )
+
+                full_conversation = [{"role": "system", "content": system_prompt}] + conversation
+
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=full_conversation
                 )
-            else:
-                system_prompt = generate_monika_system_prompt(
-                    guild=user.guild if hasattr(user, "guild") else None,
-                    user=user,
-                    relationship_type=relationship,
-                    selected_modes=personality
-                )
 
-            full_conversation = [{"role": "system", "content": system_prompt}] + conversation
+                if (response and response.choices and
+                    response.choices[0].message and
+                    response.choices[0].message.content.strip()):
+                    print(f"[OpenAI] {model} → Success")
+                    return response
 
-            # API call
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=full_conversation,
-                max_tokens=1024
-            )
+                print(f"[OpenAI] {model} returned blank/invalid response. Trying next model...")
+                await asyncio.sleep(1)
 
-            # Success check
-            if (response and response.choices and 
-                response.choices[0].message and 
-                response.choices[0].message.content.strip()):
-                return response
+            except Exception as e:
+                last_exception = e
+                err_str = str(e)
 
-            print("[OpenAI] Blank or invalid response. Retrying with same key...")
-            await asyncio.sleep(1)
+                error_codes = [
+                    "HTTP/1.1 429 Too Many Requests",
+                    "HTTP/1.1 503 Service Unavailable",
+                    "HTTP/1.1 400 Bad Request"
+                ]
 
-        except Exception as e:
-            last_exception = e
-            err_str = str(e)
-
-            if "429" in err_str or "rate limit" in err_str.lower():
-                print("[OpenAI] Rate limit hit — rotating key...")
-                rotate_openai_key()
-                await asyncio.sleep(2)
-            else:
-                print(f"[OpenAI Error] {err_str} — rotating key...")
-                rotate_openai_key()
-                await asyncio.sleep(2)
+                matched_code = next((c for c in error_codes if c in err_str), None)
+                if matched_code:
+                    print(f"[OpenAI] {matched_code} → rotating key...")
+                    openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
+                    await asyncio.sleep(2)
+                    break  # go to next key immediately
 
     print("[OpenAI] All keys exhausted or failed.")
     if last_exception:
@@ -126,7 +129,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
 MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHAN_ID", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))
+OWNER_ID = int(os.getenv("OWNER_ID", "709957376337248367"))
 MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
 DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
 ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
@@ -157,7 +160,7 @@ def guild_owners_only(interaction: discord.Interaction) -> bool:
     )
 
 NO_CHAT_CHANNELS = [
-    cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN]
+    cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN]
     if cid and cid > 0
 ]
 
@@ -195,8 +198,6 @@ PERSONALITY_MODES = monika_traits.personality_modes
 SERVER_PERSONALITY_MODES = server_tracker.set_personality
 
 RELATIONSHIP_MODES = monika_traits.relationship_modes
-
-OWNER_ROLE = monika_traits.Creator
 
 user_relationship_meters = {}
 friends_relationship_meters = {}
@@ -684,8 +685,8 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
     user_id = str(user_member.id)
 
     # 1️⃣ Skip if they have a manually set relationship
-    if user_tracker.has_manual_relationship(user_id):
-        print(f"[AutoRel] Skipping {user_member} — manual relationship set.")
+    if user_tracker.get_manual_relationship(user_id):
+        print(f"[Relationship] Skipping auto-update for {user_member} (manual relationship).")
         return
     
     # 2️⃣ Track talk time
@@ -722,8 +723,11 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         print(f"[AutoRel] {user_member} has reached 15 minutes, upgrading to Friend.")
         new_relationship = "Friend"
 
+    if new_relationship == f"Creator of {bot_name}":
+        pass
+
     # 4️⃣ Make sure the relationship is valid
-    valid_relationships = list(monika_traits.valid_relationship_levels)
+    valid_relationships = list(monika_traits.relationship_modes)
     if new_relationship not in valid_relationships:
         print(f"[AutoRel] Invalid relationship: {new_relationship}. Resetting to Stranger.")
         new_relationship = "Stranger"
@@ -876,6 +880,9 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
 
 async def avatar_to_emoji(bot, guild: discord.Guild, avatar_url: str, emoji_name: str = "tempavatar"):
     import aiohttp
+    avatar_key = avatar_url  # Cache key for reuse later
+    
+    # First try: Create emoji directly from the avatar URL
     try:
         async with aiohttp.ClientSession() as session:
             async with session.get(avatar_url) as resp:
@@ -883,14 +890,33 @@ async def avatar_to_emoji(bot, guild: discord.Guild, avatar_url: str, emoji_name
                     raise Exception(f"HTTP {resp.status}")
                 image_bytes = await resp.read()
 
-        # Create the emoji
         emoji = await guild.create_custom_emoji(name=emoji_name, image=image_bytes)
         print(f"[DEBUG] ✅ Created emoji {emoji} from {avatar_url}")
-        return emoji
-
+        return emoji  # Success
     except Exception as e:
-        print(f"[DEBUG] ❌ Failed to create emoji from avatar: {e}")
-        return None
+        print(f"[DEBUG] ❌ Failed to create emoji from avatar URL: {e}")
+
+    # Fallback: Use local sprite path
+    try:
+        avatar_path = user_sprites.get_avatar(avatar_url)
+        if not avatar_path:
+            print(f"[DEBUG] ❌ No avatar path found for {avatar_url}")
+            return None
+
+        if AVATAR_URL_CHAN:
+            upload_channel = bot.get_channel(AVATAR_URL_CHAN)
+            if not upload_channel:
+                print(f"[DEBUG] ⚠️ Could not find upload channel ID={AVATAR_URL_CHAN}")
+                return None
+
+            print(f"[DEBUG] ⬆️ Uploading '{avatar_path}' to channel {upload_channel.name}")
+            with open(avatar_path, "rb") as f:
+                avatar_file = discord.File(f)
+                emoji = await guild.create_custom_emoji(name=emoji_name, image=image_bytes, file=avatar_file)
+                return emoji
+    except Exception as e:
+        print(f"[DEBUG] ❌ Upload failed: {e}")
+    return None
 
 async def handle_dm_message(message: discord.Message, avatar_url):
     user = message.author
@@ -949,7 +975,6 @@ async def handle_dm_message(message: discord.Message, avatar_url):
     emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
     if emoji:
         await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
-        await emoji.delete()  # optional cleanup
             
 async def handle_guild_message(message: discord.Message, avatar_url):
     global last_reply_times
@@ -1109,7 +1134,8 @@ async def handle_guild_message(message: discord.Message, avatar_url):
     emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
     if emoji:
         await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
-        await emoji.delete()  # optional cleanup
+    if not emoji:
+        pass
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
@@ -1321,7 +1347,7 @@ async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discor
 @app_commands.checks.has_permissions(administrator=True)
 async def Toggle_normal_talk(interaction: discord.Interaction, enable: bool):
     user = interaction.user.display_name
-    print(f"owner: {user} used a command: `toggle_normal_talk`")
+    print(f"Administrator: {user} used a command: `toggle_normal_talk`")
 
     guild_id = str(interaction.guild.id)
     mention_only_mode[guild_id] = enable
@@ -1338,7 +1364,7 @@ async def Toggle_normal_talk(interaction: discord.Interaction, enable: bool):
 @app_commands.describe(state="Set to true or false")
 async def idlechat(interaction: discord.Interaction, state: bool):
     user = interaction.user.display_name
-    print(f"owner: {user} used a command: `idlechat`: set `{state}`")
+    print(f"Administrator: {user} used a command: `idlechat`: set `{state}`")
 
     idle_settings[interaction.guild_id] = state
     await interaction.response.send_message(
@@ -1397,7 +1423,7 @@ async def reset_relationship(interaction: discord.Interaction):
     monika_member = guild.get_member(interaction.client.user.id)
     bot_name = bot.user.name
     user = interaction.user.display_name
-    print(f"owner: {user} used a command: `reset_relationship`")
+    print(f"Administrator: {user} used a command: `reset_relationship`")
 
     # 🔄 Reset stored data
     server_tracker.clear_relationship(guild_id)
@@ -1406,7 +1432,7 @@ async def reset_relationship(interaction: discord.Interaction):
     # 🔄 Remove roles from users & Monika
     removed_roles = []
     for role in guild.roles:
-        if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{interaction.user.display_name} - "):
+        if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{user} - "):
             try:
                 # Remove from Monika
                 if monika_member and role in monika_member.roles:
@@ -1556,7 +1582,7 @@ async def import_memories(interaction: discord.Interaction, file: discord.Attach
     await interaction.response.defer(ephemeral=True)
 
     user = interaction.user.display_name
-    print(f"owner: {user} used a command: `import_memories`")
+    print(f"Administrator: {user} used a command: `import_memories`")
 
     if not file.filename.endswith(".txt"):
         await interaction.followup.send("❌ Please upload a `.txt` file.", ephemeral=True)
@@ -1645,9 +1671,9 @@ async def set_outfit(interaction: discord.Interaction, outfit: str):
     outfit = outfit.lower().strip()
     
     user = interaction.user.display_name
-    print(f"owner: {user} used a command: `set_outfit`: set `{outfit}`")
+    print(f"Administrator: {user} used a command: `set_outfit`: set `{outfit}`")
 
-    if outfit not in ["school_uniform", "casual 1", "casual 2", "casual 3", "white dress", "hoodie", "pajamas"]:
+    if outfit not in ["school_uniform", "casual 1", "casual 2", "casual 3", "white dress", "hoodie", "pajamas", "white summer dress", "special", "bug"]:
         await interaction.response.send_message(
             "❌ Invalid outfit. Options are: school_uniform, casual's, white dress, hoodie, pajamas.",
             ephemeral=True
@@ -1681,7 +1707,7 @@ async def set_personality(interaction: discord.Interaction, modes: str):
     guild = interaction.guild
     guild_id = str(guild.id)
     user = interaction.user.display_name
-    print(f"owner: {user} used a command: `set_personality`: set `{modes}`")
+    print(f"Administrator: {user} used a command: `set_personality`: set `{modes}`")
 
     # Normalize + validate
     chosen = [m.strip() for m in modes.split(",") if m.strip() in PERSONALITY_MODES]
@@ -1826,6 +1852,12 @@ async def set_relationship(
     monika_member = guild.get_member(interaction.client.user.id)
     user_id = interaction.user.id
 
+    hidden_relationships = ["Creator", "Normal", "Sexual"]
+
+    visible_relationships = [
+        r for r in relationship_type if r not in hidden_relationships
+    ]
+
     if isinstance(with_users, discord.Member):
         target_members = [with_users]
     elif isinstance(with_users, list):
@@ -1834,7 +1866,7 @@ async def set_relationship(
         target_members = []
 
     target_names = [m.display_name for m in target_members]
-    print(f"owner: {user} used a command: `set_relationship`: set `{relationship_type}` with `{target_names or 'nobody'}`")
+    print(f"Administrator: {user} used a command: `set_relationship`: set `{relationship_type}` with `{target_names or 'nobody'}`")
 
     try:
         # 🔄 Default override
@@ -1920,46 +1952,49 @@ async def set_relationship(
                     await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
                     await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
                 except discord.Forbidden:
-                    await interaction.response.send_message("you need to enable 'Manage Roles' for @Monika", ephemeral=True)
+                    await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                     print(f"[Roles] Missing permission to assign roles {user_role_name} / {bot_role_name}")
 
-        if interaction.user.id == OWNER_ID:
-            relationship_type = "Creator of Monika"
-            server_tracker.set_relationship(
-                guild_id,
-                relationship_type="Creator of Monika",
-                with_list=[interaction.user.display_name]
-            )
+        if interaction.user.id == OWNER_ID or interaction.user.id == interaction.guild.owner_id:
+            guild = interaction.guild
+            guild_id = str(guild.id)
+            monika_member = guild.get_member(interaction.client.user.id)
+            
+            owner_member = guild.get_member(OWNER_ID)
+            if owner_member:
+                relationship_type = "Creator"
+                server_tracker.set_relationship(
+                    guild_id,
+                    relationship_type=relationship_type,
+                    with_list=[str(OWNER_ID)]
+                )
 
-            my_role_name = f"Creator of {bot.user.name}"
-            my_role = discord.utils.get(guild.roles, name=my_role_name)
+            creator_role_name = f"{bot_name} - Creator"
+            creator_role = discord.utils.get(guild.roles, name=creator_role_name)
 
-            if not my_role:
+            if not creator_role:
                 try:
-                    my_role = await guild.create_role(
-                        name=my_role_name,
+                    creator_role_name = await guild.create_role(
+                        name=creator_role_name,
                         color=discord.Color.brand_green(),
                         reason="Special role for the bot owner"
                     )
-                    print(f"[Roles] Created role: {my_role_name}")
+                    print(f"[Roles] Created role: {creator_role_name}")
                 except discord.Forbidden:
                     await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                     return
 
             try:
-                await interaction.user.add_roles(my_role, reason=f"Owner of {bot.user.name}")
+                await owner_member.add_roles(creator_role, reason=f"Creator of {bot.user.name}")
+                print(f"[Roles] Assigned {creator_role_name} to {owner_member.display_name}")
             except discord.Forbidden:
                 await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                 return
+        else:
+            print("[Owner] OWNER_ID is not in this server, skipping Creator role.")
 
         user_tracker.set_manual_relationship(target_member.id, True)
-        if relationship_type == "Creator of Monika":
-            # Completely hide the relationship from the confirmation
-            await interaction.response.send_message(
-                f"✅ Special owner settings have been applied.",
-                ephemeral=True
-            )
-        else:
+        if relationship_type != "Creator":
             await interaction.response.send_message(
                 f"✅ Relationship set to **{relationship_type}** with: **{', '.join(with_list) or 'nobody'}**.",
                 ephemeral=True
@@ -1980,7 +2015,7 @@ async def relationships_description(interaction: discord.Interaction):
     categories = {
         "🌸 Core": ["Default"],
         "💖 Sexual relationship": [
-            "Polyamory", "Lesbian/Gay", "Pansexual", "Bisexual", "Straight", 
+            "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight", 
             "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic", "Autosexual"
         ],
         "🔥 Normal relationship": [
@@ -2184,122 +2219,142 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
         for e in emotions if current.lower() in e.lower()
     ][:25]
 
-for guild_id in ALLOWED_GUILD_IDS:
-    @bot.tree.command(
-        name="speak_as_monika", 
-        description="ONLY A FEW SERVER OWNERS HAVE THIS. Make Monika speak in a specific channels. Keep this a secret!",
-        guild=discord.Object(id=guild_id)
-    )
-    @app_commands.describe(
-        channel_id="The numeric ID of the channel",
-        message="The message to send",
-        outfit="choose the outfit for the sprite",
-        emotion="Emotion Monika should express"
-    )
-    @app_commands.autocomplete(outfit=outfit_autocomplete, emotion=emotion_autocomplete)
-    @app_commands.check(guild_owners_only)
-    @app_commands.checks.has_permissions(administrator=True)
-    async def speak_as_monika(interaction: discord.Interaction, channel_id: str, message: str, outfit: str, emotion: str):
-        await interaction.response.defer(ephemeral=True)
+class MyBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=discord.Intents.default())
+        self.tree = app_commands.CommandTree(self)
 
-        user = interaction.user.display_name
-        print(f"owner: {user} used a command: `/speak_as_monika`")
+    async def setup_hook(self):
 
-        # Normalize and validate emotion
-        outfit = outfit.lower().strip()
-        emotion = emotion.lower().strip()
-        print(f"[DEBUG] /speak_as_monika inputs → outfit='{outfit}', emotion='{emotion}'")
+        for guild_id in ALLOWED_GUILD_IDS:
+            guild = self.get_guild(guild_id)
 
-        # ✅ Validate emotion against outfit-compatible ones
-        valid_emotions = [e.lower().strip() for e in user_sprites.valid_for_outfit(outfit)]  # <- Better than global check
-        if not valid_emotions:
-            return await interaction.followup.send(
-                f"❌ No valid emotions for outfit `{outfit}`.", ephemeral=True
+            # ✅ Skip if the bot isn't in this guild
+            if guild is None:
+                print(f"⚠️ Skipping guild {guild_id} — bot is not in it")
+                continue
+
+            # ✅ Register the command ONLY for this guild
+            @self.tree.command(
+                name="speak_as_monika",
+                description="ONLY A FEW SERVER OWNERS HAVE THIS. Make Monika speak in specific channels.",
+                guild=discord.Object(id=guild_id)
             )
-        if emotion not in valid_emotions:
-            return await interaction.followup.send(
-                f"❌ Emotion `{emotion}` is not valid for outfit `{outfit}`.",
-                f"✔️ Options: {', '.join(valid_emotions)}",
-                ephemeral=True
+            @app_commands.describe(
+                channel_id="The numeric ID of the channel",
+                message="The message to send",
+                outfit="Choose the outfit for the sprite",
+                emotion="Emotion Monika should express"
             )
+            @app_commands.autocomplete(outfit=outfit_autocomplete, emotion=emotion_autocomplete)
+            @app_commands.check(guild_owners_only)
+            @app_commands.checks.has_permissions(administrator=True)
+            async def speak_as_monika(
+                interaction: discord.Interaction, channel_id: str, message: str, outfit: str, emotion: str):
+                await interaction.response.defer(ephemeral=True)
 
-        # ✅ Validate outfit
-        valid_outfits = [o.lower() for o in get_all_outfit()]
-        if outfit == "casual":
-            outfit = "casual 1"
-        if outfit not in valid_outfits:
-            return await interaction.followup.send(
-                f"❌ Invalid outfit. Options are: {', '.join(get_all_outfit())}.",
-                ephemeral=True
-            )
-        
-        if outfit not in user_sprites.sprites_by_outfit:
-            await interaction.followup.send(f"❌ Outfit '{outfit}' not found.", ephemeral=True)
-            return
-        if emotion not in user_sprites.sprites_by_outfit[outfit]:
-            valid = ", ".join(user_sprites.sprites_by_outfit[outfit].keys())
-            await interaction.followup.send(
-                f"❌ Emotion '{emotion}' not valid for outfit '{outfit}'.\n✔️ Options: {valid}",
-                ephemeral=True
-            )
-            return
+                user = interaction.user.display_name
+                print(f"Administrator: {user} used a command: `/speak_as_monika`")
 
-        # Validate message
-        if not message.strip():
-            await interaction.followup.send(
-                "❌ You must provide a message for Monika to send.",
-                ephemeral=True
-            )
-            return
+                # Normalize and validate emotion
+                outfit = outfit.lower().strip()
+                emotion = emotion.lower().strip()
+                print(f"[DEBUG] /speak_as_monika inputs → outfit='{outfit}', emotion='{emotion}'")
 
-        # Get channel and permissions
-        try:
-            channel = bot.get_channel(int(channel_id))
-            if not channel or not isinstance(channel, discord.TextChannel):
-                return await interaction.followup.send(f"❌ Channel `{channel_id}` not found.", ephemeral=True)
-            if not channel.permissions_for(channel.guild.me).send_messages:
-                return await interaction.followup.send(f"❌ No permission in {channel.mention}.", ephemeral=True)
-            perms = channel.permissions_for(channel.guild.me)
-            if not perms.send_messages:
-                await interaction.followup.send(
-                    f"❌ I don’t have permission to send messages in {channel.mention}.",
-                    ephemeral=True
-                )
-                return
-        except Exception as e:
-            print(f"[Channel Error] {e}")
-            await interaction.followup.send(
-                f"❌ Error finding channel: {e}",
-                ephemeral=True
-            )
-            return
+                # ✅ Validate emotion against outfit-compatible ones
+                valid_emotions = [e.lower().strip() for e in user_sprites.valid_for_outfit(outfit)]  # <- Better than global check
+                if not valid_emotions:
+                    return await interaction.followup.send(
+                        f"❌ No valid emotions for outfit `{outfit}`.", ephemeral=True
+                    )
+                if emotion not in valid_emotions:
+                    return await interaction.followup.send(
+                        f"❌ Emotion `{emotion}` is not valid for outfit `{outfit}`.",
+                        f"✔️ Options: {', '.join(valid_emotions)}",
+                        ephemeral=True
+                    )
 
-        # Get sprite link
-        sprite_link = await get_sprite_link(emotion, outfit)
+                # ✅ Validate outfit
+                valid_outfits = [o.lower() for o in get_all_outfit()]
+                if outfit == "casual":
+                    outfit = "casual 1"
+                if outfit not in valid_outfits:
+                    return await interaction.followup.send(
+                        f"❌ Invalid outfit. Options are: {', '.join(get_all_outfit())}.",
+                        ephemeral=True
+                    )
+                
+                if outfit not in user_sprites.sprites_by_outfit:
+                    await interaction.followup.send(f"❌ Outfit '{outfit}' not found.", ephemeral=True)
+                    return
+                if emotion not in user_sprites.sprites_by_outfit[outfit]:
+                    valid = ", ".join(user_sprites.sprites_by_outfit[outfit].keys())
+                    await interaction.followup.send(
+                        f"❌ Emotion '{emotion}' not valid for outfit '{outfit}'.\n✔️ Options: {valid}",
+                        ephemeral=True
+                    )
+                    return
 
-        if not sprite_link:
-            return await interaction.followup.send(
-                "❌ Could not get sprite.", ephemeral=True
-            )
-        print(f"Sprite link: {sprite_link}")  # Debug
-        print(f"[DEBUG] Command inputs → outfit='{outfit}', emotion='{emotion}'")
+                # Validate message
+                if not message.strip():
+                    await interaction.followup.send(
+                        "❌ You must provide a message for Monika to send.",
+                        ephemeral=True
+                    )
+                    return
 
-        mon_reply = f"{message}\n[{emotion}]({sprite_link})"
+                # Get channel and permissions
+                try:
+                    channel = bot.get_channel(int(channel_id))
+                    if not channel or not isinstance(channel, discord.TextChannel):
+                        return await interaction.followup.send(f"❌ Channel `{channel_id}` not found.", ephemeral=True)
+                    if not channel.permissions_for(channel.guild.me).send_messages:
+                        return await interaction.followup.send(f"❌ No permission in {channel.mention}.", ephemeral=True)
+                    perms = channel.permissions_for(channel.guild.me)
+                    if not perms.send_messages:
+                        await interaction.followup.send(
+                            f"❌ I don’t have permission to send messages in {channel.mention}.",
+                            ephemeral=True
+                        )
+                        return
+                except Exception as e:
+                    print(f"[Channel Error] {e}")
+                    await interaction.followup.send(
+                        f"❌ Error finding channel: {e}",
+                        ephemeral=True
+                    )
+                    return
 
-        print(f"Message: {mon_reply}")
+                # Get sprite link
+                sprite_link = await get_sprite_link(emotion, outfit)
 
-        try:
-            channel = bot.get_channel(int(channel_id))
-            if channel:
-                async with channel.typing():
-                    await asyncio.sleep(1)
-                    await channel.send(mon_reply)
-                await interaction.followup.send(
-                    f"✅ Monika spoke in **{channel.guild.name}** #{channel.name}.",
-                    ephemeral=True
-                )
-        except Exception as e:
-            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+                if not sprite_link:
+                    return await interaction.followup.send(
+                        "❌ Could not get sprite.", ephemeral=True
+                    )
+                print(f"Sprite link: {sprite_link}")  # Debug
+                print(f"[DEBUG] Command inputs → outfit='{outfit}', emotion='{emotion}'")
+
+                mon_reply = f"{message}\n[{emotion}]({sprite_link})"
+
+                print(f"Message: {mon_reply}")
+
+                try:
+                    channel = bot.get_channel(int(channel_id))
+                    if channel:
+                        async with channel.typing():
+                            await asyncio.sleep(1)
+                            await channel.send(mon_reply)
+                        await interaction.followup.send(
+                            f"✅ Monika spoke in **{channel.guild.name}** #{channel.name}.",
+                            ephemeral=True
+                        )
+                except Exception as e:
+                    await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+        for guild_id in ALLOWED_GUILD_IDS:
+            if self.get_guild(guild_id):
+                await self.tree.sync(guild=discord.Object(id=guild_id))
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
