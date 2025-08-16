@@ -1718,6 +1718,9 @@ async def set_personality(interaction: discord.Interaction, modes: str):
         )
         return
     
+    if discord.errors.Forbidden:
+        await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+    
     if len(chosen) > 5:
         await interaction.response.send_message(
             "❌ You can only set up to 5 personality modes at once.",
@@ -1876,6 +1879,9 @@ async def set_relationship(
             server_tracker.set_relationship(guild_id, relationship_type=relationship_type, with_list=target_names)
             
         await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+        if discord.errors.Forbidden:
+            await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
 
         # --- Remove ALL old relationship roles first ---
         for role in guild.roles:
@@ -2358,3 +2364,4 @@ class MyBot(discord.Client):
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
