@@ -975,6 +975,9 @@ async def handle_dm_message(message: discord.Message, avatar_url):
     emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
     if emoji:
         await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
+        await emoji.delete() 
+    if not emoji:
+        pass
             
 async def handle_guild_message(message: discord.Message, avatar_url):
     global last_reply_times
@@ -1134,6 +1137,7 @@ async def handle_guild_message(message: discord.Message, avatar_url):
     emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
     if emoji:
         await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
+        await emoji.delete() 
     if not emoji:
         pass
 
@@ -2364,5 +2368,6 @@ class MyBot(discord.Client):
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
 
 
