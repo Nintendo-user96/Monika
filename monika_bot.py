@@ -685,7 +685,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
     user_id = str(user_member.id)
 
     # 1️⃣ Skip if they have a manually set relationship
-    if user_tracker.get_manual_relationship(user_id):
+    if user_tracker.has_manual_relationship(user_id):
         print(f"[Relationship] Skipping auto-update for {user_member} (manual relationship).")
         return
     
@@ -2364,4 +2364,5 @@ class MyBot(discord.Client):
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
 
