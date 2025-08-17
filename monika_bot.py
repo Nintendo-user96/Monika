@@ -198,6 +198,7 @@ PERSONALITY_MODES = monika_traits.personality_modes
 SERVER_PERSONALITY_MODES = server_tracker.set_personality
 
 RELATIONSHIP_MODES = monika_traits.relationship_modes
+RELATIONSHIP_DETILED = monika_traits.relationships
 
 user_relationship_meters = {}
 friends_relationship_meters = {}
@@ -686,21 +687,29 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
 
     # 1️⃣ Skip if they have a manually set relationship
     if user_tracker.has_manual_relationship(user_id):
-        print(f"[Relationship] Skipping auto-update for {user_member} (manual relationship).")
+        print(f"[Relationship] Skipping auto-update for {user_member.display_name} (manual relationship).")
         return
     
-    # 2️⃣ Track talk time
-    now = datetime.datetime.utcnow()
-    talk_data = user_talk_times.get(user_id, {"start": now, "total": 0})
-    
-    # If they've talked before, add elapsed time since last message
+    # 2️⃣ Handle Creator special case
+    if str(user_member.id) == str(OWNER_ID):
+        creator_role_name = f"Creator of {bot_name}"
+        creator_role = discord.utils.get(guild.roles, name=creator_role_name)
+        if not creator_role:
+            creator_role = await guild.create_role(
+                name=creator_role_name,
+                color=discord.Color.gold()
+            )
+            print(f"[AutoRel] Created role: {creator_role_name}")
+        if creator_role not in user_member.roles:
+            await user_member.add_roles(creator_role, reason="Bot Owner detected")
+            print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
+        return  # ✅ Stop further auto processing for the Creator
+
+    # 3️⃣ Track talk time
     now = datetime.datetime.utcnow()
     talk_data = user_talk_times.get(user_id, {"start": now, "total": 0})
 
-    # 2️⃣ Calculate elapsed time
     elapsed = (now - talk_data["start"]).total_seconds()
-
-    # ✅ Only count if the gap between messages is <= 90 seconds
     if elapsed <= 90:
         talk_data["total"] += elapsed
     else:
@@ -709,43 +718,41 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
     talk_data["start"] = now
     user_talk_times[user_id] = talk_data
 
-    # 2️⃣ Remove any old auto relationship roles from this user
+    # 4️⃣ Remove old auto-relationship roles (but not manual or Creator)
     for role in user_member.roles:
         if role.name.startswith(f"{bot_name} - "):
-            print(f"[AutoRel] Removing old role: {role.name}")
+            if "Creator" in role.name:
+                continue  # don't touch Creator role
+            print(f"[AutoRel] Removing old auto role: {role.name}")
             await user_member.remove_roles(role)
 
-    # 3️⃣ Fallback to Stranger if no relationship provided
+    # 5️⃣ Default fallback
     if not new_relationship:
         new_relationship = "Stranger"
 
     if new_relationship == "Stranger" and talk_data["total"] >= 900:
-        print(f"[AutoRel] {user_member} has reached 15 minutes, upgrading to Friend.")
+        print(f"[AutoRel] {user_member.display_name} reached 15 minutes, upgrading to Friend.")
         new_relationship = "Friend"
 
-    if new_relationship == f"Creator of {bot_name}":
-        pass
-
-    # 4️⃣ Make sure the relationship is valid
-    valid_relationships = list(monika_traits.relationship_modes)
+    # 6️⃣ Validate relationship
+    valid_relationships = list(monika_traits.relationships)
     if new_relationship not in valid_relationships:
         print(f"[AutoRel] Invalid relationship: {new_relationship}. Resetting to Stranger.")
         new_relationship = "Stranger"
 
-    # 5️⃣ Get or create the role
+    # 7️⃣ Create or assign role
     role_name = f"{bot_name} - {new_relationship}"
     role = discord.utils.get(guild.roles, name=role_name)
     if not role:
-        role = await guild.create_role(name=role_name)
+        role = await guild.create_role(name=role_name, color=discord.Color.teal())
         print(f"[AutoRel] Created new role: {role_name}")
 
-    # 6️⃣ Assign the new role
-    await user_member.add_roles(role)
-    print(f"[AutoRel] {user_member.display_name} → {role_name}")
+    if role not in user_member.roles:
+        await user_member.add_roles(role, reason=f"Auto relationship: {new_relationship}")
+        print(f"[AutoRel] {user_member.display_name} → {role_name}")
 
-    # 7️⃣ Save updated tracker state
+    # 8️⃣ Save tracker
     await user_tracker.save(bot, channel_id=USER_TRACKER_CHAN)
-
 @bot.event
 async def setup_hook():
     asyncio.create_task(monika_idle_conversation_task())
@@ -911,11 +918,15 @@ async def avatar_to_emoji(bot, guild: discord.Guild, avatar_url: str, emoji_name
 
             print(f"[DEBUG] ⬆️ Uploading '{avatar_path}' to channel {upload_channel.name}")
             with open(avatar_path, "rb") as f:
-                avatar_file = discord.File(f)
-                emoji = await guild.create_custom_emoji(name=emoji_name, image=image_bytes, file=avatar_file)
-                return emoji
+                sprite_file = discord.File(f)
+                sent_message = await upload_channel.send(file=sprite_file)
+                avatar_url = sent_message.attachments[0].url
+                sprite_url_cache[avatar_key] = avatar_url
+                print(f"[DEBUG] ✅ Upload success, cached URL: {avatar_url}")
+                return avatar_url
     except Exception as e:
         print(f"[DEBUG] ❌ Upload failed: {e}")
+
     return None
 
 async def handle_dm_message(message: discord.Message, avatar_url):
@@ -1135,11 +1146,11 @@ async def handle_guild_message(message: discord.Message, avatar_url):
             print(f"[Forwarding Error] {e}")
 
     emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
-    if emoji:
+
+    if isinstance(emoji, discord.Emoji):
+        # Case 1: Got a custom emoji, react with it
         await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
-        await emoji.delete() 
-    if not emoji:
-        pass
+        await emoji.delete()  # optional cleanup
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
@@ -1241,7 +1252,7 @@ async def monika_idle_conversation_task():
 async def on_app_command_error(interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-    elif isinstance(error, discord.Forbidden):
+    elif isinstance(error, discord.error.Forbidden):
         await interaction.response.send_message("Missing permission to perform this action.", ephemeral=True)
     else:
         # log unexpected errors
@@ -1284,7 +1295,7 @@ async def safe_add_role(member: discord.Member, role: discord.Role):
     try:
         await member.add_roles(role, reason="Monika personality/relationship update")
         return True
-    except discord.Forbidden:
+    except discord.error.Forbidden:
         print(f"[ERROR] Missing permissions to add role {role.name}")
         return False
 
@@ -1296,7 +1307,7 @@ async def safe_remove_role(member: discord.Member, role: discord.Role):
     try:
         await member.remove_roles(role, reason="Monika personality/relationship update")
         return True
-    except discord.Forbidden:
+    except discord.error.Forbidden:
         print(f"[ERROR] Missing permissions to remove role {role.name}")
         return False
 
@@ -1311,7 +1322,7 @@ async def get_or_create_role(guild: discord.Guild, role_name: str, color: discor
             role = await guild.create_role(name=role_name, colour=color, reason="Monika auto-setup")
             print(f"[INFO] Created role: {role_name}")
             return role
-        except discord.Forbidden:
+        except discord.error.Forbidden:
             print(f"[ERROR] Missing permission to create role: {role_name}")
             owner = guild.owner
             if owner:
@@ -1331,7 +1342,7 @@ async def cleanup_monika_roles(guild: discord.Guild, bot_name: str):
             try:
                 await role.delete(reason="Monika reset/restart cleanup")
                 print(f"[Roles] Deleted role {role.name}")
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 print(f"[Roles] Missing permission to delete role {role.name}")
 
 async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discord.Color = discord.Color.purple()) -> discord.Role:
@@ -1342,7 +1353,7 @@ async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discor
         try:
             role = await guild.create_role(name=full_name, color=color, reason="Auto-created by Monika bot")
             print(f"[Roles] Created role {full_name}")
-        except discord.Forbidden:
+        except discord.error.Forbidden:
             print(f"[Roles] Missing permission to create role {full_name}")
             return None
     return role
@@ -1404,7 +1415,7 @@ async def reset_personality(interaction: discord.Interaction):
         if role.name.startswith("Personality - "):
             try:
                 await monika_member.remove_roles(role)
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                 pass
 
@@ -1413,7 +1424,7 @@ async def reset_personality(interaction: discord.Interaction):
         if role.name.startswith("Personality - "):
             try:
                 await role.delete(reason="Reset personality")
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                 pass
 
@@ -1451,9 +1462,11 @@ async def reset_relationship(interaction: discord.Interaction):
                     await member.remove_roles(role)
 
                 removed_roles.append(role.name)
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 await interaction.response.send_message(f"Missing permission {interaction.permissions}", ephemeral=True)
                 print(f"[Roles] Missing permission to remove {role.name}.")
+            if role.name.startswith(f"{bot_name} - Creator"):
+                pass
 
     await interaction.response.send_message(
         f"🗑️ Relationship reset. Removed roles: {', '.join(removed_roles) if removed_roles else 'None'}",
@@ -1634,7 +1647,7 @@ async def import_memories(interaction: discord.Interaction, file: discord.Attach
         if monika_member and role not in monika_member.roles:
             try:
                 await monika_member.add_roles(role, reason="Restoring personality from import")
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 print(f"[Roles] Missing permission to assign {role_name} to Monika.")
 
     # 🟢 Restore user relationship roles
@@ -1647,7 +1660,7 @@ async def import_memories(interaction: discord.Interaction, file: discord.Attach
         if member:
             try:
                 await member.add_roles(role, reason="Restoring relationship from import")
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 print(f"[Roles] Missing permission to assign {role_name} to {username}.")
 
     # 🟢 Restore conversation memory into tracker
@@ -1701,7 +1714,7 @@ async def personality_autocomplete(interaction: discord.Interaction, current: st
     return suggestions[:25]
 
 @bot.tree.command(
-    name="set_personality", 
+    name="set_personality",
     description="Set Monika's relationship orientation for this server."
 )
 @app_commands.describe(modes="Comma-separated list of modes.")
@@ -1742,8 +1755,8 @@ async def set_personality(interaction: discord.Interaction, modes: str):
         if role.name.startswith("Personality - "):
             try:
                 await monika_member.remove_roles(role, reason="Resetting old personality role")
-            except discord.Forbidden:
-                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
+            except discord.error.Forbidden:
+                await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
     # 🔄 Add only the chosen roles
@@ -1755,15 +1768,15 @@ async def set_personality(interaction: discord.Interaction, modes: str):
             try:
                 monika_role = await guild.create_role(name=monika_role_name, color=discord.Color.dark_blue())
                 print(f"[Roles] Created role: {monika_role_name}")
-            except discord.Forbidden:
-                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
+            except discord.error.Forbidden:
+                await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
                 print(f"[Roles] Missing permission to create role: {monika_role_name}")
                 continue
 
         if monika_member and monika_role not in monika_member.roles:
             try:
                 await monika_member.add_roles(monika_role, reason=f"Personality set to: {', '.join(chosen)}")
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
                 print(f"[Roles] Missing permission to assign {monika_role_name} to Monika.")
 
@@ -1771,6 +1784,166 @@ async def set_personality(interaction: discord.Interaction, modes: str):
         f"✅ Monika’s personality set to: **{', '.join(chosen)}**",
         ephemeral=True
     )
+
+async def relationship_autocomplete(
+    interaction: discord.Interaction, 
+    current: str
+):
+    hidden_relationships = ["Creator", "Normal", "Sexual"]
+
+    relationship_types = [
+        "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight", 
+        "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic", "Autosexual",
+        "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Significant Others", "Platonic Friends", "Close Friends",
+        "Acquaintances", "Colleagues", "Work Friends", "School Friends", "Childhood Friends", "Online Friends", "Gaming Buddies", "Study Partners", 
+        "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
+    ]
+
+    # Filter hidden ones + autocomplete search match
+    menu_relationships = [
+        r for r in relationship_types 
+        if r not in hidden_relationships and current.lower() in r.lower()
+    ]
+
+    return [
+        app_commands.Choice(name=r, value=r) for r in menu_relationships[:25]
+    ]
+
+
+@bot.tree.command(name="set_relationship", description="Set Monika's relationship orientation for this server.")
+@app_commands.autocomplete(relationship_type=relationship_autocomplete)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    relationship_type="Type of relationship to set",
+    with_users="User(s) to set relationship with"
+)
+async def set_relationship(
+    interaction: discord.Interaction,
+    relationship_type: str,
+    with_users: discord.Member  # now it's a list of Member objects
+):
+    guild = interaction.guild
+    guild_id = str(guild.id)
+    user = interaction.user.display_name
+    with_list = [with_users.display_name]
+    bot_name = bot.user.name
+    monika_member = guild.get_member(interaction.client.user.id)
+    user_id = interaction.user.id
+
+    if isinstance(with_users, discord.Member):
+        target_members = [with_users]
+    elif isinstance(with_users, list):
+        target_members = [m for m in with_users if isinstance(m, discord.Member)]
+    else:
+        target_members = []
+
+    target_names = [m.display_name for m in target_members]
+    print(f"Administrator: {user} used a command: `set_relationship`: set `{relationship_type}` with `{target_names or 'nobody'}`")
+
+    try:
+        # 🔄 Default override
+        if relationship_type == "Default":
+            server_tracker.set_relationship(guild_id, relationship_type="Default", with_list=[])
+        else:
+            server_tracker.set_relationship(guild_id, relationship_type=relationship_type, with_list=target_names)
+
+        if OWNER_ID is not relationship_type == "Creator":
+            return
+            
+        await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+        # --- Remove ALL old relationship roles first ---
+        for role in guild.roles:
+            if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{interaction.user.display_name} - "):
+                try:
+                    if monika_member and role in monika_member.roles:
+                        await monika_member.remove_roles(role, reason="Resetting old relationship roles")
+                    for member in guild.members:
+                        if role in member.roles:
+                            await member.remove_roles(role, reason="Resetting old relationship roles")
+                except discord.error.Forbidden:
+                    await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+                    print(f"[Roles] Missing permission to remove {role.name}.")
+
+        if relationship_type != "Default":
+            for target_member in target_members:
+                # Special boyfriend/girlfriend swap
+                if relationship_type == "Boyfriend":
+                    user_role_name = f"{bot_name} - Boyfriend"
+                    bot_role_name = f"{target_member.display_name} - Girlfriend"
+                elif relationship_type == "Girlfriend":
+                    user_role_name = f"{bot_name} - Boyfriend"
+                    bot_role_name = f"{target_member.display_name} - Girlfriend"
+                else:
+                    user_role_name = f"{bot_name} - {relationship_type}"
+                    bot_role_name = f"{target_member.display_name} - {relationship_type}"
+                
+                # Ensure roles exist
+                user_role = discord.utils.get(guild.roles, name=user_role_name)
+                if not user_role:
+                    user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
+                    print(f"[Roles] Created role: {user_role_name}")
+
+                bot_role = discord.utils.get(guild.roles, name=bot_role_name)
+                if not bot_role:
+                    bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
+                    print(f"[Roles] Created role: {bot_role_name}")
+
+                # Assign roles
+                await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
+                await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
+
+        if relationship_type != "Default":
+            # --- Assign roles ---
+            for target_name in with_list:
+                target_member = discord.utils.find(lambda m: m.display_name == target_name, guild.members)
+                if not target_member:
+                    continue
+
+                # User role: "Monika - Lovers"
+                user_role = discord.utils.get(guild.roles, name=user_role_name)
+                if not user_role:
+                    try:
+                        user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
+                        print(f"[Roles] Created role: {user_role_name}")
+                    except discord.error.Forbidden:
+                        await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+                        print(f"[Roles] Missing permission to create {user_role_name}")
+                        continue
+
+                # Bot role: "username - Lovers"
+                bot_role = discord.utils.get(guild.roles, name=bot_role_name)
+                if not bot_role:
+                    try:
+                        bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
+                        print(f"[Roles] Created role: {bot_role_name}")
+                    except discord.error.Forbidden:
+                        await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+                        print(f"[Roles] Missing permission to create {bot_role_name}")
+                        continue
+
+                # Apply roles
+                try:
+                    await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
+                    await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
+                except discord.error.Forbidden:
+                    await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+                    print(f"[Roles] Missing permission to assign roles {user_role_name} / {bot_role_name}")
+
+        if discord.errors.Forbidden:
+            await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+        else:
+            pass
+
+        user_tracker.set_manual_relationship(target_member.id, True)
+        await interaction.response.send_message(
+            f"✅ Relationship set to **{relationship_type}** with: **{', '.join(with_list) or 'nobody'}**.",
+            ephemeral=True
+        )
+
+    except ValueError as ve:
+        await interaction.response.send_message(f"❌ {str(ve)}", ephemeral=True)
+        print("[Relationship Error]", ve)
 
 @bot.tree.command(
     name="personalities_description", 
@@ -1832,191 +2005,9 @@ async def personalities_description(interaction: discord.Interaction):
     view = SelectedPaginator(embeds, interaction.user)
     await interaction.response.send_message(embed=embeds[0], view=view, ephemeral=True)
 
-async def relationship_autocomplete(interaction: discord.Interaction, current: str):
-    relation_ship = get_all_relationship_types()
-    return [
-        app_commands.Choice(name=r, value=r)
-        for r in relation_ship if current.lower() in r.lower()
-    ][:25]
-
-@bot.tree.command(name="set_relationship", description="Set Monika's relationship orientation for this server.")
-@app_commands.autocomplete(relationship_type=relationship_autocomplete)
-@app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(
-    relationship_type="Type of relationship to set",
-    with_users="User(s) to set relationship with"
-)
-async def set_relationship(
-    interaction: discord.Interaction,
-    relationship_type: str,
-    with_users: discord.Member  # now it's a list of Member objects
-):
-    guild = interaction.guild
-    guild_id = str(guild.id)
-    user = interaction.user.display_name
-    with_list = [with_users.display_name]
-    bot_name = bot.user.name
-    monika_member = guild.get_member(interaction.client.user.id)
-    user_id = interaction.user.id
-
-    hidden_relationships = ["Creator", "Normal", "Sexual"]
-
-    visible_relationships = [
-        r for r in relationship_type if r not in hidden_relationships
-    ]
-
-    if isinstance(with_users, discord.Member):
-        target_members = [with_users]
-    elif isinstance(with_users, list):
-        target_members = [m for m in with_users if isinstance(m, discord.Member)]
-    else:
-        target_members = []
-
-    target_names = [m.display_name for m in target_members]
-    print(f"Administrator: {user} used a command: `set_relationship`: set `{relationship_type}` with `{target_names or 'nobody'}`")
-
-    try:
-        # 🔄 Default override
-        if relationship_type == "Default":
-            server_tracker.set_relationship(guild_id, relationship_type="Default", with_list=[])
-        else:
-            server_tracker.set_relationship(guild_id, relationship_type=relationship_type, with_list=target_names)
-            
-        await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
-
-        if discord.errors.Forbidden:
-            await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
-
-        # --- Remove ALL old relationship roles first ---
-        for role in guild.roles:
-            if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{interaction.user.display_name} - "):
-                try:
-                    if monika_member and role in monika_member.roles:
-                        await monika_member.remove_roles(role, reason="Resetting old relationship roles")
-                    for member in guild.members:
-                        if role in member.roles:
-                            await member.remove_roles(role, reason="Resetting old relationship roles")
-                except discord.Forbidden:
-                    await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                    print(f"[Roles] Missing permission to remove {role.name}.")
-
-        if relationship_type != "Default":
-            for target_member in target_members:
-                # Special boyfriend/girlfriend swap
-                if relationship_type == "Boyfriend":
-                    user_role_name = f"{bot_name} - Boyfriend"
-                    bot_role_name = f"{target_member.display_name} - Girlfriend"
-                elif relationship_type == "Girlfriend":
-                    user_role_name = f"{bot_name} - Boyfriend"
-                    bot_role_name = f"{target_member.display_name} - Girlfriend"
-                else:
-                    user_role_name = f"{bot_name} - {relationship_type}"
-                    bot_role_name = f"{target_member.display_name} - {relationship_type}"
-                
-                # Ensure roles exist
-                user_role = discord.utils.get(guild.roles, name=user_role_name)
-                if not user_role:
-                    user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
-                    print(f"[Roles] Created role: {user_role_name}")
-
-                bot_role = discord.utils.get(guild.roles, name=bot_role_name)
-                if not bot_role:
-                    bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
-                    print(f"[Roles] Created role: {bot_role_name}")
-
-                # Assign roles
-                await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
-                await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
-
-        if relationship_type != "Default":
-            # --- Assign roles ---
-            for target_name in with_list:
-                target_member = discord.utils.find(lambda m: m.display_name == target_name, guild.members)
-                if not target_member:
-                    continue
-
-                # User role: "Monika - Lovers"
-                user_role = discord.utils.get(guild.roles, name=user_role_name)
-                if not user_role:
-                    try:
-                        user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
-                        print(f"[Roles] Created role: {user_role_name}")
-                    except discord.Forbidden:
-                        await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                        print(f"[Roles] Missing permission to create {user_role_name}")
-                        continue
-
-                # Bot role: "username - Lovers"
-                bot_role = discord.utils.get(guild.roles, name=bot_role_name)
-                if not bot_role:
-                    try:
-                        bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
-                        print(f"[Roles] Created role: {bot_role_name}")
-                    except discord.Forbidden:
-                        await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                        print(f"[Roles] Missing permission to create {bot_role_name}")
-                        continue
-
-                # Apply roles
-                try:
-                    await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
-                    await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
-                except discord.Forbidden:
-                    await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                    print(f"[Roles] Missing permission to assign roles {user_role_name} / {bot_role_name}")
-
-        if interaction.user.id == OWNER_ID or interaction.user.id == interaction.guild.owner_id:
-            guild = interaction.guild
-            guild_id = str(guild.id)
-            monika_member = guild.get_member(interaction.client.user.id)
-            
-            owner_member = guild.get_member(OWNER_ID)
-            if owner_member:
-                relationship_type = "Creator"
-                server_tracker.set_relationship(
-                    guild_id,
-                    relationship_type=relationship_type,
-                    with_list=[str(OWNER_ID)]
-                )
-
-            creator_role_name = f"{bot_name} - Creator"
-            creator_role = discord.utils.get(guild.roles, name=creator_role_name)
-
-            if not creator_role:
-                try:
-                    creator_role_name = await guild.create_role(
-                        name=creator_role_name,
-                        color=discord.Color.brand_green(),
-                        reason="Special role for the bot owner"
-                    )
-                    print(f"[Roles] Created role: {creator_role_name}")
-                except discord.Forbidden:
-                    await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                    return
-
-            try:
-                await owner_member.add_roles(creator_role, reason=f"Creator of {bot.user.name}")
-                print(f"[Roles] Assigned {creator_role_name} to {owner_member.display_name}")
-            except discord.Forbidden:
-                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                return
-        else:
-            print("[Owner] OWNER_ID is not in this server, skipping Creator role.")
-
-        user_tracker.set_manual_relationship(target_member.id, True)
-        if relationship_type != "Creator":
-            await interaction.response.send_message(
-                f"✅ Relationship set to **{relationship_type}** with: **{', '.join(with_list) or 'nobody'}**.",
-                ephemeral=True
-            )
-
-    except ValueError as ve:
-        await interaction.response.send_message(f"❌ {str(ve)}", ephemeral=True)
-        print("[Relationship Error]", ve)
-
 @bot.tree.command(name="relationships_description", description="shows all Monika's relationship orientation for this server.")
 async def relationships_description(interaction: discord.Interaction):
-    relationship_modes = RELATIONSHIP_MODES  # assuming you keep it in monika_personality.py
+    relationship_modes = RELATIONSHIP_DETILED  # assuming you keep it in monika_personality.py
 
     user = interaction.user.display_name
     print(f"{user} used a command: `relationships_description`")
@@ -2031,20 +2022,20 @@ async def relationships_description(interaction: discord.Interaction):
         "🔥 Normal relationship": [
             "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Significant Others", "Platonic Friends", "Close Friends",
             "Acquaintances", "Colleagues", "Work Friends", "School Friends", "Childhood Friends", "Online Friends", "Gaming Buddies", "Study Partners", 
-            "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member"
+            "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
         ]
     }
 
     # Build embed
     embeds = []
-    for category, with_user in categories.items():
+    for category, relationships in categories.items():
         embed = discord.Embed(
-            title=f"🎭 Monika's Relationships — {category}",
+            title=f"💖 Monika's Relationships — {category}",
             color=discord.Color.green()
         )
-        for with_user in with_user:
-            desc = relationship_modes.get(with_user, "No description available.")
-            embed.add_field(name=with_user, value=desc, inline=False)
+        for relationship in relationships:
+            desc = relationship_modes.get(relationship, "No description available.")
+            embed.add_field(name=relationship, value=desc, inline=False)
         embeds.append(embed)
 
     # Start with first embed + paginator buttons
@@ -2071,7 +2062,7 @@ async def restart_monika(interaction: discord.Interaction):
             if role.name in server_tracker.valid_relationship_types or role.name in PERSONALITY_MODES.keys():
                 try:
                     await member.remove_roles(role)
-                except discord.Forbidden:
+                except discord.error.Forbidden:
                     print(f"[Restart] Missing permission to remove {role.name} from {member.display_name}")
     
     await cleanup_monika_roles(interaction.guild, bot.user.name)
@@ -2204,7 +2195,7 @@ async def broadcast(interaction: discord.Interaction, title: str, message: str, 
                 await channel.send(embed=embed)
                 success_count += 1
                 await asyncio.sleep(1)
-            except discord.Forbidden:
+            except discord.error.Forbidden:
                 print(f"403 Forbidden in {channel.name}")
                 failure_count += 1
             except Exception as e:
@@ -2368,6 +2359,3 @@ class MyBot(discord.Client):
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
-
-
-
