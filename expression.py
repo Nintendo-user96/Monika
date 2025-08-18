@@ -2,6 +2,7 @@
 import os
 import datetime
 import random
+import asyncio
 
 SPRITE_DIR = "Sprites/user's"
 
@@ -548,7 +549,8 @@ class User_SpritesManager:
         """Return available emotions for a specific outfit (dict keys)."""
         return list(self.sprites_by_outfit.get((outfit or "").lower().strip(), {}).keys())
 
-    async def classify(self, text, openai_client):
+    async def classify(self, text):
+        from monika_bot import openai_safe_call
         model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
         prompt = (
             "Return ONLY one label from this list:\n"
@@ -557,25 +559,23 @@ class User_SpritesManager:
         )
 
         for model in model_priority:
-            try:
-                response = openai_client.chat.completions.create(
+            async def call_fn(client):
+                return client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": prompt},
                         {"role": "user", "content": text}
-                    ],
+                    ]
                 )
 
+            try:
+                response = await openai_safe_call(call_fn)
                 emotion = response.choices[0].message.content.strip().lower()
                 if emotion in self.valid:
                     print(f"[Emotion Classifier] {model} → {emotion}")
                     return emotion
-
-                print(f"[Emotion Classifier] {model} returned invalid label: {emotion}")
-
             except Exception as e:
                 print(f"[Emotion Classifier Error] {model} → {e}")
                 continue
 
-        print("[Emotion Classifier] All models failed, returning 'neutral'")
         return "neutral"
