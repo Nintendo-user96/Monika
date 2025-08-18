@@ -11,7 +11,7 @@ import re
 import io
 import atexit
 from dotenv import load_dotenv
-from openai import OpenAI
+from openai import OpenAI, AsyncOpenAI
 from memory import MemoryManager
 from expression import User_SpritesManager
 #from expression_dokitubers import DOKITUBER_MANAGERS
@@ -20,6 +20,8 @@ from servers_tracker import GuildTracker
 import logging
 import keepalive
 from monika_personality import MonikaTraits
+import sys
+import time
 
 #DokiTuber_server_outfit_preferences = {}
 server_outfit_preferences = {}
@@ -36,94 +38,154 @@ logger = logging.getLogger("monika")
 
 logger.info("Just Monika!")
 
-OPENAI_KEYS = [
-    os.getenv(f"OPENAI_KEY_{i}").strip()
-    for i in range(1, 61)
-    if os.getenv(f"OPENAI_KEY_{i}") and os.getenv(f"OPENAI_KEY_{i}").strip()
-]
-openai_key_index = 0  # make sure this is defined somewhere globally
+OPENAI_KEYS = [os.getenv(f"OPENAI_KEY_{i}") for i in range(1, 121) if os.getenv(f"OPENAI_KEY_{i}")]
+openai_key_index = 0
+KEY_COOLDOWNS = {i: 0 for i in range(len(OPENAI_KEYS))}  # last fail time per key
+COOLDOWN_SECONDS = 15
 
-def get_current_openai_client() -> OpenAI:
-    """Return OpenAI client for the current key."""
+# 🔍 Key scanner
+async def scan_openai_keys():
+    """Test all keys once and keep only valid ones."""
+    global OPENAI_KEYS
+    valid_keys = []
+
+    for key in OPENAI_KEYS:
+        client = AsyncOpenAI(api_key=key)
+        try:
+            # ✅ Proper await
+            await client.models.list()
+            valid_keys.append(key)
+            print(f"[OpenAI] Valid key: {key[:8]}...")
+        except Exception as e:
+            print(f"[OpenAI] Invalid key {key[:8]}... → {e}")
+
+    OPENAI_KEYS = valid_keys
     if not OPENAI_KEYS:
-        raise Exception("[OpenAI] No API keys available!")
+        raise RuntimeError("No valid OpenAI keys found.")
+
+def get_current_openai_client():
+    """Return OpenAI client for the current key, skip if cooling down."""
+    now = time.time()
+    if now - KEY_COOLDOWNS[openai_key_index] < COOLDOWN_SECONDS:
+        raise RuntimeError(f"Key {openai_key_index} still cooling down.")
     return OpenAI(api_key=OPENAI_KEYS[openai_key_index])
 
-def rotate_openai_key():
-    """Move to the next key in the list."""
+# 🔄 Rotate and test next key
+async def rotate_and_test_key():
+    """Rotate to next key, respecting cooldowns."""
     global openai_key_index
-    openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
-    print(f"[OpenAI] Rotated to new key index: {openai_key_index}")
+
+    for _ in range(len(OPENAI_KEYS)):
+        openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
+        key = OPENAI_KEYS[openai_key_index]
+
+        # Check cooldown
+        cooldown_until = KEY_COOLDOWNS.get(key, 0)
+        now = time.time()
+        if now < cooldown_until:
+            wait_time = int(cooldown_until - now)
+            print(f"[OpenAI] Key {key[:8]}... still on cooldown ({wait_time}s). Skipping.")
+            continue  # skip this key, still cooling down
+
+        # Test key
+        try:
+            client = AsyncOpenAI(api_key=key)
+            await client.models.list()  # light test call
+            print(f"[OpenAI] Switched to key {key[:8]}...")
+            return client
+        except Exception as e:
+            print(f"[OpenAI] Key {key[:8]} failed test: {e}")
+            continue
+
+    raise RuntimeError("No valid OpenAI keys available (all failed or cooling).")
+
+async def openai_safe_call(call_fn, retries=3):
+    """Wrap an OpenAI API call with retries."""
+    last_exception = None
+
+    for attempt in range(retries):
+        try:
+            client = get_current_openai_client()
+            return await call_fn(client)   # ✅ await instead of asyncio.run
+        except Exception as e:
+            last_exception = e
+            err_str = str(e)
+            if "429" in err_str or "rate limit" in err_str.lower():
+                key = OPENAI_KEYS[openai_key_index]
+                KEY_COOLDOWNS[key] = time.time() + COOLDOWN_SECONDS  # mark cooldown
+                print(f"[OpenAI] 429 on {key[:8]}... cooldown {COOLDOWN_SECONDS}s, rotating.")
+                await rotate_and_test_key()
+                await asyncio.sleep(2)
+            elif "400" in err_str or "bad request" in err_str.lower():
+                key = OPENAI_KEYS[openai_key_index]
+                KEY_COOLDOWNS[key] = time.time() + COOLDOWN_SECONDS  # mark cooldown
+                print(f"[OpenAI] 429 on {key[:8]}... cooldown {COOLDOWN_SECONDS}s, rotating.")
+                await rotate_and_test_key()
+                await asyncio.sleep(2)
+            else:
+                print(f"[OpenAI Error] {e}")
+                break
+
+    raise last_exception if last_exception else RuntimeError("OpenAI call failed")
 
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    global openai_key_index  # ✅ declare immediately at the start
-
-    """Stay on same key until 429 or hard error, try all models before switching key."""
+    """Try models in order, use safe call wrapper."""
     model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
     last_exception = None
-    attempts = len(OPENAI_KEYS)
 
-    for _ in range(attempts):
-        client = get_current_openai_client()
-        print(f"[OpenAI] Using key index {openai_key_index}")
+    for model in model_priority:
 
-        for model in model_priority:
-            try:
-                if not isinstance(conversation, list):
-                    raise ValueError("Conversation must be a list of messages.")
+        async def call_fn(client):
+            # Conversation must be list of dicts
+            if not isinstance(conversation, list):
+                raise ValueError("Conversation must be a list of messages.")
 
-                if asyncio.iscoroutinefunction(generate_monika_system_prompt):
-                    system_prompt = await generate_monika_system_prompt(
-                        guild=user.guild if hasattr(user, "guild") else None,
-                        user=user,
-                        relationship_type=relationship,
-                        selected_modes=personality
-                    )
-                else:
-                    system_prompt = generate_monika_system_prompt(
-                        guild=user.guild if hasattr(user, "guild") else None,
-                        user=user,
-                        relationship_type=relationship,
-                        selected_modes=personality
-                    )
-
-                full_conversation = [{"role": "system", "content": system_prompt}] + conversation
-
-                response = client.chat.completions.create(
-                    model=model,
-                    messages=full_conversation
+            # Build system prompt (async or sync)
+            if asyncio.iscoroutinefunction(generate_monika_system_prompt):
+                system_prompt = await generate_monika_system_prompt(
+                    guild=user.guild if hasattr(user, "guild") else None,
+                    user=user,
+                    relationship_type=relationship,
+                    selected_modes=personality,
+                )
+            else:
+                system_prompt = generate_monika_system_prompt(
+                    guild=user.guild if hasattr(user, "guild") else None,
+                    user=user,
+                    relationship_type=relationship,
+                    selected_modes=personality,
                 )
 
-                if (response and response.choices and
-                    response.choices[0].message and
-                    response.choices[0].message.content.strip()):
-                    print(f"[OpenAI] {model} → Success")
-                    return response
+            full_conversation = [{"role": "system", "content": system_prompt}] + conversation
 
-                print(f"[OpenAI] {model} returned blank/invalid response. Trying next model...")
-                await asyncio.sleep(1)
+            # Actually hit the API
+            return client.chat.completions.create(
+                model=model,
+                messages=full_conversation
+            )
 
-            except Exception as e:
-                last_exception = e
-                err_str = str(e)
+        try:
+            response = await openai_safe_call(call_fn)
 
-                error_codes = [
-                    "HTTP/1.1 429 Too Many Requests",
-                    "HTTP/1.1 503 Service Unavailable",
-                    "HTTP/1.1 400 Bad Request"
-                ]
+            if (response and response.choices and
+                response.choices[0].message and
+                response.choices[0].message.content.strip()):
+                print(f"[OpenAI] ✅ {model} → Success (key {openai_key_index})")
+                return response
 
-                matched_code = next((c for c in error_codes if c in err_str), None)
-                if matched_code:
-                    print(f"[OpenAI] {matched_code} → rotating key...")
-                    openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
-                    await asyncio.sleep(2)
-                    break  # go to next key immediately
+            print(f"[OpenAI] ⚠️ {model} returned blank/invalid response, retrying...")
+            await asyncio.sleep(1)
 
-    print("[OpenAI] All keys exhausted or failed.")
+        except Exception as e:
+            last_exception = e
+            print(f"[OpenAI] ❌ {model} failed on key {openai_key_index}: {e}")
+            continue
+
+        print(f"[OpenAI] ⏭️ Finished trying {model}, moving to next...")
+
     if last_exception:
         raise last_exception
-    raise Exception("All OpenAI keys failed or exhausted.")
+    raise RuntimeError("All models exhausted or failed.")
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
@@ -143,6 +205,7 @@ AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
+client = get_current_openai_client()
 
 def is_owner(interaction: discord.Interaction):
     return interaction.user.id == OWNER_ID
@@ -199,9 +262,6 @@ SERVER_PERSONALITY_MODES = server_tracker.set_personality
 
 RELATIONSHIP_MODES = monika_traits.relationship_modes
 RELATIONSHIP_DETILED = monika_traits.relationships
-
-user_relationship_meters = {}
-friends_relationship_meters = {}
 
 async def error_emotion(outfit="bug"):
     # Prefer bug outfit if available
@@ -390,45 +450,6 @@ def get_all_relationship_types():
             relationship_types.update(value.keys())
     return sorted(relationship_types)
 
-def relationship_system(user_id, guild_id=None):
-    """Initialize or update the relationship system for a user."""
-    if user_id not in user_relationship_meters:
-        user_relationship_meters[user_id] = 0
-
-    if guild_id:
-        if guild_id not in server_tracker.data:
-            server_tracker.track_server(guild_id, "Unknown Guild")
-        if user_id not in server_tracker.data[guild_id].get("relationship", {}):
-            server_tracker.data[guild_id]["relationship"][user_id] = 0
-    else:
-        if user_id not in server_tracker.data:
-            server_tracker.data[user_id] = {"relationship": {}}
-        if "relationship" not in server_tracker.data[user_id]:
-            server_tracker.data[user_id]["relationship"] = {}
-    return user_relationship_meters[user_id]
-
-def adjust_relationship_meter(user_id, delta):
-    user_relationship_meters[user_id] = min(100, max(0, user_relationship_meters.get(user_id, 0) + delta))
-
-def increase_relationship_meter(self, user_id, amount=2):
-    if not user_tracker.relationship_levels_enabled(user_id):
-        return  # Don't track unless enabled
-    self.set_relationship_meter(user_id, self.get_relationship_meter(user_id) + amount)
-
-def decrease_relationship_meter(self, user_id, amount=2):
-    if not user_tracker.relationship_levels_enabled(user_id):
-        return
-    self.set_relationship_meter(user_id, self.get_relationship_meter(user_id) - amount)
-
-def get_relationship_meter(user_id):
-    return user_relationship_meters.get(user_id, 0)
-
-def relationship_level_up(user_id, amount=2):
-    current_meter = get_relationship_meter(user_id)
-    new_meter = min(100, current_meter + amount)
-    adjust_relationship_meter(user_id, new_meter - current_meter)
-    return new_meter
-
 @bot.event
 async def on_ready():
     print(f"just {bot.user.name}")
@@ -583,6 +604,10 @@ async def load_memories_from_guilds():
                 print(f"[WARN] Could not load history for {channel} in {guild}: {e}")
 
 async def on_startup():
+    if __name__ == "__main__":
+        print("🔍 Scanning keys...")
+        scan_openai_keys()
+
     print("[Startup] Loading Monika’s memory...")
 
     # 1. Try restoring from memory channel backup
@@ -905,7 +930,7 @@ async def avatar_to_emoji(bot, guild: discord.Guild, avatar_url: str, emoji_name
 
     # Fallback: Use local sprite path
     try:
-        avatar_path = user_sprites.get_avatar(avatar_url)
+        avatar_path = user_tracker.get_avatar(avatar_url)
         if not avatar_path:
             print(f"[DEBUG] ❌ No avatar path found for {avatar_url}")
             return None
@@ -958,7 +983,7 @@ async def handle_dm_message(message: discord.Message, avatar_url):
         response = await call_openai_with_retries(user, None, None, conversation)
         if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
             monika_DMS = response.choices[0].message.content.strip()
-            emotion = await user_sprites.classify(monika_DMS, get_current_openai_client())
+            emotion = await user_sprites.classify(monika_DMS, client)
             print(f"[DEBUG] Classified emotion: {emotion!r}")
         else:
             print("[OpenAI] Blank or invalid response. Using fallback.")
@@ -982,13 +1007,6 @@ async def handle_dm_message(message: discord.Message, avatar_url):
         
         content = f"**From {user} in DM's:**\n{message.content}"
         await forward_channel.send(content)
-    
-    emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
-    if emoji:
-        await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
-        await emoji.delete() 
-    if not emoji:
-        pass
             
 async def handle_guild_message(message: discord.Message, avatar_url):
     global last_reply_times
@@ -1085,7 +1103,7 @@ async def handle_guild_message(message: discord.Message, avatar_url):
         )
         if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
             monika_reply = response.choices[0].message.content.strip()
-            emotion = await user_sprites.classify(monika_reply, get_current_openai_client())
+            emotion = await user_sprites.classify(monika_reply)
         else:
             monika_reply = random.choice(error_messages)
             emotion = random.choice(error_emotion)
@@ -1099,17 +1117,33 @@ async def handle_guild_message(message: discord.Message, avatar_url):
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
+    emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
+
+
     outfit = server_outfit_preferences.get(guild_id, get_time_based_outfit())
     sprite_link = await get_sprite_link(emotion, outfit)
-    reply = f"{monika_reply}\n[{emotion}]({sprite_link})"
+    if isinstance(emoji, discord.Emoji):
+        reply = f"<:{emoji.name}:{emoji.id}>{monika_reply}\n[{emotion}]({sprite_link})"
 
-    if not guild or message.channel.permissions_for(message.guild.me).send_messages:
-        async with message.channel.typing():
-            print(f"{reply}")
-            await asyncio.sleep(1.5)
-            await message.channel.send(reply)
+        if not guild or message.channel.permissions_for(message.guild.me).send_messages:
+            async with message.channel.typing():
+                print(f"{reply}")
+                await asyncio.sleep(1.5)
+                await message.channel.send(reply)
+                await emoji.delete()  # optional cleanup
+        else:
+            print(f"[Error] No permission to send in #{message.channel.name}")
     else:
-        print(f"[Error] No permission to send in #{message.channel.name}")
+        reply = f"{monika_reply}\n[{emotion}]({sprite_link})"
+
+        if not guild or message.channel.permissions_for(message.guild.me).send_messages:
+            async with message.channel.typing():
+                print(f"{reply}")
+                await asyncio.sleep(1.5)
+                await message.channel.send(reply)
+        else:
+            print(f"[Error] No permission to send in #{message.channel.name}")
+        pass
 
     if MEMORY_CHAN_ID:
         dest_channel = bot.get_channel(MEMORY_CHAN_ID)
@@ -1144,13 +1178,6 @@ async def handle_guild_message(message: discord.Message, avatar_url):
 
         except Exception as e:
             print(f"[Forwarding Error] {e}")
-
-    emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
-
-    if isinstance(emoji, discord.Emoji):
-        # Case 1: Got a custom emoji, react with it
-        await message.add_reaction(f"<:{emoji.name}:{emoji.id}>")
-        await emoji.delete()  # optional cleanup
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
@@ -1229,7 +1256,7 @@ async def monika_idle_conversation_task():
                 else:
                     monika_message = "I was just thinking about something... Do you ever feel like time flies by too fast?"
 
-                emotion = await user_sprites.classify(monika_message, get_current_openai_client())
+                emotion = await user_sprites.classify(monika_message, client)
 
             except Exception as e:
                 print(f"[OpenAI Error] {e}")
@@ -2358,4 +2385,8 @@ class MyBot(discord.Client):
                 await self.tree.sync(guild=discord.Object(id=guild_id))
 
 keepalive.keep_alive()
-bot.run(TOKEN, reconnect=True)
+async def main():
+    await bot.start(TOKEN, reconnect=True)
+
+if __name__ == "__main__":
+    asyncio.get_event_loop().run_until_complete(main())
