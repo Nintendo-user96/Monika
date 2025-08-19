@@ -11,7 +11,7 @@ import re
 import io
 import atexit
 from dotenv import load_dotenv
-from openai import OpenAI, AsyncOpenAI
+from OpenAIKeys import OpenAIKeyManager, safe_call, key_manager
 from memory import MemoryManager
 from expression import User_SpritesManager
 #from expression_dokitubers import DOKITUBER_MANAGERS
@@ -38,151 +38,52 @@ logger = logging.getLogger("monika")
 
 logger.info("Just Monika!")
 
-OPENAI_KEYS = [os.getenv(f"OPENAI_KEY_{i}") for i in range(1, 121) if os.getenv(f"OPENAI_KEY_{i}")]
-openai_key_index = 0
-KEY_COOLDOWNS = {i: 0 for i in range(len(OPENAI_KEYS))}  # last fail time per key
-COOLDOWN_SECONDS = 15
-
-# 🔍 Key scanner
-async def scan_openai_keys():
-    """Test all keys once and keep only valid ones."""
-    global OPENAI_KEYS
-    valid_keys = []
-
-    for key in OPENAI_KEYS:
-        client = AsyncOpenAI(api_key=key)
-        try:
-            # ✅ Proper await
-            await client.models.list()
-            valid_keys.append(key)
-            print(f"[OpenAI] Valid key: {key[:8]}...")
-        except Exception as e:
-            print(f"[OpenAI] Invalid key {key[:8]}... → {e}")
-
-    OPENAI_KEYS = valid_keys
-    if not OPENAI_KEYS:
-        raise RuntimeError("No valid OpenAI keys found.")
-
-def get_current_openai_client():
-    """Return OpenAI client for the current key, skip if cooling down."""
-    now = time.time()
-    if now - KEY_COOLDOWNS[openai_key_index] < COOLDOWN_SECONDS:
-        raise RuntimeError(f"Key {openai_key_index} still cooling down.")
-    return OpenAI(api_key=OPENAI_KEYS[openai_key_index])
-
-# 🔄 Rotate and test next key
-async def rotate_and_test_key():
-    """Rotate to next key, respecting cooldowns."""
-    global openai_key_index
-
-    for _ in range(len(OPENAI_KEYS)):
-        openai_key_index = (openai_key_index + 1) % len(OPENAI_KEYS)
-        key = OPENAI_KEYS[openai_key_index]
-
-        # Check cooldown
-        cooldown_until = KEY_COOLDOWNS.get(key, 0)
-        now = time.time()
-        if now < cooldown_until:
-            wait_time = int(cooldown_until - now)
-            print(f"[OpenAI] Key {key[:8]}... still on cooldown ({wait_time}s). Skipping.")
-            continue  # skip this key, still cooling down
-
-        # Test key
-        try:
-            client = AsyncOpenAI(api_key=key)
-            await client.models.list()  # light test call
-            print(f"[OpenAI] Switched to key {key[:8]}...")
-            return client
-        except Exception as e:
-            print(f"[OpenAI] Key {key[:8]} failed test: {e}")
-            continue
-
-    raise RuntimeError("No valid OpenAI keys available (all failed or cooling).")
-
-async def openai_safe_call(call_fn, retries=3):
-    """Wrap an OpenAI API call with retries."""
-    last_exception = None
-
-    for attempt in range(retries):
-        try:
-            client = get_current_openai_client()
-            return await call_fn(client)   # ✅ await instead of asyncio.run
-        except Exception as e:
-            last_exception = e
-            err_str = str(e)
-            if "429" in err_str or "rate limit" in err_str.lower():
-                key = OPENAI_KEYS[openai_key_index]
-                KEY_COOLDOWNS[key] = time.time() + COOLDOWN_SECONDS  # mark cooldown
-                print(f"[OpenAI] 429 on {key[:8]}... cooldown {COOLDOWN_SECONDS}s, rotating.")
-                await rotate_and_test_key()
-                await asyncio.sleep(2)
-            elif "400" in err_str or "bad request" in err_str.lower():
-                key = OPENAI_KEYS[openai_key_index]
-                KEY_COOLDOWNS[key] = time.time() + COOLDOWN_SECONDS  # mark cooldown
-                print(f"[OpenAI] 429 on {key[:8]}... cooldown {COOLDOWN_SECONDS}s, rotating.")
-                await rotate_and_test_key()
-                await asyncio.sleep(2)
-            else:
-                print(f"[OpenAI Error] {e}")
-                break
-
-    raise last_exception if last_exception else RuntimeError("OpenAI call failed")
-
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    """Try models in order, use safe call wrapper."""
+    """Try models in priority order, using safe_call for retries + key rotation."""
     model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
     last_exception = None
 
     for model in model_priority:
 
         async def call_fn(client):
-            # Conversation must be list of dicts
+            # Ensure conversation is valid
             if not isinstance(conversation, list):
                 raise ValueError("Conversation must be a list of messages.")
 
-            # Build system prompt (async or sync)
-            if asyncio.iscoroutinefunction(generate_monika_system_prompt):
-                system_prompt = await generate_monika_system_prompt(
-                    guild=user.guild if hasattr(user, "guild") else None,
-                    user=user,
-                    relationship_type=relationship,
-                    selected_modes=personality,
-                )
-            else:
-                system_prompt = generate_monika_system_prompt(
-                    guild=user.guild if hasattr(user, "guild") else None,
-                    user=user,
-                    relationship_type=relationship,
-                    selected_modes=personality,
-                )
+            # Build system prompt
+            system_prompt = await generate_monika_system_prompt(
+                guild=user.guild if hasattr(user, "guild") else None,
+                user=user,
+                relationship_type=relationship,
+                selected_modes=personality,
+            )
 
             full_conversation = [{"role": "system", "content": system_prompt}] + conversation
 
-            # Actually hit the API
-            return client.chat.completions.create(
+            # Hit the API
+            return await client.chat.completions.create(
                 model=model,
                 messages=full_conversation
             )
 
         try:
-            response = await openai_safe_call(call_fn)
+            response = await safe_call(key_manager, call_fn)
 
             if (response and response.choices and
                 response.choices[0].message and
                 response.choices[0].message.content.strip()):
-                print(f"[OpenAI] ✅ {model} → Success (key {openai_key_index})")
+                print(f"[OpenAI] ✅ {model} → Success")
                 return response
 
-            print(f"[OpenAI] ⚠️ {model} returned blank/invalid response, retrying...")
+            print(f"[OpenAI] ⚠️ {model} returned empty/invalid response, trying next...")
             await asyncio.sleep(1)
 
         except Exception as e:
             last_exception = e
-            print(f"[OpenAI] ❌ {model} failed on key {openai_key_index}: {e}")
+            print(f"[OpenAI] ❌ {model} failed: {e}")
             continue
 
-        print(f"[OpenAI] ⏭️ Finished trying {model}, moving to next...")
-
+    # All models failed
     if last_exception:
         raise last_exception
     raise RuntimeError("All models exhausted or failed.")
@@ -205,7 +106,6 @@ AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
 intents = discord.Intents.all()
 
 bot = commands.Bot(command_prefix="/", intents=intents)
-client = get_current_openai_client()
 
 def is_owner(interaction: discord.Interaction):
     return interaction.user.id == OWNER_ID
@@ -452,6 +352,7 @@ def get_all_relationship_types():
 
 @bot.event
 async def on_ready():
+    await key_manager.validate_keys()
     print(f"just {bot.user.name}")
     print("------")
 
@@ -604,10 +505,6 @@ async def load_memories_from_guilds():
                 print(f"[WARN] Could not load history for {channel} in {guild}: {e}")
 
 async def on_startup():
-    if __name__ == "__main__":
-        print("🔍 Scanning keys...")
-        scan_openai_keys()
-
     print("[Startup] Loading Monika’s memory...")
 
     # 1. Try restoring from memory channel backup
@@ -983,7 +880,7 @@ async def handle_dm_message(message: discord.Message, avatar_url):
         response = await call_openai_with_retries(user, None, None, conversation)
         if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
             monika_DMS = response.choices[0].message.content.strip()
-            emotion = await user_sprites.classify(monika_DMS, client)
+            emotion = await user_sprites.classify(monika_DMS)
             print(f"[DEBUG] Classified emotion: {emotion!r}")
         else:
             print("[OpenAI] Blank or invalid response. Using fallback.")
@@ -1118,7 +1015,6 @@ async def handle_guild_message(message: discord.Message, avatar_url):
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
     emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
-
 
     outfit = server_outfit_preferences.get(guild_id, get_time_based_outfit())
     sprite_link = await get_sprite_link(emotion, outfit)
@@ -1256,7 +1152,7 @@ async def monika_idle_conversation_task():
                 else:
                     monika_message = "I was just thinking about something... Do you ever feel like time flies by too fast?"
 
-                emotion = await user_sprites.classify(monika_message, client)
+                emotion = await user_sprites.classify(monika_message)
 
             except Exception as e:
                 print(f"[OpenAI Error] {e}")
@@ -1279,6 +1175,8 @@ async def monika_idle_conversation_task():
 async def on_app_command_error(interaction, error):
     if isinstance(error, app_commands.CheckFailure):
         await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
+    elif isinstance(error, commands.errors.MissingPermissions):
+        await interaction.response.send_message("Missing permission to perform this action.", ephemeral=True)
     elif isinstance(error, discord.error.Forbidden):
         await interaction.response.send_message("Missing permission to perform this action.", ephemeral=True)
     else:
@@ -1288,7 +1186,7 @@ async def on_app_command_error(interaction, error):
             await interaction.response.send_message("An error occurred.", ephemeral=True)
         except Exception:
             pass
-                
+
 class SelectedPaginator(discord.ui.View):
     def __init__(self, embeds, user: discord.User, timeout=60):
         super().__init__(timeout=timeout)
@@ -1961,7 +1859,7 @@ async def set_relationship(
             f"✅ Relationship set to **{relationship_type}** with: **{', '.join(with_list) or 'nobody'}**.",
             ephemeral=True
         )
-        
+
     except commands.errors.MissingPermissions as MP:
         await interaction.response.send_message(f"I am missing permissions of **{MP}**", ephemeral=True)
         print("[Relationship Error]")
@@ -2384,4 +2282,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
-
