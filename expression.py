@@ -549,18 +549,19 @@ class User_SpritesManager:
         """Return available emotions for a specific outfit (dict keys)."""
         return list(self.sprites_by_outfit.get((outfit or "").lower().strip(), {}).keys())
 
-    async def classify(self, text):
-        from monika_bot import openai_safe_call
+    async def classify(self, text: str) -> str:
+        from OpenAIKeys import safe_call, key_manager  # assuming you import these globally
         model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
+
         prompt = (
             "Return ONLY one label from this list:\n"
             + ", ".join(self.valid) +
-            "\nDescribe this message's emotion using one of the labels only."
+            "\n\nClassify the emotion of the following message using exactly one of the labels above."
         )
 
         for model in model_priority:
             async def call_fn(client):
-                return client.chat.completions.create(
+                return await client.chat.completions.create(
                     model=model,
                     messages=[
                         {"role": "system", "content": prompt},
@@ -569,11 +570,20 @@ class User_SpritesManager:
                 )
 
             try:
-                response = await openai_safe_call(call_fn)
-                emotion = response.choices[0].message.content.strip().lower()
-                if emotion in self.valid:
-                    print(f"[Emotion Classifier] {model} → {emotion}")
-                    return emotion
+                response = await safe_call(key_manager, call_fn)
+                if not response or not response.choices:
+                    continue
+
+                raw = response.choices[0].message.content.strip().lower()
+
+                # try to match against valid emotions
+                for label in self.valid:
+                    if label.lower() in raw:
+                        print(f"[Emotion Classifier] {model} → {label}")
+                        return label
+
+                print(f"[Emotion Classifier WARN] Unexpected response: {raw}")
+
             except Exception as e:
                 print(f"[Emotion Classifier Error] {model} → {e}")
                 continue
