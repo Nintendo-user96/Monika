@@ -1836,7 +1836,6 @@ async def relationship_autocomplete(
         app_commands.Choice(name=r, value=r) for r in menu_relationships[:25]
     ]
 
-
 @bot.tree.command(name="set_relationship", description="Set Monika's relationship orientation for this server.")
 @app_commands.autocomplete(relationship_type=relationship_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
@@ -1957,20 +1956,15 @@ async def set_relationship(
                     await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
                     print(f"[Roles] Missing permission to assign roles {user_role_name} / {bot_role_name}")
 
-        if discord.errors.Forbidden:
-            await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
-        else:
-            pass
-
         user_tracker.set_manual_relationship(target_member.id, True)
         await interaction.response.send_message(
             f"✅ Relationship set to **{relationship_type}** with: **{', '.join(with_list) or 'nobody'}**.",
             ephemeral=True
         )
-
-    except ValueError as ve:
-        await interaction.response.send_message(f"❌ {str(ve)}", ephemeral=True)
-        print("[Relationship Error]", ve)
+        
+    except commands.errors.MissingPermissions as MP:
+        await interaction.response.send_message(f"I am missing permissions of **{MP}**", ephemeral=True)
+        print("[Relationship Error]")
 
 @bot.tree.command(
     name="personalities_description", 
@@ -2390,3 +2384,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
