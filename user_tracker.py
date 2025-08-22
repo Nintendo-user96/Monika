@@ -10,15 +10,6 @@ class UserTracker:
         self.users = {}
         self.last_backup_message = None
 
-        self.RELATIONSHIP_LEVELS = [
-            "Stranger",
-            "Friend",
-            "Close Friend",
-            "Best Friend",
-            "Partner",
-            "Soulmate"
-        ]
-
     def _now(self):
         return datetime.utcnow().isoformat()
     
@@ -115,31 +106,10 @@ class UserTracker:
     def get_pronouns(self, user_id):
         return self.data.get(user_id, {}).get("pronouns")
 
-    def add_relationship_xp(self, user_id: str, amount: int = 1):
-        data = self.load()
-        if "xp" not in data.get(user_id, {}):
-            data[user_id]["xp"] = 0
-        data[user_id]["xp"] += amount
-        self.save()
-
-    def get_relationship_level(self, user_id: str):
-        data = self.load()
-        xp = data.get(user_id, {}).get("xp", 0)
-        level_index = min(xp // 50, len(self.RELATIONSHIP_LEVELS) - 1)  # 50 XP per level
-        return self.RELATIONSHIP_LEVELS[level_index]
-
-    def enable_relationship_levels(self, user_id: int):
-        if user_id not in self.data:
-            self.data[user_id] = {}
-        self.data[user_id]["relationship_levels_enabled"] = True
-
-    def disable_relationship_levels(self, user_id: int):
-        if user_id not in self.data:
-            self.data[user_id] = {}
-        self.data[user_id]["relationship_levels_enabled"] = False
-
-    def relationship_levels_enabled(self, user_id: int) -> bool:
-        return self.data.get(user_id, {}).get("relationship_levels_enabled", False)
+    def get_relationship(self, user_id: str) -> str:
+        """Return stored relationship for a user, or 'Stranger' if none set."""
+        user_data = self.users.get(user_id, {})
+        return user_data.get("relationship", "Stranger")
 
     async def log_to_channel(self, channel, user_id):
         entry = self.data.get(user_id)
