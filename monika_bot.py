@@ -196,14 +196,47 @@ error_messages = [
     "Sorry, there has been a glitch with in the error."
 ]
 
-def clean_monika_reply(text, bot_user_id, user_name=None):
+
+def clean_monika_reply(text: str, bot_user: discord.User, user_obj: discord.User = None) -> str:
+    """
+    Cleans Monika's reply to:
+    - Remove Discord mentions like <@123>, <@!123>, <#123>, <@&123>
+    - Replace placeholders like {{user}}, {{bot}}, nobody
+    - Normalize whitespace & punctuation
+    """
+
     if not text:
         return ""
-    # remove explicit mention tokens only
-    text = re.sub(rf"<@!?(?:{bot_user_id})>", "", text)
-    if user_name:
-        text = text.replace("{{user}}", user_name)
-    text = re.sub(r"\s{2,}", " ", text).strip(" ,.!?;:")
+
+    # 1️⃣ Remove ALL Discord mentions
+    text = re.sub(r"<@!?[0-9]+>", "", text)   # user mentions
+    text = re.sub(r"<#[0-9]+>", "", text)     # channel mentions
+    text = re.sub(r"<@&[0-9]+>", "", text)    # role mentions
+
+    # 2️⃣ Replace placeholders safely
+    user_name = None
+    if user_obj:
+        if hasattr(user_obj, "display_name"):
+            user_name = user_obj.display_name
+        else:
+            user_name = str(user_obj)
+
+    bot_name = bot_user.display_name if hasattr(bot_user, "display_name") else str(bot_user)
+
+    replacements = {
+        "{{user}}": user_name or "",
+        "{{bot}}": bot_name or "",
+        "nobody": user_name or "",
+    }
+
+    for key, value in replacements.items():
+        if value:
+            text = text.replace(key, value)
+
+    # 3️⃣ Clean up any leftover double spaces, punctuation at edges
+    text = re.sub(r"\s{2,}", " ", text)
+    text = text.strip(" \t\r\n,.!?;:")
+
     return text
 
 def is_friend_bot(message):
@@ -718,7 +751,7 @@ async def on_shutdown():
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
 @bot.event
-async def on_message(message):
+async def on_message(message: discord.Message):
     global last_user_interaction
         
     guild_name = str(message.guild.name) if message.guild else "dm"
@@ -728,9 +761,13 @@ async def on_message(message):
     channel_id = str(message.channel.id)
     channel_name = message.channel.name if message.guild else "dm"
 
+    if message.author.bot:
+        return
+
+    # ✅ Mention-only mode check
     if mention_only_mode.get(guild_id, True):  # Default True = mention only
-        if bot.user not in message.mentions:
-            return  # Ignore messages without @Monika
+        if bot.user not in message.mentions and not isinstance(message.channel, discord.DMChannel):
+            return  # Ignore messages without @Monika (except in DMs)
 
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
     
@@ -738,6 +775,7 @@ async def on_message(message):
         guild = None
         username = message.author.name
         monika_member = None  # No guild roles in DMs
+        avatar_url = message.author.display_avatar.url
         await handle_dm_message(message, avatar_url)
         print(f"[Mention] in the DM's: Detected from {message.author.display_name}")
     else:
@@ -747,6 +785,7 @@ async def on_message(message):
         await handle_guild_message(message, avatar_url)
         print(f"[Mention] in the server's: Detected from {message.author.display_name}")
 
+    # ✅ Always let commands run after handling
     await bot.process_commands(message)
 
 sprite_locks = {}
@@ -807,103 +846,103 @@ async def get_sprite_link(emotion, outfit, avatar_url=None):
     sprite_url_cache[cache_key] = error_url
     return error_url
 
-async def avatar_to_emoji(bot, guild: discord.Guild, avatar_url: str, emoji_name: str = "tempavatar"):
+async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
+    # sanitize username → valid emoji name
     import aiohttp
-    avatar_key = avatar_url  # Cache key for reuse later
-    
-    # First try: Create emoji directly from the avatar URL
+    base_name = re.sub(r"[^a-zA-Z0-9_]", "_", user.name)[:32]
+    if not base_name:
+        base_name = "tempavatar"
+
     try:
+        avatar_url = str(user.avatar.url)
         async with aiohttp.ClientSession() as session:
             async with session.get(avatar_url) as resp:
                 if resp.status != 200:
                     raise Exception(f"HTTP {resp.status}")
                 image_bytes = await resp.read()
 
-        emoji = await guild.create_custom_emoji(name=emoji_name, image=image_bytes)
-        print(f"[DEBUG] ✅ Created emoji {emoji} from {avatar_url}")
-        return emoji  # Success
+        emoji = await guild.create_custom_emoji(name=base_name, image=image_bytes)
+        print(f"[DEBUG] ✅ Created emoji {emoji} for user {user}")
+        return emoji
     except Exception as e:
-        print(f"[DEBUG] ❌ Failed to create emoji from avatar URL: {e}")
+        print(f"[DEBUG] ❌ Failed to create emoji for {user}: {e}")
+        return None
 
-    # Fallback: Use local sprite path
-    try:
-        avatar_path = user_tracker.get_avatar(avatar_url)
-        if not avatar_path:
-            print(f"[DEBUG] ❌ No avatar path found for {avatar_url}")
-            return None
-
-        if AVATAR_URL_CHAN:
-            upload_channel = bot.get_channel(AVATAR_URL_CHAN)
-            if not upload_channel:
-                print(f"[DEBUG] ⚠️ Could not find upload channel ID={AVATAR_URL_CHAN}")
-                return None
-
-            print(f"[DEBUG] ⬆️ Uploading '{avatar_path}' to channel {upload_channel.name}")
-            with open(avatar_path, "rb") as f:
-                sprite_file = discord.File(f)
-                sent_message = await upload_channel.send(file=sprite_file)
-                avatar_url = sent_message.attachments[0].url
-                sprite_url_cache[avatar_key] = avatar_url
-                print(f"[DEBUG] ✅ Upload success, cached URL: {avatar_url}")
-                return avatar_url
-    except Exception as e:
-        print(f"[DEBUG] ❌ Upload failed: {e}")
-
-    return None
-
-async def handle_dm_message(message: discord.Message, avatar_url):
+async def handle_dm_message(message: discord.Message, avatar_url: str):
+    """Handle DM messages safely (no mentions, DM-specific personality/relationship)."""
     user = message.author
-    is_friend = False
+    user_id = str(user.id)
 
-    user_tracker.track_user(message.author.id, message.author.display_name, message.author.bot)
-    avatar_url = user_tracker.get_avatar(message.author.id)
+    # Track user
+    user_tracker.track_user(user.id, user.display_name, user.bot)
+    avatar_url = user_tracker.get_avatar(user.id)
 
-    modes = server_personality_modes.get("DM", {"default"})
+    # Fallback: no guild, but try to pull relationship/personality from a server
+    relationship = None
+    personality = None
+    guild = None
 
+    # If the user shares a server with Monika, inherit personality/relationship from first one
+    if bot.guilds:
+        for g in bot.guilds:
+            member = g.get_member(user.id)
+            if member:
+                guild = g
+                relationship = monika_traits.get_relationship(user_id) if hasattr(monika_traits, "get_relationship") else "Stranger"
+                personality = server_personality_modes.get(str(g.id), {"default"})
+                break
+
+    # Build system prompt (DMs don't need mentions)
     system_prompt = await generate_monika_system_prompt(
-        guild=None,
+        guild=guild,
         user=user,
-        is_friend_context=is_friend
+        relationship_type=relationship,
+        selected_modes=personality
     )
-    
-    conversation = memory.get_monika_context("DM", str(message.channel.id), str(user.id))
+
+    # Build conversation context
+    conversation = memory.get_monika_context("DM", str(message.channel.id), user_id)
     conversation.insert(0, {"role": "system", "content": system_prompt})
     conversation.append({"role": "user", "content": message.content})
-    print(f"[System Prompt]\n{system_prompt}")
+    print(f"[DM Prompt]\n{system_prompt}")
 
-    # Default fallback values BEFORE try
+    # Defaults
     monika_DMS = random.choice(error_messages)
-    emotion = "error" or "glitching"
+    emotion = "error"
     sprite_link = await error_emotion()
 
     try:
-        response = await call_openai_with_retries(user, None, None, conversation)
-        if response and response.choices and response.choices[0].message and response.choices[0].message.content.strip():
-            monika_DMS = response.choices[0].message.content.strip()
-            emotion = await user_sprites.classify(monika_DMS)
-            print(f"[DEBUG] Classified emotion: {emotion!r}")
-        else:
-            print("[OpenAI] Blank or invalid response. Using fallback.")
+        response = await call_openai_with_retries(user, relationship, personality, conversation)
+        if response and response.choices and response.choices[0].message:
+            content = response.choices[0].message.content.strip()
+            if content:
+                monika_DMS = content
+                emotion = await user_sprites.classify(monika_DMS)
+                print(f"[DM Classified] {emotion}")
     except Exception as e:
-        print(f"[OpenAI Error] {e}")
+        print(f"[DM OpenAI Error] {e}")
 
-    monika_DMS = clean_monika_reply(monika_DMS, bot.user.name, user)
+    # Clean reply: no mentions, replace {{user}}
+    monika_DMS = clean_monika_reply(monika_DMS, bot.user.id, user.display_name)
+    monika_DMS = re.sub(r"<@!?\d+>", "", monika_DMS)
 
-    # Show relationship level in reply
+    # Outfit/sprite
     outfit = server_outfit_preferences.get("DM", get_time_based_outfit())
     sprite_link = await get_sprite_link(emotion, outfit)
-    reply = f"{monika_DMS}\n[{emotion}]({sprite_link})"
 
+    # Final reply
+    reply = f"{monika_DMS}\n[{emotion}]({sprite_link})"
     await message.author.send(reply)
 
+    # Logging
     if DM_LOGS_CHAN:
         forward_channel = bot.get_channel(DM_LOGS_CHAN)
-        if not forward_channel:
-            print("[Error] Forward channel not found.")
-            return
-        
-        content = f"**From {user} in DM's:**\n{message.content}"
-        await forward_channel.send(content)
+        if forward_channel:
+            await forward_channel.send(
+                f"**From {user} in DM:**\n{message.content}\n**Reply:** {monika_DMS}"
+            )
+        else:
+            print("[DM Logs] Forward channel not found.")
             
 async def handle_guild_message(message: discord.Message, avatar_url):
     global last_reply_times
@@ -1014,7 +1053,7 @@ async def handle_guild_message(message: discord.Message, avatar_url):
 
     monika_reply = clean_monika_reply(monika_reply, bot.user.name, username)
 
-    emoji = await avatar_to_emoji(bot, message.guild, str(user.avatar.url))
+    emoji = await avatar_to_emoji(bot, message.guild, user)
 
     outfit = server_outfit_preferences.get(guild_id, get_time_based_outfit())
     sprite_link = await get_sprite_link(emotion, outfit)
@@ -2282,3 +2321,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
