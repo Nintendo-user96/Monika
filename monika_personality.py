@@ -106,6 +106,8 @@ class MonikaTraits:
             "All-knowing": "Speaks as though she already knows what’s coming.",
         }
 
+        self.dokituber_personality_modes = {}
+
         self.relationship_modes = {
             "Default": (
                 "You want to be with the user in a romantic and sexual way. "
