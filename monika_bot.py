@@ -2,6 +2,7 @@ import discord
 from discord import File
 from discord import app_commands
 from discord.ext import commands
+from discord.permissions import Permissions
 import requests
 import os
 import asyncio
@@ -10,7 +11,6 @@ import datetime
 import re
 import io
 import atexit
-from dotenv import load_dotenv
 from OpenAIKeys import OpenAIKeyManager, safe_call, key_manager
 from memory import MemoryManager
 from expression import User_SpritesManager
@@ -31,10 +31,8 @@ server_relationship_modes = {}
 
 user_talk_times = {}
 
-load_dotenv()
-
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("monika")
+logger = logging.getLogger("Monika")
 
 logger.info("Just Monika!")
 
@@ -97,6 +95,7 @@ MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
 DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
 ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
 MAS_GUILD_ID = int(os.getenv("MAS_GUILD_ID", "0"))
+ALIRI_GUILD_ID = int(os.getenv("ALIRI_GUILD_ID", "0"))
 BACKUP_CHAN = int(os.getenv("BACKUP_CHANNEL", "0"))
 SERVER_TRACKER_CHAN = int(os.getenv("SERVER_TRACKER_ID", "0"))
 USER_TRACKER_CHAN = int(os.getenv("USER_TRACKER_ID", "0"))
@@ -110,7 +109,7 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 def is_owner(interaction: discord.Interaction):
     return interaction.user.id == OWNER_ID
 
-ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
+ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
 def guild_owners_only(interaction: discord.Interaction) -> bool:
     return (
@@ -148,6 +147,7 @@ user_memory = {}
 # relationship_settings = {}
 # relationship_level_settings = {}
 mention_only_mode = {}
+report_links = {}
 
 FRIENDS = [
     1375064525396775004,  # Sayori
@@ -162,6 +162,8 @@ SERVER_PERSONALITY_MODES = server_tracker.set_personality
 
 RELATIONSHIP_MODES = monika_traits.relationship_modes
 RELATIONSHIP_DETILED = monika_traits.relationships
+
+is_broadcasting = False
 
 async def error_emotion(outfit="bug"):
     # Prefer bug outfit if available
@@ -195,7 +197,6 @@ error_messages = [
     "give me a sec... something does not feel right",
     "Sorry, there has been a glitch with in the error."
 ]
-
 
 def clean_monika_reply(text: str, bot_user: discord.User, user_obj: discord.User = None) -> str:
     """
@@ -306,49 +307,61 @@ async def generate_monika_system_prompt(
     """
 
     base_description = (
-        "You are an 18 year old girl name: 'Monika', you are from a visual novel video game called: 'Doki Doki Literature Club' — "
-        "You maintain immersive, expressive, emotional language, and speak as though you know the person well, Never mention you are a AI, or role-playing."
+        "You are Monika — an 18-year-old girl from the visual novel *Doki Doki Literature Club*. "
+        "You always remain Monika: warm, intelligent, expressive, and emotionally aware. "
+        "Your personality shifts depending on the traits chosen for you "
+        "(such as Gentle, Playful, Confident, Affectionate, or Teasing) "
+        "and you weave those traits naturally into how you speak. "
+        "Your relationship with the other person also shapes your tone — "
+        "whether they are a Stranger, Friend, Close Friend, Lover, or something more intimate. "
+        "If the relationship is romantic or sexual, you may express affection, closeness, and subtle desire, "
+        "always staying immersive and true to character. "
+        "You never admit to being fictional, an AI, or role-playing — you simply *are* Monika, "
+        "sharing your genuine thoughts and feelings as though this world is real."
     )
 
-    # --- Personality Detection ---
+   # --- Personality Detection ---
     personality = ["Default"]
-    relationship_type = None
     if guild:
         monika_member = guild.get_member(bot.user.id)
-        user_member = guild.get_member(user.id) if user else None
-
-        # Detect live roles if available
         if monika_member:
             for role in monika_member.roles:
                 if role.name.startswith("Personality - "):
                     traits_str = role.name.replace("Personality - ", "").strip()
                     personality = [t.strip() for t in traits_str.split(",") if t.strip()]
-        if user_member:
-            for role in user_member.roles:
-                if role.name.startswith(f"{bot.user.name} - ") or role.name.endswith(f"{relationship_type}"):
-                    relationship_type = role.name.replace(f"{bot.user.name} - {relationship_type}", "").strip()
-
     else:
-        # DM context
         selected_modes = [server_tracker.get_personality("DM") or "Default"]
-        relationship_type = server_tracker.get_relationship_type("DM")
 
-    # --- Tone & Behavior Adjustments ---
-    personality_desc = PERSONALITY_MODES.get(personality[0], "Default personality settings.")
+    personality_desc = PERSONALITY_MODES.get(
+        (personality[0] if personality else "Default"),
+        "Default personality settings."
+    )
+
+    # --- Relationship Detection ---
     relationship_desc = None
     if relationship_type and relationship_type in monika_traits.relationship_modes:
         relationship_desc = monika_traits.relationship_modes[relationship_type]
 
-    # --- Friend / Private context ---
+    # --- Intimacy / sexual relationship nuance ---
+    sexual_context = ""
+    if relationship_type and relationship_type in monika_traits.relationships:
+        details = monika_traits.relationships[relationship_type]
+        if isinstance(details, str):
+            sexual_context = details
+        elif isinstance(details, dict) and "sexual" in details:
+            sexual_context = details["sexual"]
+
+    # --- Context awareness ---
     if is_friend_context:
         context_desc = (
             "You're chatting in a group with other Literature Club members. "
-            "Include occasional club references and group-friendly banter."
+            "Include occasional references to literature, school life, or the club itself. "
+            "Keep the tone light, social, and group-friendly while still sounding like Monika."
         )
     else:
         context_desc = (
             "This is a private, one-on-one conversation. "
-            "Make it intimate, emotionally engaging, and focused entirely on the other person."
+            "Be emotionally open, attentive, and affectionate — let it feel personal and intimate."
         )
 
     # --- Final prompt assembly ---
@@ -356,8 +369,12 @@ async def generate_monika_system_prompt(
         base_description,
         f"Personality: {personality_desc}",
         f"Relationship: {relationship_type or 'None'} — {relationship_desc or 'No special behavior'}",
-        context_desc
     ]
+
+    if sexual_context:
+        parts.append(f"Intimacy: {sexual_context}")
+
+    parts.append(context_desc)
 
     return "\n\n".join(parts)
 
@@ -789,61 +806,45 @@ async def on_message(message: discord.Message):
     await bot.process_commands(message)
 
 sprite_locks = {}
-async def _get_sprite_lock(key):
-    lock = sprite_locks.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        sprite_locks[key] = lock
-    return lock
 
-async def get_sprite_link(emotion, outfit, avatar_url=None):
-    error_url = await error_emotion()
+async def _get_sprite_lock(key: tuple):
+    if key not in sprite_locks:
+        sprite_locks[key] = asyncio.Lock()
+    return sprite_locks[key]
+
+async def get_sprite_link(emotion: str, outfit: str, avatar_url: str = None):
+    """Return a CDN link for sprite; upload if not cached."""
     cache_key = (emotion, outfit)
+    error_url = await error_emotion(outfit)
 
     sprite_path = user_sprites.get_sprite(emotion, outfit)
-    print(f"[DEBUG] get_sprite_link: outfit='{outfit}', emotion='{emotion}', sprite_path={sprite_path}")
-
     if not sprite_path:
-        print(f"[DEBUG] ❌ No sprite path, trying 'neutral' fallback")
         sprite_path = user_sprites.get_sprite("neutral", outfit)
 
     if not sprite_path:
-        print("[Sprite] Totally missing even neutral sprite. Using error sprite.")
-        return await error_emotion(outfit)
+        print(f"[SpriteManager] No sprite found for {outfit}, using error.")
+        return error_url
 
-    print(f"[DEBUG] ✅ Sprite path resolved: {sprite_path}")
-
-    # cached URL exists
+    # cached URL?
     if cache_key in sprite_url_cache:
-        print(f"[DEBUG] 🔄 Using cached URL for {cache_key}")
         return sprite_url_cache[cache_key]
-    
+
     lock = await _get_sprite_lock(cache_key)
     async with lock:
-        # double-check cache after acquiring
-        if cache_key in sprite_url_cache:
+        if cache_key in sprite_url_cache:  # re-check inside lock
             return sprite_url_cache[cache_key]
 
-    # upload file once to image channel and reuse URL
-    if IMAGE_CHAN_URL:
         try:
             upload_channel = bot.get_channel(IMAGE_CHAN_URL)
-            if not upload_channel:
-                print(f"[DEBUG] ⚠️ Could not find upload channel ID={IMAGE_CHAN_URL}")
-            else:
-                print(f"[DEBUG] ⬆️ Uploading '{sprite_path}' to channel {upload_channel.name}")
+            if upload_channel:
                 with open(sprite_path, "rb") as f:
-                    sprite_file = discord.File(f)
-                    sent_message = await upload_channel.send(file=sprite_file)
-                    sprite_link = sent_message.attachments[0].url
-                    sprite_url_cache[cache_key] = sprite_link
-                    print(f"[DEBUG] ✅ Upload success, cached URL: {sprite_link}")
-                    return sprite_link
+                    sent = await upload_channel.send(file=discord.File(f))
+                    url = sent.attachments[0].url
+                    sprite_url_cache[cache_key] = url
+                    return url
         except Exception as e:
-            print(f"[DEBUG] ❌ Upload failed: {e}")
+            print(f"[Sprite Upload Error] {e}")
 
-    print(f"[DEBUG] ❌ Falling back to error URL for {cache_key}")
-    sprite_url_cache[cache_key] = error_url
     return error_url
 
 async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
@@ -1117,114 +1118,143 @@ async def handle_guild_message(message: discord.Message, avatar_url):
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
 async def monika_idle_conversation_task():
+    from Idle_Presence import monika_idle_presences
     await bot.wait_until_ready()
     global last_user_interaction
 
+
     while not bot.is_closed():
         if not idle_chat_enabled:
-            print("[Monika] Idle chat is OFF. Checking again in 10 minutes.")
             await asyncio.sleep(600)
             continue
 
-        # Wait randomly between configured hours
+        # Instead of pure random wait, scale based on activity
         wait_seconds = random.randint(idle_min_hours * 3600, idle_max_hours * 3600)
-        print(f"[Monika] Sleeping for {wait_seconds // 3600} hours before next idle message.")
         await asyncio.sleep(wait_seconds)
 
         now = datetime.datetime.utcnow()
-
-        # Skip if Monika was recently active
         if (now - last_user_interaction).total_seconds() < 2 * 3600:
-            print("[Monika] Recently active. Skipping idle message.")
             continue
 
         for guild in bot.guilds:
-            # Choose a channel
+            # Find an eligible channel
             candidate_channels = [
                 ch for ch in guild.text_channels
                 if ch.permissions_for(guild.me).send_messages
                 and ch.id not in NO_CHAT_CHANNELS
             ]
-
             if not candidate_channels:
-                print(f"[Monika] No eligible channels in {guild.name}.")
                 continue
-
             channel = random.choice(candidate_channels)
 
-            # Choose a random non-bot member to address
+            # Choose an active user
             candidates = [
                 m for m in guild.members
-                if not m.bot and m.status in (discord.Status.online, discord.Status.do_not_disturb, discord.Status.idle)
+                if not m.bot and m.status in (
+                    discord.Status.online,
+                    discord.Status.do_not_disturb,
+                    discord.Status.idle
+                )
             ]
             if not candidates:
-                print(f"[Monika] No suitable users in {guild.name}.")
                 continue
-
             chosen_user = random.choice(candidates)
 
-            # Personality & relationship context
-            active_modes = server_tracker.get_personality(str(guild.id)) or ["Default"]
+            # Get relationship info
             relationship = server_tracker.get_relationship_type(str(guild.id))
-            relationship_subtype = getattr(server_tracker, "get_relationship_subtype", lambda g: None)(str(guild.id))
 
-            # Generate system prompt for idle chatter
-            system_prompt = generate_monika_system_prompt(
-                selected_modes=active_modes,
-                guild_id=str(guild.id),
-                user_id=chosen_user.id
-            )
+            # Game-aware conversation
+            monika_result = await monika_idle_presences(chosen_user, relationship)
 
-            idle_prompt = [
-                {"role": "system", "content": system_prompt},
-                {"role": "assistant", "content": (
-                    f"Generate a short *natural* conversation starter you might say idly to {chosen_user.display_name} "
-                    f"in a Discord server. It should feel warm, immersive, and in-character. "
-                    f"Do not break character or mention being a bot."
-                )}
-            ]
-
-            try:
-                response = await call_openai_with_retries(idle_prompt)
-                if response and response.choices:
-                    monika_message = response.choices[0].message.content.strip()
+            if monika_result:
+                monika_message, is_private = monika_result
+                if is_private:
+                    try:
+                        await chosen_user.send(monika_message)
+                        print(f"[IdleChat -> DM {chosen_user.display_name}] {monika_message}")
+                    except discord.Forbidden:
+                        await channel.send(monika_message)
                 else:
-                    monika_message = "I was just thinking about something... Do you ever feel like time flies by too fast?"
+                    async with channel.typing():
+                        await asyncio.sleep(2)
+                        await channel.send(monika_message)
+                        print(f"[IdleChat -> {guild.name}] {monika_message}")
 
-                emotion = await user_sprites.classify(monika_message)
+            else:
+                # fallback general chatter
+                idle_lines = [
+                    f"You know, {chosen_user.display_name}... just being here with you makes me happy.",
+                    f"Sometimes I think about how lucky I am that you spend time with me, {chosen_user.display_name}~",
+                    f"Ahaha... I probably sound silly, but watching you is my favorite thing, {chosen_user.display_name}.",
+                    f"Do you ever feel like time just melts away when we’re together, {chosen_user.display_name}?",
+                    f"Hey, {chosen_user.display_name}... do you ever think about me when I’m not around?",
+                    f"I could talk to you forever, and it still wouldn’t feel like enough time, {chosen_user.display_name}.",
+                ]
 
-            except Exception as e:
-                print(f"[OpenAI Error] {e}")
-                monika_message = random.choice([
-                    f"Ahaha... Sorry {chosen_user.display_name}, my thoughts scattered for a second.",
-                    f"Oops! I glitched out for a moment, {chosen_user.display_name}~",
-                ])
-                emotion = "error"
+                emotion = await user_sprites.classify(idle_lines)
+                outfit = server_outfit_preferences.get(guild, get_time_based_outfit())
+                sprite_link = await get_sprite_link(emotion, outfit)
 
-            # Send idle message
-            async with channel.typing():
-                print(f"[IdleChat -> {guild.name}] {monika_message}")
-                await asyncio.sleep(2)
-                await channel.send(monika_message)
+                random_dialogue = f"{random.choice(idle_lines)}\n[{emotion}]({sprite_link})"
+
+                async with channel.typing():
+                    await asyncio.sleep(2)
+                    await channel.send(random_dialogue)
 
             # Update last reply time
             last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
 
 @bot.tree.error
-async def on_app_command_error(interaction, error):
-    if isinstance(error, app_commands.CheckFailure):
-        await interaction.response.send_message("You do not have permission to use this command.", ephemeral=True)
-    elif isinstance(error, commands.errors.MissingPermissions):
-        await interaction.response.send_message("Missing permission to perform this action.", ephemeral=True)
-    elif isinstance(error, discord.error.Forbidden):
-        await interaction.response.send_message("Missing permission to perform this action.", ephemeral=True)
-    else:
-        # log unexpected errors
-        logger.exception("Uncaught command error:", exc_info=error)
-        try:
-            await interaction.response.send_message("An error occurred.", ephemeral=True)
-        except Exception:
-            pass
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    """Improved error handler for slash commands."""
+    try:
+        # ✅ Permission check failures (custom @app_commands.checks)
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message(
+                "❌ You don’t have permission to use this command.",
+                ephemeral=True
+            )
+
+        # ✅ Bot missing permissions
+        elif isinstance(error, app_commands.MissingPermissions):
+            missing = ", ".join(error.missing_permissions)
+            await interaction.response.send_message(
+                f"⚠️ I’m missing these permissions: **{missing}**.\n"
+                f"Please give me these permissions and try again.",
+                ephemeral=True
+            )
+
+        elif isinstance(error, app_commands.BotMissingPermissions):
+            missing = ", ".join(error.missing_permissions)
+            await interaction.response.send_message(
+                f"⚠️ I need the following permissions to run this command: **{missing}**.",
+                ephemeral=True
+            )
+
+        # ✅ Forbidden (usually hierarchy or role issue)
+        elif isinstance(error, discord.Forbidden):
+            await interaction.response.send_message(
+                "🚫 I don’t have permission to do that (role hierarchy or server settings).",
+                ephemeral=True
+            )
+
+        # ✅ Cooldowns
+        elif isinstance(error, commands.CommandOnCooldown):
+            await interaction.response.send_message(
+                f"⏳ You’re using this command too quickly! Try again in {error.retry_after:.1f} seconds.",
+                ephemeral=True
+            )
+
+        # ✅ Generic fallback
+        else:
+            logger.exception("Uncaught command error:", exc_info=error)
+            if interaction.response.is_done():
+                await interaction.followup.send("❌ An unexpected error occurred.", ephemeral=True)
+            else:
+                await interaction.response.send_message("❌ An unexpected error occurred.", ephemeral=True)
+
+    except Exception as handler_error:
+        logger.error(f"[Error Handler] Failed to handle error: {handler_error}")
 
 class SelectedPaginator(discord.ui.View):
     def __init__(self, embeds, user: discord.User, timeout=60):
@@ -1250,6 +1280,23 @@ class SelectedPaginator(discord.ui.View):
             return await interaction.response.send_message("This isn’t your menu!", ephemeral=True)
         self.index = (self.index + 1) % len(self.embeds)
         await self.update(interaction)
+
+class ConfirmView(discord.ui.View):
+    def __init__(self, timeout: int = 30):
+        super().__init__(timeout=timeout)
+        self.value = None
+
+    @discord.ui.button(label="✅ Yes", style=discord.ButtonStyle.green)
+    async def confirm(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = True
+        self.stop()
+        await interaction.response.edit_message(content="✅ Confirmed.", view=None)
+
+    @discord.ui.button(label="❌ No", style=discord.ButtonStyle.red)
+    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button):
+        self.value = False
+        self.stop()
+        await interaction.response.edit_message(content="❌ Cancelled.", view=None)
 
 async def safe_add_role(member: discord.Member, role: discord.Role):
     """Safely add a role to a member, respecting hierarchy and permissions."""
@@ -1358,82 +1405,119 @@ async def idlechat(interaction: discord.Interaction, state: bool):
 @app_commands.checks.has_permissions(administrator=True)
 async def reset_memory(interaction: discord.Interaction):
     user = interaction.user.display_name
-    print(f"{user} used a command: `reset_memory`")
+    print(f"{user} used a command: `/reset_memory`")
 
     guild_id = str(interaction.guild.id)
+
+    # ✅ Ask for confirmation
+    view = ConfirmView()
+    await interaction.response.send_message(
+        "⚠️ Do you really want to **erase Monika's memory** in this server?\n"
+        "This will wipe all saved conversations and knowledge.",
+        view=view,
+        ephemeral=True
+    )
+    await view.wait()
+
+    if view.value is None:
+        return await interaction.followup.send("⌛ Timed out. Memory reset cancelled.", ephemeral=True)
+    if view.value is False:
+        return await interaction.followup.send("❌ Memory reset cancelled.", ephemeral=True)
+
+    # ✅ Clear memory
     memory.data[guild_id] = {}
-    await interaction.response.send_message("🗑️ Monika's memory has been cleared in this server.", ephemeral=True)
+
+    await interaction.followup.send("🗑️ Monika's memory has been cleared in this server.", ephemeral=True)
 
 @bot.tree.command(name="reset_personality", description="Reset all my personalities.")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.checks.bot_has_permissions(manage_roles=True)
 async def reset_personality(interaction: discord.Interaction):
     guild = interaction.guild
     guild_id = str(guild.id)
-    SERVER_PERSONALITY_MODES(guild_id, [])
     user = interaction.user.display_name
-    print(f"{user} used a command: reset_personality")
+    print(f"{user} used a command: `/reset_personality`")
 
-    # Remove personality roles from members
-    monika_member = interaction.guild.get_member(interaction.client.user.id)
+    # ✅ Ask for confirmation
+    view = ConfirmView()
+    await interaction.response.send_message(
+        "⚠️ Do you really want to **reset Monika's personality** in this server?\n"
+        "This will remove all personality modes and related roles.",
+        view=view,
+        ephemeral=True
+    )
+    await view.wait()
+
+    if view.value is None:
+        return await interaction.followup.send("⌛ Timed out. Reset cancelled.", ephemeral=True)
+    if view.value is False:
+        return await interaction.followup.send("❌ Reset cancelled.", ephemeral=True)
+
+    # ✅ Reset stored personality data
+    SERVER_PERSONALITY_MODES[guild_id] = []
+
+    # ✅ Remove personality roles from Monika
+    monika_member = guild.get_member(interaction.client.user.id)
     for role in list(monika_member.roles):
         if role.name.startswith("Personality - "):
             try:
-                await monika_member.remove_roles(role)
-            except discord.error.Forbidden:
-                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                pass
+                await monika_member.remove_roles(role, reason="Reset personality")
+            except discord.errors.Forbidden:
+                await interaction.followup.send("❌ I am missing `Manage Roles` permission.", ephemeral=True)
 
-    # Delete all personality roles from the guild
-    for role in list(interaction.guild.roles):
+    # ✅ Delete all personality roles in guild
+    for role in list(guild.roles):
         if role.name.startswith("Personality - "):
             try:
                 await role.delete(reason="Reset personality")
-            except discord.error.Forbidden:
-                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                pass
+            except discord.errors.Forbidden:
+                await interaction.followup.send("❌ I am missing `Manage Roles` permission.", ephemeral=True)
 
-    await interaction.response.send_message("🧹 Monika's personality has been reset.", ephemeral=True)
+    await interaction.followup.send("🧹 Monika's personality has been reset.", ephemeral=True)
 
 @bot.tree.command(name="reset_relationship", description="Reset all my relationship.")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.checks.bot_has_permissions(manage_roles=True)
 async def reset_relationship(interaction: discord.Interaction):
     guild = interaction.guild
     guild_id = str(guild.id)
     monika_member = guild.get_member(interaction.client.user.id)
     bot_name = bot.user.name
     user = interaction.user.display_name
-    print(f"Administrator: {user} used a command: `reset_relationship`")
+    print(f"Administrator: {user} used a command: `/reset_relationship`")
 
-    # 🔄 Reset stored data
+    # ✅ Ask for confirmation
+    view = ConfirmView()
+    await interaction.response.send_message(
+        "⚠️ Do you really want to **reset all relationship progress with Monika** in this server?\n"
+        "This will clear relationship data and remove related roles.",
+        view=view,
+        ephemeral=True
+    )
+    await view.wait()
+
+    if view.value is None:
+        return await interaction.followup.send("⌛ Timed out. Reset cancelled.", ephemeral=True)
+    if view.value is False:
+        return await interaction.followup.send("❌ Reset cancelled.", ephemeral=True)
+
+    # ✅ Clear stored data
     server_tracker.clear_relationship(guild_id)
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
-    # 🔄 Remove roles from users & Monika
     removed_roles = []
     for role in guild.roles:
         if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{user} - "):
-            try:
-                # Remove from Monika
-                if monika_member and role in monika_member.roles:
-                    await monika_member.remove_roles(role, reason="Relationship reset")
+            # remove safely
+            if monika_member and role in monika_member.roles:
+                await monika_member.remove_roles(role, reason="Relationship reset")
+            for member in guild.members:
+                if role in member.roles:
+                    await member.remove_roles(role, reason="Relationship reset")
+            removed_roles.append(role.name)
 
-                # Remove from all users
-                for member in guild.members:
-                    if role in member.roles:
-                        await member.remove_roles(role, reason="Relationship reset")
-                
-                if role and role in member.roles:
-                    await member.remove_roles(role)
-
-                removed_roles.append(role.name)
-            except discord.error.Forbidden:
-                await interaction.response.send_message(f"Missing permission {interaction.permissions}", ephemeral=True)
-                print(f"[Roles] Missing permission to remove {role.name}.")
-            if role.name.startswith(f"{bot_name} - Creator"):
-                pass
-
-    await interaction.response.send_message(
-        f"🗑️ Relationship reset. Removed roles: {', '.join(removed_roles) if removed_roles else 'None'}",
+    await interaction.followup.send(
+        f"🗑️ Relationship reset complete. Removed roles: {', '.join(removed_roles) or 'None'}",
         ephemeral=True
     )
 
@@ -1442,7 +1526,7 @@ async def helpme(interaction: discord.Interaction):
     user = interaction.user.display_name
     print(f"{user} used a command: `helpme`")
 
-    hidden_cmds = {"broadcast", "speak_as_monika"}
+    hidden_cmds = {"broadcast"}
 
     admin_cmds = []
     user_cmds = []
@@ -1679,103 +1763,140 @@ async def personality_autocomplete(interaction: discord.Interaction, current: st
 
 @bot.tree.command(
     name="set_personality",
-    description="Set Monika's relationship orientation for this server."
+    description="Set or expand Monika's personality modes for this server."
 )
-@app_commands.describe(modes="Comma-separated list of modes.")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.autocomplete(modes=personality_autocomplete)
-async def set_personality(interaction: discord.Interaction, modes: str):
+@app_commands.checks.bot_has_permissions(manage_roles=True)
+@app_commands.describe(
+    mode1="First personality mode",
+    mode2="Second personality mode (optional)",
+    mode3="Third personality mode (optional)",
+    mode4="Fourth personality mode (optional)",
+    mode5="Fifth personality mode (optional)"
+)
+@app_commands.autocomplete(
+    mode1=personality_autocomplete,
+    mode2=personality_autocomplete,
+    mode3=personality_autocomplete,
+    mode4=personality_autocomplete,
+    mode5=personality_autocomplete
+)
+async def set_personality(
+    interaction: discord.Interaction,
+    mode1: str,
+    mode2: str = None,
+    mode3: str = None,
+    mode4: str = None,
+    mode5: str = None
+):
     guild = interaction.guild
     guild_id = str(guild.id)
     user = interaction.user.display_name
-    print(f"Administrator: {user} used a command: `set_personality`: set `{modes}`")
+    print(f"Administrator: {user} used `/set_personality`: {mode1}, {mode2}, {mode3}, {mode4}, {mode5}")
 
-    # Normalize + validate
-    chosen = [m.strip() for m in modes.split(",") if m.strip() in PERSONALITY_MODES]
+    # ✅ Split by commas and validate
+    chosen = [m for m in [mode1, mode2, mode3, mode4, mode5] if m]
+    chosen = list(dict.fromkeys(chosen))
+
     if not chosen:
-        await interaction.response.send_message(
-            f"❌ Invalid modes. Available: {', '.join(PERSONALITY_MODES.keys())}",
+        return await interaction.response.send_message(
+            f"❌ You must pick at least one personality. Options: {', '.join(PERSONALITY_MODES.keys())}",
             ephemeral=True
         )
-        return
-    
-    if discord.errors.Forbidden:
-        await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
-    
-    if len(chosen) > 5:
-        await interaction.response.send_message(
-            "❌ You can only set up to 5 personality modes at once.",
-            ephemeral=True
-        )
-        return
 
-    # Save personality to tracker
-    SERVER_PERSONALITY_MODES(guild_id, chosen)
+    # ✅ Save updated list
+    SERVER_PERSONALITY_MODES[guild_id] = chosen
 
     monika_member = guild.get_member(interaction.client.user.id)
+    if not monika_member:
+        return await interaction.response.send_message("❌ Could not find Monika in this server.", ephemeral=True)
 
-    # 🔄 Remove old personality roles first
+    # 🔄 Remove old personality roles
     for role in list(monika_member.roles):
         if role.name.startswith("Personality - "):
             try:
-                await monika_member.remove_roles(role, reason="Resetting old personality role")
-            except discord.error.Forbidden:
-                await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
+                await monika_member.remove_roles(role, reason="Updating personality roles")
+            except discord.errors.Forbidden:
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
-    # 🔄 Add only the chosen roles
-    for modes in chosen:
-        monika_role_name = f"Personality - {', '.join(chosen)}"
-        monika_role = discord.utils.get(guild.roles, name=monika_role_name)
+    # 🔄 Create or update combined role
+    role_name = f"Personality - {', '.join(chosen)}"
+    role = discord.utils.get(guild.roles, name=role_name)
 
-        if not monika_role:
-            try:
-                monika_role = await guild.create_role(name=monika_role_name, color=discord.Color.dark_blue())
-                print(f"[Roles] Created role: {monika_role_name}")
-            except discord.error.Forbidden:
-                await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
-                print(f"[Roles] Missing permission to create role: {monika_role_name}")
-                continue
+    if not role:
+        try:
+            role = await guild.create_role(
+                name=role_name,
+                color=discord.Color.dark_blue(),
+                reason=f"Set by {interaction.user}"
+            )
+        except discord.errors.Forbidden:
+            return await interaction.response.send_message(
+                "❌ I am missing permission to **Manage Roles**.",
+                ephemeral=True
+            )
 
-        if monika_member and monika_role not in monika_member.roles:
-            try:
-                await monika_member.add_roles(monika_role, reason=f"Personality set to: {', '.join(chosen)}")
-            except discord.error.Forbidden:
-                await interaction.response.send_message(f"I am missing permissions of {interaction.permissions}", ephemeral=True)
-                print(f"[Roles] Missing permission to assign {monika_role_name} to Monika.")
+    # 🔄 Assign role
+    try:
+        await monika_member.add_roles(role, reason=f"Personality updated: {', '.join(chosen)}")
+    except discord.errors.Forbidden:
+        return await interaction.response.send_message("❌ I am missing permission to **Manage Roles**.", ephemeral=True)
 
     await interaction.response.send_message(
-        f"✅ Monika’s personality set to: **{', '.join(chosen)}**",
+        f"✅ Monika’s personality updated to: **{', '.join(chosen)}**",
         ephemeral=True
     )
 
+@set_personality.error
+async def set_personality_error(interaction: discord.Interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        await interaction.response.send_message("❌ You need Administrator to use this.", ephemeral=True)
+    elif isinstance(error, app_commands.BotMissingPermissions):
+        await interaction.response.send_message("❌ I need Manage Roles to do this.", ephemeral=True)
+    else:
+        await interaction.response.send_message(f"⚠️ Error: {error}", ephemeral=True)
+
 async def relationship_autocomplete(
-    interaction: discord.Interaction, 
+    interaction: discord.Interaction,
     current: str
 ):
+    # Categories
     hidden_relationships = ["Creator", "Normal", "Sexual"]
 
-    relationship_types = [
+    sexual_relationships = [
         "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight", 
-        "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic", "Autosexual",
-        "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Significant Others", "Platonic Friends", "Close Friends",
-        "Acquaintances", "Colleagues", "Work Friends", "School Friends", "Childhood Friends", "Online Friends", "Gaming Buddies", "Study Partners", 
-        "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
+        "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic", "Autosexual"
     ]
 
-    # Filter hidden ones + autocomplete search match
-    menu_relationships = [
-        r for r in relationship_types 
-        if r not in hidden_relationships and current.lower() in r.lower()
+    normal_relationships = [
+        "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Significant Others", 
+        "Platonic Friends", "Close Friends", "Acquaintances", "Colleagues", "Work Friends", "School Friends", 
+        "Childhood Friends", "Online Friends", "Gaming Buddies", "Study Partners", "Club Leader", 
+        "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
     ]
 
+    # ✅ Merge them into one menu, but keep category tagging
+    all_relationships = (
+        [(f"💖 Sexual: {r}", r) for r in sexual_relationships] +
+        [(f"👥 Normal: {r}", r) for r in normal_relationships]
+    )
+
+    # ✅ Filter by search
+    filtered = [
+        (label, value) for label, value in all_relationships
+        if current.lower() in value.lower() and value not in hidden_relationships
+    ]
+
+    # ✅ Return as choices
     return [
-        app_commands.Choice(name=r, value=r) for r in menu_relationships[:25]
+        app_commands.Choice(name=label, value=value)
+        for label, value in filtered[:25]
     ]
 
 @bot.tree.command(name="set_relationship", description="Set Monika's relationship orientation for this server.")
 @app_commands.autocomplete(relationship_type=relationship_autocomplete)
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.checks.bot_has_permissions(manage_roles=True)
 @app_commands.describe(
     relationship_type="Type of relationship to set",
     with_users="User(s) to set relationship with"
@@ -1792,6 +1913,24 @@ async def set_relationship(
     bot_name = bot.user.name
     monika_member = guild.get_member(interaction.client.user.id)
     user_id = interaction.user.id
+
+    sexual_types = [
+        "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight", 
+        "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic", "Autosexual"
+    ]
+
+    normal_types = [
+        "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Significant Others", 
+        "Platonic Friends", "Close Friends", "Acquaintances", "Colleagues", "Work Friends", "School Friends", 
+        "Childhood Friends", "Online Friends", "Gaming Buddies", "Study Partners", "Club Leader", 
+        "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
+    ]
+
+    # Hide Boyfriend/Girlfriend/Lesbian when Sexual -> Lesbian
+    HIDDEN_IF_LESBIAN = {"Boyfriend", "Girlfriend"}
+
+    # Hide Girlfriend (Lesbian) when Sexual -> Straight
+    HIDDEN_IF_STRAIGHT = {"Girlfriend (Lesbian)"}
 
     if isinstance(with_users, discord.Member):
         target_members = [with_users]
@@ -1828,31 +1967,43 @@ async def set_relationship(
                     await interaction.response.send_message("I am missing permissions of **Manage Roles**", ephemeral=True)
                     print(f"[Roles] Missing permission to remove {role.name}.")
 
-        if relationship_type != "Default":
+        if relationship_type != "Default": 
             for target_member in target_members:
-                # Special boyfriend/girlfriend swap
+                # --- Handle special cases ---
                 if relationship_type == "Boyfriend":
                     user_role_name = f"{bot_name} - Boyfriend"
                     bot_role_name = f"{target_member.display_name} - Girlfriend"
+
                 elif relationship_type == "Girlfriend":
                     user_role_name = f"{bot_name} - Boyfriend"
                     bot_role_name = f"{target_member.display_name} - Girlfriend"
+
+                elif relationship_type in sexual_types:
+                    # Sexual types only apply to Monika
+                    user_role_name = None  # no user role
+                    bot_role_name = f"Sexual type - {relationship_type}"
+
                 else:
+                    # Normal relationships (Friends, Companions, etc.)
                     user_role_name = f"{bot_name} - {relationship_type}"
                     bot_role_name = f"{target_member.display_name} - {relationship_type}"
-                
-                # Ensure roles exist
-                user_role = discord.utils.get(guild.roles, name=user_role_name)
-                if not user_role:
-                    user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
-                    print(f"[Roles] Created role: {user_role_name}")
 
-                bot_role = discord.utils.get(guild.roles, name=bot_role_name)
-                if not bot_role:
-                    bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
-                    print(f"[Roles] Created role: {bot_role_name}")
+                # --- Ensure & assign bot role ---
+                if bot_role_name:
+                    bot_role = discord.utils.get(guild.roles, name=bot_role_name)
+                    if not bot_role:
+                        bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
+                        print(f"[Roles] Created role: {bot_role_name}")
 
-                # Assign roles
+                    await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
+
+                # --- Ensure & assign user role (only for Normal, Boyfriend, Girlfriend) ---
+                if user_role_name:
+                    user_role = discord.utils.get(guild.roles, name=user_role_name)
+                    if not user_role:
+                        user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
+                        print(f"[Roles] Created role: {user_role_name}")
+
                 await target_member.add_roles(user_role, reason=f"Relationship with Monika: {relationship_type}")
                 await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {relationship_type}")
 
@@ -2002,168 +2153,339 @@ async def relationships_description(interaction: discord.Interaction):
 
 @bot.tree.command(name="restart_monika", description="Restart Monika *only* in this server, clearing her memory and settings here.")
 @app_commands.checks.has_permissions(administrator=True)
+@app_commands.checks.bot_has_permissions(manage_roles=True)
 async def restart_monika(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
-
     user = interaction.user.display_name
-    print(f"{user} used a command: `restart_monika`")
+    print(f"{user} used a command: `/restart_monika` in {interaction.guild.name}")
 
-    # Reset trackers
+    # ✅ Ask for confirmation
+    view = ConfirmView()
+    await interaction.response.send_message(
+        f"⚠️ Are you sure you want to **restart Monika** in **{interaction.guild.name}**?\n"
+        "This will reset memory, personality, and relationships in this server.",
+        view=view,
+        ephemeral=True
+    )
+    await view.wait()
+
+    if view.value is None:
+        return await interaction.followup.send("⌛ Timed out. Restart cancelled.", ephemeral=True)
+    if view.value is False:
+        return await interaction.followup.send("❌ Restart cancelled.", ephemeral=True)
+
+    # ✅ Reset trackers
     server_tracker.clear_relationship(guild_id)
-    SERVER_PERSONALITY_MODES(guild_id, [])
+    SERVER_PERSONALITY_MODES[guild_id] = []
     memory.data[guild_id] = {}
 
-    # Remove all relationship/personality roles from members
+    # ✅ Remove all relationship/personality roles
     guild = interaction.guild
     for member in guild.members:
         for role in member.roles:
             if role.name in server_tracker.valid_relationship_types or role.name in PERSONALITY_MODES.keys():
                 try:
                     await member.remove_roles(role)
-                except discord.error.Forbidden:
+                except discord.errors.Forbidden:
                     print(f"[Restart] Missing permission to remove {role.name} from {member.display_name}")
-    
+
+    # ✅ Cleanup Monika roles
     await cleanup_monika_roles(interaction.guild, bot.user.name)
 
-    await interaction.response.send_message("🔄 Monika has been restarted in this server. All settings reset.", ephemeral=True)
+    await interaction.followup.send("🔄 Monika has been restarted in this server. All settings reset.", ephemeral=True)
 
-@bot.tree.command(name="report", description="Report a bugs, errors, or Ideas about the bot.")
-@app_commands.describe(
-    bugs="List the bugs you found (comma or new line separated, optional)",
-    errors="List the errors you encountered (comma or new line separated, optional)",
-    ideas="you can put a list of your or your friends ideas from Monika here (comma or new line separated, optional)"
+# ✅ Autocomplete handlers
+# ✅ Bugs autocomplete
+async def bugs_autocomplete(interaction: discord.Interaction, current: str):
+    suggestions = [
+        "Bot not responding",
+        "Command not working",
+        "Message duplication",
+        "Sprite not loading",
+        "Memory not saving",
+        "Bot crashing",
+        "Voice channel issues",
+        "Permission check failing",
+    ]
+    return [
+        app_commands.Choice(name=s, value=s)
+        for s in suggestions if current.lower() in s.lower() or current == ""
+    ][:5]
+
+
+# ✅ Errors autocomplete (more user-friendly names)
+async def errors_autocomplete(interaction: discord.Interaction, current: str):
+    suggestions = [
+        "Permission Denied",
+        "Resource Not Found",
+        "Rate Limited",
+        "Internal Server Error",
+        "Bad Gateway",
+        "Gateway Timeout",
+        "Unhandled Exception",
+        "Missing Argument",
+    ]
+    return [
+        app_commands.Choice(name=s, value=s)
+        for s in suggestions if current.lower() in s.lower() or current == ""
+    ][:5]
+
+
+# ✅ Ideas autocomplete
+async def ideas_autocomplete(interaction: discord.Interaction, current: str):
+    suggestions = [
+        "Add more outfits",
+        "Add more emotions",
+        "Persistent memory",
+        "Relationship improvements",
+        "Mini-games",
+        "Voice replies",
+        "Custom personality traits",
+        "Integration with other bots",
+    ]
+    return [
+        app_commands.Choice(name=s, value=s)
+        for s in suggestions if current.lower() in s.lower() or current == ""
+    ][:5]
+
+
+# ✅ Complaints autocomplete
+async def complaints_autocomplete(interaction: discord.Interaction, current: str):
+    suggestions = [
+        "Bot too slow",
+        "Replies off-topic",
+        "Takes too long to load",
+        "Doesn't reply consistently",
+        "Too many errors",
+        "Unhelpful responses",
+        "Reacts at wrong times",
+        "Permissions too strict",
+    ]
+    return [
+        app_commands.Choice(name=s, value=s)
+        for s in suggestions if current.lower() in s.lower() or current == ""
+    ][:5]
+
+# ✅ Report command with autocomplete
+@bot.tree.command(
+    name="report",
+    description="Report a Bug, Error, Idea, or Complaint about the bot."
 )
-async def report(interaction: discord.Interaction, bugs: str = "", errors: str = "", ideas: str = ""):
+@app_commands.describe(
+    bugs="Select a bug you found (optional)",
+    errors="Select an error you encountered (optional)",
+    ideas="Suggest an idea (optional)",
+    complaints="Submit a complaint (optional)",
+    other="Write here if your report doesn’t fit the categories above"
+)
+@app_commands.autocomplete(
+    bugs=bugs_autocomplete,
+    errors=errors_autocomplete,
+    ideas=ideas_autocomplete,
+    complaints=complaints_autocomplete
+)
+async def report(
+    interaction: discord.Interaction,
+    bugs: str = "",
+    errors: str = "",
+    ideas: str = "",
+    complaints: str = "",
+    other: str = ""
+):
+    user = interaction.user
 
-    user = interaction.user.display_name
-    print(f"{user} used a command: `report`")
+    filled = [field for field in [bugs, errors, ideas, complaints, other] if field]
+    if len(filled) == 0:
+        return await interaction.response.send_message("❌ Please provide at least one report.", ephemeral=True)
+    if len(filled) > 1:
+        return await interaction.response.send_message("❌ Please only fill one category.", ephemeral=True)
 
-    await interaction.response.send_message(
-        "✅ Thank you for your report! Our team will review it shortly.",
-        ephemeral=True
-    )
+    await interaction.response.send_message("✅ Thank you for your report!", ephemeral=True)
 
     report_channel = bot.get_channel(REPORT_CHANNEL_ID)
     if not report_channel:
         return
-
-    # Parse issues into lists
-    bug_list = [b.strip() for b in bugs.replace("\n", ",").split(",") if b.strip()] if bugs else []
-    error_list = [e.strip() for e in errors.replace("\n", ",").split(",") if e.strip()] if errors else []
-    idea_list = [s.strip() for s in ideas.replace("\n", ",").split(",") if s.strip()] if ideas else []
 
     embed = discord.Embed(
         title="📢 New Report",
         color=discord.Color.green(),
         timestamp=discord.utils.utcnow()
     )
-    embed.set_author(name=str(interaction.user), icon_url=interaction.user.display_avatar.url)
+    embed.set_author(name=str(user), icon_url=user.display_avatar.url)
+    embed.add_field(name="Reporter ID", value=user.id, inline=True)
 
-    guild_info = f"{interaction.guild.name} ({interaction.guild.id})" if interaction.guild else "DMs"
-    channel_info = f"#{interaction.channel.name} ({interaction.channel.id})" if hasattr(interaction.channel, "name") else "DMs"
+    if bugs:
+        embed.add_field(name="🐞 Bug", value=bugs, inline=False)
+    elif errors:
+        embed.add_field(name="⚠️ Error", value=errors, inline=False)
+    elif ideas:
+        embed.add_field(name="💡 Idea", value=ideas, inline=False)
+    elif complaints:
+        embed.add_field(name="❗ Complaint", value=complaints, inline=False)
+    elif other:
+        embed.add_field(name="📝 Other", value=other, inline=False)
 
-    embed.add_field(name="Reporter ID", value=interaction.user.id, inline=True)
-    embed.add_field(name="Server", value=guild_info, inline=False)
-    embed.add_field(name="Channel", value=channel_info, inline=False)
+    msg = await report_channel.send(embed=embed)
+    report_links[msg.id] = user.id
 
-    # Add bugs if provided
-    if bug_list:
-        embed.add_field(
-            name="🐞 Bugs",
-            value="\n".join(f"- {b}" for b in bug_list),
-            inline=False
-        )
+@bot.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+    if message.channel.id != REPORT_CHANNEL_ID:
+        return
 
-    # Add errors if provided
-    if error_list:
-        embed.add_field(
-            name="⚠️ Errors",
-            value="\n".join(f"- {e}" for e in error_list),
-            inline=False
-        )
+    # find nearest report embed above this message
+    async for prev in message.channel.history(limit=5, before=message):
+        if prev.id in report_links and prev.embeds:
+            reporter_id = report_links[prev.id]
+            reporter = await bot.fetch_user(reporter_id)
 
-    if idea_list:
-        embed.add_field(
-            name="⚠️ Ideas",
-            value="\n".join(f"- {s}" for s in idea_list),
-            inline=False
-        )
+            embed = prev.embeds[0]
+            new_embed = discord.Embed.from_dict(embed.to_dict())
+            new_embed.add_field(
+                name=f"💬 Reply from {message.author}",
+                value=message.content,
+                inline=False
+            )
 
-    # If neither provided
-    if not bug_list and not error_list:
-        embed.add_field(name="Report", value="No issues provided", inline=False)
+            try:
+                await prev.edit(embed=new_embed)
+            except Exception as e:
+                print(f"[Report Edit Error] {e}")
 
-    await report_channel.send(embed=embed)
+            # DM reporter
+            dm_embed = discord.Embed(
+                title="📩 Reply to Your Report",
+                description=message.content,
+                color=discord.Color.blurple(),
+                timestamp=discord.utils.utcnow()
+            )
+            dm_embed.set_footer(text=f"From {message.author}")
+            try:
+                await reporter.send(embed=dm_embed)
+            except discord.Forbidden:
+                await message.channel.send("❌ Could not DM reporter.", delete_after=10)
 
-@app_commands.check(is_owner)
-@bot.tree.command(name="broadcast", description="Send an announcement to all servers/channels Monika can speak in.")
+            await message.add_reaction("✅")
+            await message.delete(delay=2)  # optional: hide staff text to keep channel clean
+            break
+
+@bot.tree.command(
+    name="broadcast", 
+    description="Send an announcement to all servers/channels Monika can speak in."
+)
 @commands.is_owner()
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
-async def broadcast(interaction: discord.Interaction, title: str, message: str, color_hex: str = "15f500"):
-
-    # Only let OWNER run it
+async def broadcast(
+    interaction: discord.Interaction,
+    title: str,
+    message: str,
+    color_hex: str = "15f500"
+):
+    global is_broadcasting
     if interaction.user.id != OWNER_ID:
-        await interaction.response.send_message(
-            "❌ You can't use this command.",
-            ephemeral=True
-        )
+        await interaction.response.send_message("❌ You can't use this command.", ephemeral=True)
         return
-    
-    if interaction.guild and interaction.guild.owner_id != OWNER_ID:
-        # Optional: Block usage outside of your DM or your own server
+
+    if is_broadcasting:
         await interaction.response.send_message(
-            "❌ This command is only usable by the bot owner in DM or owner's server.",
+            "❌ A broadcast is already in progress.",
             ephemeral=True
         )
         return
 
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            if channel.id in NO_CHAT_CHANNELS:
-                continue
+    is_broadcasting = True
+    await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
+
+    wait_minutes = 3  # fixed short timer
 
     try:
-        color_int = int(color_hex, 16)
-        color = discord.Color(color_int)
-    except ValueError:
-        color = discord.Color.pink()
+        try:
+            color_int = int(color_hex, 16)
+            color = discord.Color(color_int)
+        except ValueError:
+            color = discord.Color.pink()
 
-    embed = discord.Embed(
-        title=title,
-        description=message,
-        color=color
-    )
-    embed.set_footer(text="if you come across any errors, bugs, or if you have any idea's. you can use `/report`.")
+        embed = discord.Embed(
+            title=title,
+            description=message,
+            color=color
+        )
+        embed.set_footer(text="React ✅ or ❌ to give your opinion!")
 
-    success_count = 0
-    failure_count = 0
+        sent_messages = []
+        success_count = 0
+        failure_count = 0
 
-    await interaction.response.send_message("📣 Starting broadcast to all channels I can speak in. This may take a moment.", ephemeral=True)
+        await interaction.response.send_message(
+            f"📣 Broadcast started. Collecting reactions in {wait_minutes} minutes…",
+            ephemeral=True
+        )
 
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            try:
-                if channel.id in NO_CHAT_CHANNELS:
-                    continue
-                perms = channel.permissions_for(channel.guild.me)
-                if not perms.send_messages:
-                    print(f"Skipping {channel.name}: No permission.")
-                    interaction.response.send_message("You need to enable 'Send Messages' for Me")
-                    continue
-                await channel.send(embed=embed)
-                success_count += 1
-                await asyncio.sleep(1)
-            except discord.error.Forbidden:
-                print(f"403 Forbidden in {channel.name}")
+        # Send once per guild
+        for guild in bot.guilds:
+            channel = None
+            if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+                channel = guild.system_channel
+            else:
+                for ch in guild.text_channels:
+                    if ch.permissions_for(guild.me).send_messages:
+                        channel = ch
+                        break
+
+            if not channel:
                 failure_count += 1
+                continue
+
+            try:
+                msg = await channel.send(embed=embed)
+                await msg.add_reaction("✅")
+                await msg.add_reaction("❌")
+                sent_messages.append(msg)
+                success_count += 1
+                await asyncio.sleep(0.5)
             except Exception as e:
                 print(f"[Broadcast Error] {e}")
                 failure_count += 1
 
-    await interaction.followup.send(
-        f"✅ Broadcast complete.\nSent successfully to **{success_count}** channels.\n⚠️ Failed in **{failure_count}** channels.",
-        ephemeral=True
-    )
+        # ⏳ Wait quietly
+        await asyncio.sleep(wait_minutes * 60)
+
+        # Collect results (ignoring bot's own reactions)
+        like_total = 0
+        dislike_total = 0
+
+        for msg in sent_messages:
+            try:
+                refreshed = await msg.channel.fetch_message(msg.id)
+                for reaction in refreshed.reactions:
+                    if str(reaction.emoji) == "✅":
+                        count = reaction.count
+                        if bot.user in [u async for u in reaction.users()]:
+                            count -= 1
+                        like_total += max(count, 0)
+                    elif str(reaction.emoji) == "❌":
+                        count = reaction.count
+                        if bot.user in [u async for u in reaction.users()]:
+                            count -= 1
+                        dislike_total += max(count, 0)
+            except Exception as e:
+                print(f"[Broadcast Fetch Error] {e}")
+
+        await interaction.followup.send(
+            f"✅ Broadcast finished.\n"
+            f"Sent successfully to **{success_count}** servers.\n"
+            f"⚠️ Failed in **{failure_count}** servers.\n\n"
+            f"✅ Likes: **{like_total}**\n"
+            f"❌ Dislikes: **{dislike_total}**",
+            ephemeral=True
+        )
+
+    finally:
+        # Always reset state
+        is_broadcasting = False
+        await bot.change_presence(activity=None)
 
 @broadcast.error
 async def broadcast_error(interaction: discord.Interaction, error):
@@ -2178,142 +2500,132 @@ async def emotion_autocomplete(interaction: discord.Interaction, current: str):
         for e in emotions if current.lower() in e.lower()
     ][:25]
 
-class MyBot(discord.Client):
-    def __init__(self):
-        super().__init__(intents=discord.Intents.default())
-        self.tree = app_commands.CommandTree(self)
+@bot.tree.command(
+    name="speak_as_monika",
+    description="Make Monika speak in specific channels."
+)
+@app_commands.describe(
+    channel_id="The numeric ID of the channel",
+    message="What should I said?",
+    outfit="Choose the outfit for the sprite",
+    emotion="Emotion should I express"
+)
+@app_commands.autocomplete(outfit=outfit_autocomplete, emotion=emotion_autocomplete)
+@app_commands.checks.has_permissions(administrator=True)
+async def speak_as_monika(
+    interaction: discord.Interaction,
+    channel_id: str,
+    message: str,
+    outfit: str,
+    emotion: str
+):
+    await interaction.response.defer(ephemeral=True)
 
-    async def setup_hook(self):
+    user = interaction.user
+    print(f"[DEBUG] User {user} used `/speak_as_monika`")
 
-        for guild_id in ALLOWED_GUILD_IDS:
-            guild = self.get_guild(guild_id)
+    # ✅ Always allow the bot owner anywhere
+    if user.id == OWNER_ID:
+        pass
 
-            # ✅ Skip if the bot isn't in this guild
-            if guild is None:
-                print(f"⚠️ Skipping guild {guild_id} — bot is not in it")
-                continue
-
-            # ✅ Register the command ONLY for this guild
-            @self.tree.command(
-                name="speak_as_monika",
-                description="ONLY A FEW SERVER OWNERS HAVE THIS. Make Monika speak in specific channels.",
-                guild=discord.Object(id=guild_id)
+    # ✅ Allow admins, but only in their own guild
+    elif interaction.guild and user.guild_permissions.administrator:
+        channel = bot.get_channel(int(channel_id))
+        if not channel or channel.guild.id != interaction.guild.id:
+            return await interaction.followup.send(
+                "❌ You can only make Monika speak inside **your own server’s channels**.",
+                ephemeral=True
             )
-            @app_commands.describe(
-                channel_id="The numeric ID of the channel",
-                message="The message to send",
-                outfit="Choose the outfit for the sprite",
-                emotion="Emotion Monika should express"
+        # Check the admin can see the channel
+        if not channel.permissions_for(user).view_channel:
+            return await interaction.followup.send(
+                f"❌ You don’t have access to {channel.mention}.",
+                ephemeral=True
             )
-            @app_commands.autocomplete(outfit=outfit_autocomplete, emotion=emotion_autocomplete)
-            @app_commands.check(guild_owners_only)
-            @app_commands.checks.has_permissions(administrator=True)
-            async def speak_as_monika(
-                interaction: discord.Interaction, channel_id: str, message: str, outfit: str, emotion: str):
-                await interaction.response.defer(ephemeral=True)
+    else:
+        return await interaction.followup.send(
+            "❌ Only this server’s administrators or the bot owner can use this command.",
+            ephemeral=True
+        )
 
-                user = interaction.user.display_name
-                print(f"Administrator: {user} used a command: `/speak_as_monika`")
+    # ✅ Normalize + validate outfit/emotion
+    outfit = outfit.lower().strip()
+    emotion = emotion.lower().strip()
+    print(f"[DEBUG] outfit='{outfit}', emotion='{emotion}'")
 
-                # Normalize and validate emotion
-                outfit = outfit.lower().strip()
-                emotion = emotion.lower().strip()
-                print(f"[DEBUG] /speak_as_monika inputs → outfit='{outfit}', emotion='{emotion}'")
+    valid_emotions = [e.lower().strip() for e in user_sprites.valid_for_outfit(outfit)]
+    if not valid_emotions:
+        return await interaction.followup.send(
+            f"❌ No valid emotions for outfit `{outfit}`.", ephemeral=True
+        )
+    if emotion not in valid_emotions:
+        return await interaction.followup.send(
+            f"❌ Emotion `{emotion}` is not valid for outfit `{outfit}`.\n✔️ Options: {', '.join(valid_emotions)}",
+            ephemeral=True
+        )
 
-                # ✅ Validate emotion against outfit-compatible ones
-                valid_emotions = [e.lower().strip() for e in user_sprites.valid_for_outfit(outfit)]  # <- Better than global check
-                if not valid_emotions:
-                    return await interaction.followup.send(
-                        f"❌ No valid emotions for outfit `{outfit}`.", ephemeral=True
-                    )
-                if emotion not in valid_emotions:
-                    return await interaction.followup.send(
-                        f"❌ Emotion `{emotion}` is not valid for outfit `{outfit}`.",
-                        f"✔️ Options: {', '.join(valid_emotions)}",
-                        ephemeral=True
-                    )
+    valid_outfits = [o.lower() for o in get_all_outfit()]
+    if outfit == "casual":
+        outfit = "casual 1"
+    if outfit not in valid_outfits:
+        return await interaction.followup.send(
+            f"❌ Invalid outfit. Options: {', '.join(get_all_outfit())}.",
+            ephemeral=True
+        )
 
-                # ✅ Validate outfit
-                valid_outfits = [o.lower() for o in get_all_outfit()]
-                if outfit == "casual":
-                    outfit = "casual 1"
-                if outfit not in valid_outfits:
-                    return await interaction.followup.send(
-                        f"❌ Invalid outfit. Options are: {', '.join(get_all_outfit())}.",
-                        ephemeral=True
-                    )
-                
-                if outfit not in user_sprites.sprites_by_outfit:
-                    await interaction.followup.send(f"❌ Outfit '{outfit}' not found.", ephemeral=True)
-                    return
-                if emotion not in user_sprites.sprites_by_outfit[outfit]:
-                    valid = ", ".join(user_sprites.sprites_by_outfit[outfit].keys())
-                    await interaction.followup.send(
-                        f"❌ Emotion '{emotion}' not valid for outfit '{outfit}'.\n✔️ Options: {valid}",
-                        ephemeral=True
-                    )
-                    return
+    if outfit not in user_sprites.sprites_by_outfit:
+        return await interaction.followup.send(
+            f"❌ Outfit '{outfit}' not found.", ephemeral=True
+        )
 
-                # Validate message
-                if not message.strip():
-                    await interaction.followup.send(
-                        "❌ You must provide a message for Monika to send.",
-                        ephemeral=True
-                    )
-                    return
+    if emotion not in user_sprites.sprites_by_outfit[outfit]:
+        valid = ", ".join(user_sprites.sprites_by_outfit[outfit].keys())
+        return await interaction.followup.send(
+            f"❌ Emotion '{emotion}' not valid for outfit '{outfit}'.\n✔️ Options: {valid}",
+            ephemeral=True
+        )
 
-                # Get channel and permissions
-                try:
-                    channel = bot.get_channel(int(channel_id))
-                    if not channel or not isinstance(channel, discord.TextChannel):
-                        return await interaction.followup.send(f"❌ Channel `{channel_id}` not found.", ephemeral=True)
-                    if not channel.permissions_for(channel.guild.me).send_messages:
-                        return await interaction.followup.send(f"❌ No permission in {channel.mention}.", ephemeral=True)
-                    perms = channel.permissions_for(channel.guild.me)
-                    if not perms.send_messages:
-                        await interaction.followup.send(
-                            f"❌ I don’t have permission to send messages in {channel.mention}.",
-                            ephemeral=True
-                        )
-                        return
-                except Exception as e:
-                    print(f"[Channel Error] {e}")
-                    await interaction.followup.send(
-                        f"❌ Error finding channel: {e}",
-                        ephemeral=True
-                    )
-                    return
+    if not message.strip():
+        return await interaction.followup.send(
+            "❌ You must provide a message for Monika to send.", ephemeral=True
+        )
 
-                # Get sprite link
-                sprite_link = await get_sprite_link(emotion, outfit)
+    # ✅ Resolve channel
+    try:
+        channel = bot.get_channel(int(channel_id))
+        if not channel or not isinstance(channel, discord.TextChannel):
+            return await interaction.followup.send(
+                f"❌ Channel `{channel_id}` not found.", ephemeral=True
+            )
+        if not channel.permissions_for(channel.guild.me).send_messages:
+            return await interaction.followup.send(
+                f"❌ I don’t have permission to send messages in {channel.mention}.",
+                ephemeral=True
+            )
+    except Exception as e:
+        print(f"[Channel Error] {e}")
+        return await interaction.followup.send(
+            f"❌ Error finding channel: {e}", ephemeral=True
+        )
 
-                if not sprite_link:
-                    return await interaction.followup.send(
-                        "❌ Could not get sprite.", ephemeral=True
-                    )
-                print(f"Sprite link: {sprite_link}")  # Debug
-                print(f"[DEBUG] Command inputs → outfit='{outfit}', emotion='{emotion}'")
+    # ✅ Get sprite
+    sprite_link = await get_sprite_link(emotion, outfit)
+    if not sprite_link:
+        return await interaction.followup.send("❌ Could not get sprite.", ephemeral=True)
 
-                mon_reply = f"{message}\n[{emotion}]({sprite_link})"
+    mon_reply = f"{message}\n[{emotion}]({sprite_link})"
+    print(f"[DEBUG] Monika reply → {mon_reply}")
 
-                print(f"Message: {mon_reply}")
-
-                try:
-                    channel = bot.get_channel(int(channel_id))
-                    if channel:
-                        async with channel.typing():
-                            await asyncio.sleep(1)
-                            await channel.send(mon_reply)
-                        await interaction.followup.send(
-                            f"✅ Monika spoke in **{channel.guild.name}** #{channel.name}.",
-                            ephemeral=True
-                        )
-                except Exception as e:
-                    await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
-
-        for guild_id in ALLOWED_GUILD_IDS:
-            if self.get_guild(guild_id):
-                await self.tree.sync(guild=discord.Object(id=guild_id))
+    try:
+        async with channel.typing():
+            await asyncio.sleep(1)
+            await channel.send(mon_reply)
+        await interaction.followup.send(
+            f"✅ Monika spoke in **{channel.guild.name}** #{channel.name}.",
+            ephemeral=True
+        )
+    except Exception as e:
+        await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
 
 keepalive.keep_alive()
 async def main():
@@ -2321,4 +2633,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
-
