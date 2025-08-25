@@ -27,7 +27,8 @@ class User_SpritesManager:
             "bug": ["error", "glitching"],
             "white summer dress": ["happy", "smile speaking", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"],
             "hoodie": ["happy", "smile speaking", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"],
-            "pajamas": ["happy", "smile speaking", "lean smile", "lean smile eyes close", "lean happy eyes close speaking", "lean happy speaking", "lean happy wink", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "lean wink point smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "pissed lean", "mad speaking lean", "mad leaning", "mad pitting face lean", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "smirk lean", "leaning kiss", "blushing leaning", "surprise speaking lean", "concerned speaking lean", "really...", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"]
+            "pajamas": ["happy", "smile speaking", "lean smile", "lean smile eyes close", "lean happy eyes close speaking", "lean happy speaking", "lean happy wink", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "lean wink point smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "pissed lean", "mad speaking lean", "mad leaning", "mad pitting face lean", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "smirk lean", "leaning kiss", "blushing leaning", "surprise speaking lean", "concerned speaking lean", "really...", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"],
+            "green dress": ["happy", "smile speaking", "lean smile", "lean smile eyes close", "lean happy eyes close speaking", "lean happy speaking", "lean happy wink", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "lean wink point smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "pissed lean", "mad speaking lean", "mad leaning", "mad pitting face lean", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "smirk lean", "leaning kiss", "blushing leaning", "surprise speaking lean", "concerned speaking lean", "really...", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"]
             # add more outfits with their allowed emotions
         }
 
@@ -387,9 +388,6 @@ class User_SpritesManager:
                 "really...": f"{self.sprite_dir}/pajamas/3fa.png",
                 "nervous": f"{self.sprite_dir}/pajamas/Mon13.png",
                 "really nervous": f"{self.sprite_dir}/pajamas/Mon15.png",
-                "has a gun": f"{self.sprite_dir}/pajamas/Gun.png",
-                "oh shit she packing heat!": f"{self.sprite_dir}/pajamas/Gun.png",
-                "threatened": f"{self.sprite_dir}/pajamas/with_gun.png",
                 "nervous speaking": f"{self.sprite_dir}/pajamas/Mon16.png",
                 "nervous laughing": f"{self.sprite_dir}/pajamas/Mon14.png",
                 "nervous laughing eyes close": f"{self.sprite_dir}/pajamas/Mon12.png",
@@ -443,6 +441,72 @@ class User_SpritesManager:
                 "nervous speaking": f"{self.sprite_dir}/dress/Mon16.png",
                 "nervous laughing": f"{self.sprite_dir}/dress/Mon14.png",
                 "nervous laughing eyes close": f"{self.sprite_dir}/dress/Mon12.png",
+            },
+            "green dress": {
+                "happy": f"{self.sprite_dir}/green_dress/Mon1.png",
+                "smile speaking": f"{self.sprite_dir}/green_dress/Mon2.png",
+                "lean smile": f"{self.sprite_dir}/green_dress/3aa.png",
+                "lean smile eyes close": f"{self.sprite_dir}/green_dress/3ab.png",
+                "lean happy eyes close speaking": f"{self.sprite_dir}/green_dress/3ac.png",
+                "lean happy speaking": f"{self.sprite_dir}/green_dress/3ad.png",
+                "lean happy wink": f"{self.sprite_dir}/green_dress/3ae.png",
+                "eyes close smile": f"{self.sprite_dir}/green_dress/Mon10.png",
+                "eyes close smile speaking": f"{self.sprite_dir}/green_dress/Mon11.png",
+                "pointing finger smile": f"{self.sprite_dir}/green_dress/Ika9.png",
+                "lean wink point smile": f"{self.sprite_dir}/green_dress/3Ika.png",
+                "sad": f"{self.sprite_dir}/green_dress/Mon6.png",
+                "crying": f"{self.sprite_dir}/green_dress/Mon20.png",
+                "sad smile": f"{self.sprite_dir}/green_dress/Mon5.png",
+                "neutral": f"{self.sprite_dir}/green_dress/Mon3.png",
+                "eyes close neutral": f"{self.sprite_dir}/green_dress/Mon17.png",
+                "neutral speaking": f"{self.sprite_dir}/green_dress/Mon4.png",
+                "eyes close neutral speaking": f"{self.sprite_dir}/green_dress/Mon18.png",
+                "pissed lean": f"{self.sprite_dir}/green_dress/3bd.png",
+                "mad speaking lean": f"{self.sprite_dir}/green_dress/3ba.png",
+                "mad leaning": f"{self.sprite_dir}/green_dress/3bb.png",
+                "mad pitting face lean": f"{self.sprite_dir}/green_dress/3bc.png",
+                "horrified screams": f"{self.sprite_dir}/green_dress/HorrifiedMonika8.png",
+                "horrified speaking": f"{self.sprite_dir}/green_dress/HorrifiedMonika5.png",
+                "horrified babbling": f"{self.sprite_dir}/green_dress/HorrifiedMonika6.png",
+                "horrified surprised": f"{self.sprite_dir}/green_dress/HorrifiedMonika4.png",
+                "horrified no words": f"{self.sprite_dir}/green_dress/HorrifiedMonika3.png",
+                "horrified really surprised": f"{self.sprite_dir}/green_dress/HorrifiedMonika2.png",
+                "horrified": f"{self.sprite_dir}/green_dress/HorrifiedMonika1.png",
+                "horrified concerned": f"{self.sprite_dir}/green_dress/HorrifiedMonika7.png",
+                "serious": f"{self.sprite_dir}/green_dress/Mon8.png",
+                "very serious": f"{self.sprite_dir}/green_dress/Mon21.png",
+                "disappointed": f"{self.sprite_dir}/green_dress/Mon21.png",
+                "serious pointing speaking": f"{self.sprite_dir}/green_dress/Ika8.png",
+                "serious pointing": f"{self.sprite_dir}/green_dress/Ika7.png",
+                "serious speaking": f"{self.sprite_dir}/green_dress/Mon9.png",
+                "serious pointing eyes close": f"{self.sprite_dir}/green_dress/Ika15.png",
+                "serious pointing speaking eyes close": f"{self.sprite_dir}/green_dress/Ika16.png",
+                "concerned": f"{self.sprite_dir}/green_dress/Mon6.png",
+                "concerned pointing": f"{self.sprite_dir}/green_dress/Ika13.png",
+                "concerned pointing speaking": f"{self.sprite_dir}/green_dress/Ika14.png",
+                "sad pointing smile looks away": f"{self.sprite_dir}/green_dress/Ika12.png",
+                "sad pointing smile": f"{self.sprite_dir}/green_dress/Ika5.png",
+                "sad pointing": f"{self.sprite_dir}/green_dress/Ika6.png",
+                "sad pointing smile speaking": f"{self.sprite_dir}/green_dress/Ika11.png",
+                "smile pointing speaking": f"{self.sprite_dir}/green_dress/Ika10.png",
+                "happy pointing speaking": f"{self.sprite_dir}/green_dress/Ika2.png",
+                "happy pointing": f"{self.sprite_dir}/green_dress/Ika1.png",
+                "neutral pointing speaking": f"{self.sprite_dir}/green_dress/Ika4.png",
+                "neutral pointing": f"{self.sprite_dir}/green_dress/Ika3.png",
+                "concerned speaking": f"{self.sprite_dir}/green_dress/Mon7.png",
+                "embarrass": f"{self.sprite_dir}/green_dress/Mon19.png",
+                "blushing with her eyes close": f"{self.sprite_dir}/green_dress/Mon19.png",
+                "smirk lean": f"{self.sprite_dir}/green_dress/3ca.png",
+                "leaning kiss": f"{self.sprite_dir}/green_dress/3cb.png",
+                "blushing leaning": f"{self.sprite_dir}/green_dress/3cc.png",
+                "surprise speaking lean": f"{self.sprite_dir}/green_dress/3da.png",
+                "concerned speaking lean": f"{self.sprite_dir}/green_dress/3ea.png",
+                "really...": f"{self.sprite_dir}/green_dress/3fa.png",
+                "nervous": f"{self.sprite_dir}/green_dress/Mon13.png",
+                "really nervous": f"{self.sprite_dir}/green_dress/Mon15.png",
+                "nervous speaking": f"{self.sprite_dir}/green_dress/Mon16.png",
+                "nervous laughing": f"{self.sprite_dir}/green_dress/Mon14.png",
+                "nervous laughing eyes close": f"{self.sprite_dir}/green_dress/Mon12.png",
             }
         }
         self.sprites_by_outfit = {}
@@ -491,51 +555,23 @@ class User_SpritesManager:
 
     # ----------------- public API -----------------
 
-    def get_sprite(self, emotion, outfit):
-        """
-        Return the sprite path for a given emotion+outfit.
-        - outfit may be 'casual' (pick a daily variant) or 'casual 1'/'casual 2'/etc.
-        - emotion lookup is case-insensitive.
-        """
-        if not emotion:
-            emotion = "neutral"
-        outfit_key = outfit.lower().strip() if outfit else "school_uniform"
-        emotion_key = emotion.lower().strip()
+    def get_sprite(self, emotion: str, outfit: str) -> str | None:
+        """Return file path for given emotion/outfit with fallback to neutral."""
+        outfit = outfit.lower()
+        emotion = emotion.lower()
 
-        if outfit_key == "casual":
-            outfit_key = self._pick_casual_variant()
+        if outfit not in self.EXPRESSION_SPRITES:
+            print(f"[SpriteManager] Outfit '{outfit}' not found.")
+            return None
 
-        outfit_sprites = self.sprites_by_outfit.get(outfit_key)
-        if not outfit_sprites:
-            print(f"[ERROR] Outfit '{outfit_key}' not found. Available: {list(self.sprites_by_outfit.keys())}")
-            # fallback to school_uniform
-            outfit_sprites = self.sprites_by_outfit.get("school_uniform", {})
+        sprites = self.EXPRESSION_SPRITES[outfit]
 
-        # direct match
-        path = outfit_sprites.get(emotion_key)
-        if path:
-            return path
+        if emotion in sprites:
+            return sprites[emotion]
 
-        # try some common fallback variations
-        fallbacks = [
-            "neutral",
-            "neutral speaking",
-            "eyes close neutral",
-            "eyes close neutral speaking"
-        ]
-        for fb in fallbacks:
-            if fb in outfit_sprites:
-                print(f"[WARN] Missing {outfit_key}:{emotion_key}, falling back to {fb}.")
-                return outfit_sprites[fb]
-
-        # fallback to school_uniform neutral as last resort
-        school_neutral = self.sprites_by_outfit.get("school_uniform", {}).get("neutral")
-        if school_neutral:
-            print(f"[WARN] No sprite and no neutral for {outfit_key}:{emotion_key}. Falling back to school_uniform:neutral")
-            return school_neutral
-
-        print(f"[ERROR] No sprite found for {outfit_key}:{emotion_key} and no neutral fallback available.")
-        return None
+        # fallback
+        print(f"[SpriteManager] Emotion '{emotion}' missing in '{outfit}', trying neutral.")
+        return sprites.get("neutral")
 
     async def command_sprite(self, emotion: str, outfit: str):
         """Async wrapper used by the bot — returns path or None."""
@@ -550,7 +586,8 @@ class User_SpritesManager:
         return list(self.sprites_by_outfit.get((outfit or "").lower().strip(), {}).keys())
 
     async def classify(self, text: str) -> str:
-        from OpenAIKeys import safe_call, key_manager  # assuming you import these globally
+        """Classify text into one of the valid emotion labels using OpenAI."""
+        from OpenAIKeys import safe_call, key_manager  # already in your project
         model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
 
         prompt = (
@@ -576,7 +613,6 @@ class User_SpritesManager:
 
                 raw = response.choices[0].message.content.strip().lower()
 
-                # try to match against valid emotions
                 for label in self.valid:
                     if label.lower() in raw:
                         print(f"[Emotion Classifier] {model} → {label}")
