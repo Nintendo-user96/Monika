@@ -28,6 +28,7 @@ server_outfit_preferences = {}
 
 server_personality_modes = {}
 server_relationship_modes = {}
+channel_usage = {}
 
 user_talk_times = {}
 
@@ -110,16 +111,6 @@ def is_owner(interaction: discord.Interaction):
     return interaction.user.id == OWNER_ID
 
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
-
-def guild_owners_only(interaction: discord.Interaction) -> bool:
-    return (
-        interaction.user.id == OWNER_ID or
-        (
-            interaction.guild and
-            interaction.guild.id in ALLOWED_GUILD_IDS and
-            interaction.user.id == interaction.guild.owner_id
-        )
-    )
 
 NO_CHAT_CHANNELS = [
     cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN]
@@ -785,6 +776,10 @@ async def on_message(message: discord.Message):
     if mention_only_mode.get(guild_id, True):  # Default True = mention only
         if bot.user not in message.mentions and not isinstance(message.channel, discord.DMChannel):
             return  # Ignore messages without @Monika (except in DMs)
+    
+    # idle/chat check
+    if guild_id and not idle_settings.get(guild_id, True):
+        return  # ignore if idlechat is disabled
 
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
     
@@ -1385,14 +1380,15 @@ async def Toggle_normal_talk(interaction: discord.Interaction, enable: bool):
     )
 
 # Idle chat command
-@bot.tree.command(name="idlechat", description="Toggle whether she is in idle/chatty mode for this server.")
+@bot.tree.command(name="idlechat", description="Toggle Monika's idle chatty mode for this server.")
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(state="Set to true or false")
+@app_commands.describe(state="Enable or disable idle chatting (true/false)")
 async def idlechat(interaction: discord.Interaction, state: bool):
+    guild_id = str(interaction.guild.id)
     user = interaction.user.display_name
-    print(f"Administrator: {user} used a command: `idlechat`: set `{state}`")
+    print(f"Administrator: {user} used `/idlechat`: set `{state}`")
 
-    idle_settings[interaction.guild_id] = state
+    idle_settings[guild_id] = state
     await interaction.response.send_message(
         f"✅ Idle chat mode set to **{state}** for this server.",
         ephemeral=True
@@ -2315,18 +2311,31 @@ async def report(
     embed.add_field(name="Reporter ID", value=user.id, inline=True)
 
     if bugs:
-        embed.add_field(name="🐞 Bug", value=bugs, inline=False)
+        embed.add_field(name="🐞 Bug", value=f"```{bugs}```", inline=False)
     elif errors:
-        embed.add_field(name="⚠️ Error", value=errors, inline=False)
+        embed.add_field(name="⚠️ Error", value=f"```{errors}```", inline=False)
     elif ideas:
-        embed.add_field(name="💡 Idea", value=ideas, inline=False)
+        embed.add_field(name="💡 Idea", value=f"```{ideas}```", inline=False)
     elif complaints:
-        embed.add_field(name="❗ Complaint", value=complaints, inline=False)
+        embed.add_field(name="❗ Complaint", value=f"```{complaints}```", inline=False)
     elif other:
-        embed.add_field(name="📝 Other", value=other, inline=False)
+        embed.add_field(name="📝 Other", value=f"```{other}```", inline=False)
+
+    # 💬 Keep track of the original message content separately
+    embed.set_footer(text=f"Reporter message: {bugs or errors or ideas or complaints or other}")
 
     msg = await report_channel.send(embed=embed)
     report_links[msg.id] = user.id
+
+    report_msg = await report_channel.send(embed=embed)
+
+    # 🧵 Create a thread for follow-up discussion
+    thread = await report_msg.create_thread(
+        name=f"Discussion - {user.display_name}",
+        auto_archive_duration=60  # 1h auto-archive, can change to 1440 for 24h
+    )
+
+    await thread.send(f"Staff can reply here to discuss {user.mention}'s report.")
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -2423,16 +2432,26 @@ async def broadcast(
             ephemeral=True
         )
 
-        # Send once per guild
         for guild in bot.guilds:
             channel = None
-            if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
-                channel = guild.system_channel
-            else:
-                for ch in guild.text_channels:
-                    if ch.permissions_for(guild.me).send_messages:
-                        channel = ch
-                        break
+
+            # ✅ Try to find "most used" channel
+            usage = channel_usage.get(str(guild.id), {})
+            if usage:
+                top_channel_id = max(usage, key=usage.get)
+                top_channel = guild.get_channel(int(top_channel_id))
+                if top_channel and top_channel.permissions_for(guild.me).send_messages:
+                    channel = top_channel
+
+            # Fallback if no usage or no perms
+            if not channel:
+                if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+                    channel = guild.system_channel
+                else:
+                    for ch in guild.text_channels:
+                        if ch.permissions_for(guild.me).send_messages:
+                            channel = ch
+                            break
 
             if not channel:
                 failure_count += 1
@@ -2486,6 +2505,17 @@ async def broadcast(
         # Always reset state
         is_broadcasting = False
         await bot.change_presence(activity=None)
+
+@bot.event
+async def on_message(message):
+    if message.author.bot:
+        return
+    if message.guild:
+        guild_id = str(message.guild.id)
+        chan_id = str(message.channel.id)
+        channel_usage.setdefault(guild_id, {})
+        channel_usage[guild_id][chan_id] = channel_usage[guild_id].get(chan_id, 0) + 1
+    await bot.process_commands(message)
 
 @broadcast.error
 async def broadcast_error(interaction: discord.Interaction, error):
