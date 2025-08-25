@@ -2407,9 +2407,11 @@ async def broadcast(
     is_broadcasting = True
     await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
 
-    wait_minutes = 3  # fixed short timer
+    wait_minutes = 3  # how long to collect reactions
+    update_interval = 30  # how often to refresh progress messages (seconds)
 
     try:
+        # Parse color
         try:
             color_int = int(color_hex, 16)
             color = discord.Color(color_int)
@@ -2423,75 +2425,100 @@ async def broadcast(
         )
         embed.set_footer(text="React ✅ or ❌ to give your opinion!")
 
-        sent_messages = []
+        sent_messages = []   # (announcement_msg, progress_msg)
         success_count = 0
         failure_count = 0
 
         await interaction.response.send_message(
-            f"📣 Broadcast started. Collecting reactions in {wait_minutes} minutes…",
+            f"📣 Broadcast started. Collecting reactions for {wait_minutes} minutes…",
             ephemeral=True
         )
 
+        # Send once per guild
         for guild in bot.guilds:
             channel = None
-
-            # ✅ Try to find "most used" channel
-            usage = channel_usage.get(str(guild.id), {})
-            if usage:
-                top_channel_id = max(usage, key=usage.get)
-                top_channel = guild.get_channel(int(top_channel_id))
-                if top_channel and top_channel.permissions_for(guild.me).send_messages:
-                    channel = top_channel
-
-            # Fallback if no usage or no perms
-            if not channel:
-                if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
-                    channel = guild.system_channel
-                else:
-                    for ch in guild.text_channels:
-                        if ch.permissions_for(guild.me).send_messages:
-                            channel = ch
-                            break
+            if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
+                channel = guild.system_channel
+            else:
+                # pick "most active" channel (highest messages)
+                channel = max(
+                    (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),
+                    key=lambda c: getattr(c, "last_message_id", 0) or 0,
+                    default=None
+                )
 
             if not channel:
                 failure_count += 1
                 continue
 
             try:
+                # Announcement embed
                 msg = await channel.send(embed=embed)
                 await msg.add_reaction("✅")
                 await msg.add_reaction("❌")
-                sent_messages.append(msg)
+
+                # Progress tracker message
+                progress = await channel.send("📢 Announcement in progress...\n✅ Likes: 0 | ❌ Dislikes: 0")
+
+                sent_messages.append((msg, progress))
                 success_count += 1
                 await asyncio.sleep(0.5)
             except Exception as e:
                 print(f"[Broadcast Error] {e}")
                 failure_count += 1
 
-        # ⏳ Wait quietly
-        await asyncio.sleep(wait_minutes * 60)
+        # --- Periodic updates ---
+        elapsed = 0
+        while elapsed < wait_minutes * 60:
+            for orig, progress in sent_messages:
+                try:
+                    refreshed = await orig.channel.fetch_message(orig.id)
+                    likes = dislikes = 0
+                    for reaction in refreshed.reactions:
+                        if str(reaction.emoji) == "✅":
+                            likes = reaction.count
+                            if bot.user in [u async for u in reaction.users()]:
+                                likes -= 1
+                        elif str(reaction.emoji) == "❌":
+                            dislikes = reaction.count
+                            if bot.user in [u async for u in reaction.users()]:
+                                dislikes -= 1
 
-        # Collect results (ignoring bot's own reactions)
+                    await progress.edit(
+                        content=f"📢 Announcement in progress...\n✅ Likes: {likes} | ❌ Dislikes: {dislikes}"
+                    )
+                except Exception as e:
+                    print(f"[Broadcast Update Error] {e}")
+
+            await asyncio.sleep(update_interval)
+            elapsed += update_interval
+
+        # --- Final pass + totals ---
         like_total = 0
         dislike_total = 0
 
-        for msg in sent_messages:
+        for orig, progress in sent_messages:
             try:
-                refreshed = await msg.channel.fetch_message(msg.id)
+                refreshed = await orig.channel.fetch_message(orig.id)
+                likes = dislikes = 0
                 for reaction in refreshed.reactions:
                     if str(reaction.emoji) == "✅":
-                        count = reaction.count
+                        likes = reaction.count
                         if bot.user in [u async for u in reaction.users()]:
-                            count -= 1
-                        like_total += max(count, 0)
+                            likes -= 1
                     elif str(reaction.emoji) == "❌":
-                        count = reaction.count
+                        dislikes = reaction.count
                         if bot.user in [u async for u in reaction.users()]:
-                            count -= 1
-                        dislike_total += max(count, 0)
+                            dislikes -= 1
+
+                like_total += max(likes, 0)
+                dislike_total += max(dislikes, 0)
+
+                await progress.edit(content="✅ Announcement finished. Thanks for your feedback!")
             except Exception as e:
                 print(f"[Broadcast Fetch Error] {e}")
 
+        # Final owner summary
         await interaction.followup.send(
             f"✅ Broadcast finished.\n"
             f"Sent successfully to **{success_count}** servers.\n"
@@ -2502,7 +2529,6 @@ async def broadcast(
         )
 
     finally:
-        # Always reset state
         is_broadcasting = False
         await bot.change_presence(activity=None)
 
@@ -2663,3 +2689,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
