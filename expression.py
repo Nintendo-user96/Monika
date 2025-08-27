@@ -515,76 +515,7 @@ class User_SpritesManager:
         # valid emotions (computed from loaded sprites)
         self.valid = self._extract_all_emotions()
 
-    # ----------------- internal helpers -----------------
-
-    def _pick_casual_variant(self):
-        """Deterministically pick a casual variant for the current date (changes daily)."""
-        today = _today_date()
-        if self._last_casual_date != today or not self._selected_casual_variant:
-            # gather available casual variant keys (those that start with 'casual')
-            variants = [k for k in self.sprites_by_outfit.keys() if k.startswith("casual")]
-            if not variants:
-                variants = ["casual 1", "casual 2", "casual 3"]  # fallback list
-            # seed by date to pick same variant throughout the day
-            random.seed(int(today.strftime("%Y%m%d")))
-            self._selected_casual_variant = random.choice(variants)
-            self._last_casual_date = today
-        return self._selected_casual_variant
-
-    def _extract_all_emotions(self):
-        all_emotions = set()
-        if not self.sprites_by_outfit:
-            print("[WARN] sprites_by_outfit is empty — did _load_sprites fail?")
-            return []
-        for outfit_map in self.sprites_by_outfit.values():
-            all_emotions.update(outfit_map.keys())
-        return sorted(all_emotions)
-
-    def _load_sprites(self):
-        """Normalize EXPRESSION_SPRITES into sprites_by_outfit with lower-case keys."""
-        self.sprites_by_outfit = {}
-        for outfit, emotemap in self.EXPRESSION_SPRITES.items():
-            outfit_key = outfit.lower().strip()
-            self.sprites_by_outfit[outfit_key] = {}
-            for emotion, path in emotemap.items():
-                emotion_key = emotion.lower().strip()
-                if path:
-                    self.sprites_by_outfit[outfit_key][emotion_key] = path
-                else:
-                    print(f"[WARN] No sprite path for {outfit_key}:{emotion_key}")
-
-    # ----------------- public API -----------------
-
-    def get_sprite(self, emotion: str, outfit: str) -> str | None:
-        """Return file path for given emotion/outfit with fallback to neutral."""
-        outfit = outfit.lower()
-        emotion = emotion.lower()
-
-        if outfit not in self.EXPRESSION_SPRITES:
-            print(f"[SpriteManager] Outfit '{outfit}' not found.")
-            return None
-
-        sprites = self.EXPRESSION_SPRITES[outfit]
-
-        if emotion in sprites:
-            return sprites[emotion]
-
-        # fallback
-        print(f"[SpriteManager] Emotion '{emotion}' missing in '{outfit}', trying neutral.")
-        return sprites.get("neutral")
-
-    async def command_sprite(self, emotion: str, outfit: str):
-        """Async wrapper used by the bot — returns path or None."""
-        return self.get_sprite(emotion or "neutral", outfit or "school_uniform")
-
-    def command_outfit(self):
-        """Return available outfit keys (human-visible)."""
-        return list(self.sprites_by_outfit.keys())
-
-    def valid_for_outfit(self, outfit: str):
-        """Return available emotions for a specific outfit (dict keys)."""
-        return list(self.sprites_by_outfit.get((outfit or "").lower().strip(), {}).keys())
-
+    # ---------------- Classify ----------------
     async def classify(self, text: str) -> str:
         """Classify text into one of the valid emotion labels using OpenAI."""
         from OpenAIKeys import safe_call, key_manager  # already in your project
@@ -625,3 +556,59 @@ class User_SpritesManager:
                 continue
 
         return "neutral"
+
+    # ---------------- Validation ----------------
+    def valid_for_outfit(self, emotion: str, outfit: str) -> bool:
+        outfit = outfit.lower()
+        emotion = emotion.lower()
+        return outfit in self.EXPRESSION_SPRITES and emotion in self.EXPRESSION_SPRITES[outfit]
+
+    # ---------------- Commands ----------------
+    def command_outfit(self, outfit: str) -> str:
+        return outfit.lower() if outfit.lower() in self.EXPRESSION_SPRITES else "school_uniform"
+
+    def command_sprite(self, emotion: str, outfit: str) -> str:
+        return self.get_sprite(emotion, outfit)
+
+    # ---------------- Sprite Handling ----------------
+    def get_sprite(self, emotion: str, outfit: str) -> str:
+        outfit = outfit.lower()
+        emotion = emotion.lower()
+
+        if outfit not in self.EXPRESSION_SPRITES:
+            print(f"[WARN] Outfit '{outfit}' not found. Using school_uniform.")
+            outfit = "school_uniform"
+
+        sprites = self.EXPRESSION_SPRITES[outfit]
+
+        if emotion in sprites:
+            return sprites[emotion]
+
+        if "neutral" in sprites:
+            return sprites["neutral"]
+
+        print(f"[ERROR] No valid sprite found for {emotion}/{outfit}.")
+        return self.error_sprite
+
+    # ---------------- Sprite Loading ----------------
+    def _load_sprites(self):
+        # Implement your logic to populate EXPRESSION_SPRITES here
+        # Example structure:
+        # self.EXPRESSION_SPRITES = {
+        #     "school_uniform": {"neutral": "sprites/school_uniform/neutral.png"}
+        # }
+        for outfit, mapping in self.EXPRESSION_SPRITES.items():
+            if "neutral" not in mapping:
+                print(f"[WARN] Outfit '{outfit}' missing neutral sprite.")
+
+    def _extract_all_emotions(self):
+        emotions = set()
+        for mapping in self.EXPRESSION_SPRITES.values():
+            for emotion in mapping:
+                emotions.add(emotion.lower())
+        return sorted(emotions)
+
+    # ---------------- Outfit Variants ----------------
+    def _pick_casual_variant(self, outfit: str) -> str:
+        variants = self.CASUAL_VARIANTS.get(outfit.lower(), [])
+        return random.choice(variants) if variants else outfit
