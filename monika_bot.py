@@ -1060,10 +1060,15 @@ async def handle_dm_message(message: discord.Message, avatar_url: str):
         print(f"[DM OpenAI Error] {e}")
 
     # --- Fallbacks ---
-    if not emotion or not sprite_link:
+    if not emotion or emotion not in user_sprites.valid:
+        print(f"[WARN] Invalid or missing emotion: {emotion}, using error fallback.")
         monika_DMS = random.choice(error_messages)
         emotion = "error"
+
+        # sprite fallback
         sprite_link = await error_emotion()
+        if not sprite_link:
+            sprite_link = user_sprites.error_sprite
 
     # --- Clean reply ---
     monika_DMS = clean_monika_reply(monika_reply, bot.user.id, user.display_name)
@@ -1157,10 +1162,9 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     conversation.append({"role": "user", "content": message.content})
 
     # --- Defaults ---
-    if not emotion or not sprite_link:
-        monika_reply = random.choice(error_messages)
-        emotion = "error"
-        sprite_link = await error_emotion()
+    monika_reply = random.choice(error_messages)
+    emotion = "error"
+    sprite_link = await error_emotion()
 
     # --- OpenAI ---
     try:
@@ -2721,3 +2725,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
