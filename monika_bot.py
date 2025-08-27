@@ -853,6 +853,10 @@ async def on_message(message: discord.Message):
     # 1. Safety checks
     if message.author.bot:
         return
+    
+    # Ignore other bots (unless they're "friend bots")
+    if message.author.bot and not is_friend_bot(message):
+        return
 
     # 2. Report channel handling (staff reply to reports)
     if message.channel.id == REPORT_CHANNEL_ID:
@@ -892,12 +896,6 @@ async def on_message(message: discord.Message):
                 break
 
         # Don’t run further Monika responses here, just process commands
-        await bot.process_commands(message)
-        return
-
-    # 3. DM handling
-    if not message.guild:
-        await handle_dm_message(message, message.author.display_avatar.url)
         await bot.process_commands(message)
         return
 
@@ -1055,23 +1053,24 @@ async def handle_dm_message(message: discord.Message, avatar_url: str):
         if response and response.choices and response.choices[0].message:
             content = response.choices[0].message.content.strip()
             if content:
-                monika_reply = content
-                emotion = await user_sprites.classify(monika_reply)
+                monika_DMS = content
+                emotion = await user_sprites.classify(monika_DMS)
                 sprite_link = await get_sprite_link(emotion, get_time_based_outfit())
     except Exception as e:
         print(f"[DM OpenAI Error] {e}")
 
     # --- Fallbacks ---
     if not emotion or not sprite_link:
+        monika_DMS = random.choice(error_messages)
         emotion = "error"
         sprite_link = await error_emotion()
 
     # --- Clean reply ---
-    monika_reply = clean_monika_reply(monika_reply, bot.user.id, user.display_name)
-    monika_reply = re.sub(r"<@!?\d+>", "", monika_reply)
+    monika_DMS = clean_monika_reply(monika_reply, bot.user.id, user.display_name)
+    monika_DMS = re.sub(r"<@!?\d+>", "", monika_DMS)
 
     # --- Send reply ---
-    reply = f"{monika_reply}\n[{emotion}]({sprite_link})"
+    reply = f"{monika_DMS}\n[{emotion}]({sprite_link})"
     await message.author.send(reply)
 
     # --- Logging ---
@@ -1158,9 +1157,10 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     conversation.append({"role": "user", "content": message.content})
 
     # --- Defaults ---
-    monika_reply = random.choice(error_messages)
-    emotion = "error"
-    sprite_link = await error_emotion()
+    if not emotion or not sprite_link:
+        monika_reply = random.choice(error_messages)
+        emotion = "error"
+        sprite_link = await error_emotion()
 
     # --- OpenAI ---
     try:
