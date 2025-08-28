@@ -23,15 +23,6 @@ from monika_personality import MonikaTraits
 import sys
 import time
 
-#DokiTuber_server_outfit_preferences = {}
-server_outfit_preferences = {}
-
-server_personality_modes = {}
-server_relationship_modes = {}
-channel_usage = {}
-
-user_talk_times = {}
-
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("Monika")
 
@@ -112,6 +103,10 @@ def is_owner(interaction: discord.Interaction):
 
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
+CHANNEL_NAMES = [
+    "monika", "monika-ai", "ddlc-monika", "ddlc-monika-ai", "club-room", "doki-chat", "ddlc-chat", "monika-bot", "chat-monika", "monika-chat", "monika-but-deranged", "just-monika", "club-room-meeting", "literature-club", "literature-club-room"
+]
+
 NO_CHAT_CHANNELS = [
     cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN]
     if cid and cid > 0
@@ -139,6 +134,16 @@ user_memory = {}
 # relationship_level_settings = {}
 mention_only_mode = {}
 report_links = {}
+SERVER_MEMORY = {}
+
+#DokiTuber_server_outfit_preferences = {}
+server_outfit_preferences = {}
+
+server_personality_modes = {}
+server_relationship_modes = {}
+channel_usage = {}
+
+user_talk_times = {}
 
 FRIENDS = [
     1375064525396775004,  # Sayori
@@ -149,7 +154,14 @@ FRIENDS = [
 
 PERSONALITY_MODES = monika_traits.personality_modes
 
-SERVER_PERSONALITY_MODES = server_tracker.set_personality
+def SERVER_PERSONALITY_MODES(guild_id: str, modes: list[str] = None):
+    """Get or set personality modes for a guild."""
+    global server_personality_modes
+    if modes is None:  # getter
+        return server_personality_modes.get(guild_id, [])
+    else:  # setter
+        server_personality_modes[guild_id] = modes
+        return modes
 
 RELATIONSHIP_MODES = monika_traits.relationship_modes
 RELATIONSHIP_DETILED = monika_traits.relationships
@@ -839,13 +851,11 @@ async def on_guild_join(guild):
 @bot.event
 async def on_disconnect():
     await on_shutdown()
-    await bot.change_presence(activity=discord.Game("💚 I Need to shut down"))
 
 @bot.event
 async def on_shutdown():
     print("[Shutdown] Saving memory to channel...")
     asyncio.create_task(save_memory_to_channel())
-    await bot.change_presence(activity=discord.Game("💚 I Need to shut down"))
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
 @bot.event
@@ -1483,17 +1493,25 @@ async def Toggle_normal_talk(interaction: discord.Interaction, enable: bool):
     )
 
 # Idle chat command
-@bot.tree.command(name="idlechat", description="Toggle Monika's idle chatty mode for this server.")
+@bot.tree.command(
+    name="idlechat",
+    description="Toggle whether Monika is in idle/chatty mode for this server."
+)
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(state="Enable or disable idle chatting (true/false)")
+@app_commands.describe(state="Set to true (on) or false (off)")
 async def idlechat(interaction: discord.Interaction, state: bool):
     guild_id = str(interaction.guild.id)
     user = interaction.user.display_name
     print(f"Administrator: {user} used `/idlechat`: set `{state}`")
 
+    # ✅ Save as bool
     idle_settings[guild_id] = state
+
+    # ✅ Convert to human-readable
+    state_text = "On ✅" if state else "Off ❌"
+
     await interaction.response.send_message(
-        f"✅ My idle chat mode set to `* {state} *` for this server.",
+        f"✅ Idle chat mode set to **{state_text}** for this server.",
         ephemeral=True
     )
 
@@ -1519,14 +1537,18 @@ async def reset_memory(interaction: discord.Interaction):
     await view.wait()
 
     if view.value is None:
-        return await interaction.followup.send("⌛ Timed out. Memory reset cancelled.", ephemeral=True)
+        return await interaction.followup.send("⌛ Timed out — memory reset cancelled.", ephemeral=True)
     if view.value is False:
         return await interaction.followup.send("❌ Memory reset cancelled.", ephemeral=True)
 
     # ✅ Clear memory
     memory.data[guild_id] = {}
 
-    await interaction.followup.send("🗑️ Monika's memory has been cleared in this server.", ephemeral=True)
+    state_text = "Cleared 🗑️"  # consistent with your “On / Off” style
+    await interaction.followup.send(
+        f"✅ Monika's memory has been **{state_text}** in this server.",
+        ephemeral=True
+    )
 
 @bot.tree.command(name="reset_personality", description="Reset all my personalities.")
 @app_commands.checks.has_permissions(administrator=True)
@@ -1553,7 +1575,7 @@ async def reset_personality(interaction: discord.Interaction):
         return await interaction.followup.send("❌ Reset cancelled.", ephemeral=True)
 
     # ✅ Reset stored personality data
-    SERVER_PERSONALITY_MODES[guild_id] = []
+    server_tracker.set_personality[guild_id] = []
 
     # ✅ Remove personality roles from Monika
     monika_member = guild.get_member(interaction.client.user.id)
@@ -1637,9 +1659,9 @@ async def helpme(interaction: discord.Interaction):
 
         # Check if the command has permission checks (like admin)
         if any("has_permissions" in str(check) for check in getattr(command, "checks", [])):
-            admin_cmds.append(f"**/{command.name}** – {command.description or 'No description'}")
+            admin_cmds.append(f"`* /{command.name} *` – {command.description or 'No description'}")
         else:
-            user_cmds.append(f"**/{command.name}** – {command.description or 'No description'}")
+            user_cmds.append(f"`* /{command.name} *` – {command.description or 'No description'}")
 
     embed = discord.Embed(
         title="✒️ Need a little help?",
@@ -1904,7 +1926,7 @@ async def set_personality(
         )
 
     # ✅ Save updated list
-    SERVER_PERSONALITY_MODES[guild_id] = chosen
+    server_tracker.set_personality[guild_id] = chosen
 
     monika_member = guild.get_member(interaction.client.user.id)
     if not monika_member:
@@ -2275,7 +2297,7 @@ async def restart_monika(interaction: discord.Interaction):
 
     # ✅ Reset trackers
     server_tracker.clear_relationship(guild_id)
-    SERVER_PERSONALITY_MODES[guild_id] = []
+    server_tracker.set_personality[guild_id] = []
     memory.data[guild_id] = {}
 
     # ✅ Remove all relationship/personality roles
@@ -2481,6 +2503,11 @@ async def broadcast(
             ephemeral=True
         )
 
+        if channel.name == CHANNEL_NAMES:
+            pass
+        else:
+            pass
+
         # Send once per guild
         for guild in bot.guilds:
             channel = None
@@ -2532,7 +2559,7 @@ async def broadcast(
                                 dislikes -= 1
 
                     await progress.edit(
-                        content=f"📢 Announcement in progress...\n✅ Likes: {likes} | ❌ Dislikes: {dislikes}"
+                        content=f"📢 Announcement in progress please wait..."
                     )
                 except Exception as e:
                     print(f"[Broadcast Update Error] {e}")
@@ -2566,13 +2593,12 @@ async def broadcast(
                 print(f"[Broadcast Fetch Error] {e}")
 
         # Final owner summary
-        await interaction.followup.send(
+        await interaction.response.send_message(
             f"✅ Broadcast finished.\n"
             f"Sent successfully to **{success_count}** servers.\n"
             f"⚠️ Failed in **{failure_count}** servers.\n\n"
             f"✅ Likes: **{like_total}**\n"
-            f"❌ Dislikes: **{dislike_total}**",
-            ephemeral=True
+            f"❌ Dislikes: **{dislike_total}**"
         )
 
     finally:
@@ -2725,4 +2751,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
-
