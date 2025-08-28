@@ -5,22 +5,32 @@ from openai import AsyncOpenAI
 
 class OpenAIKeyManager:
     def __init__(self, keys: list[str], cooldown_seconds: int = 15, wrap: bool = False):
+        if not keys:
+            raise RuntimeError("No OpenAI API keys were provided.")
         self.keys = {k: 0 for k in keys}
-        self.current_key = keys[0] if keys else None
+        self.current_key = keys[0]
         self.cooldown_seconds = cooldown_seconds
         self.wrap = wrap
 
     async def validate_keys(self):
         """Test each key once, keep only valid ones."""
+        print("[OpenAI] 🔄 Loading...")
+
         valid = {}
         for k in list(self.keys.keys()):
             try:
                 client = AsyncOpenAI(api_key=k)
                 await client.models.list()
                 valid[k] = 0
-                print(f"[OpenAI] ✅ Valid key: {k[:8]}...")
-            except Exception as e:
-                print(f"[OpenAI] ❌ Dropping key {k[:8]}... {e}")
+            except Exception:
+                pass  # silently ignore invalid keys
+
+        self.keys = valid
+        if not self.keys:
+            raise RuntimeError("No valid OpenAI keys available.")
+        self.current_key = next(iter(self.keys))
+
+        print(f"[OpenAI] ✅ {len(self.keys)} keys are good and ready.")
 
         self.keys = valid
         if not self.keys:
@@ -34,35 +44,44 @@ class OpenAIKeyManager:
         return AsyncOpenAI(api_key=self.current_key)
 
     async def rotate(self):
-        # Keep the original insertion order of keys
         keys = list(self.keys.keys())
 
-        # If current_key somehow disappeared (e.g., after validation), pick the first available one
         if self.current_key not in self.keys:
-            for k in keys:
-                if time.time() >= self.keys[k]:
-                    self.current_key = k
-                    print(f"[OpenAI] 🔄 Rotated to key {k[:8]}...")
-                    return
-            raise RuntimeError("No keys available (all cooling).")
+            self.current_key = keys[0]
 
-        # Move forward from the *next* key only; do not wrap.
         start_idx = keys.index(self.current_key) + 1
-        for i in range(start_idx, len(keys)):  # only forward, no modulo
+        for i in range(start_idx, len(keys)):  # only forward, no wrap
             k = keys[i]
             if time.time() >= self.keys[k]:  # not cooling
                 self.current_key = k
                 print(f"[OpenAI] 🔄 Rotated to key {k[:8]}...")
                 return
 
-        # If we got here, we reached the end with no available key.
-        raise RuntimeError("No more keys available ahead (end reached, no wrap).")
+        # If nothing available, wait until the soonest cooldown ends
+        soonest_key, soonest_time = min(self.keys.items(), key=lambda kv: kv[1])
+        wait_time = max(0, soonest_time - time.time())
+        print(f"[OpenAI] ⏳ Waiting {wait_time:.1f}s for next key...")
+        await asyncio.sleep(wait_time)
+        self.current_key = soonest_key
 
     def mark_cooldown(self, key):
         self.keys[key] = time.time() + self.cooldown_seconds
         print(f"[OpenAI] ⏳ Cooldown {self.cooldown_seconds}s for {key[:8]}...")
 
-async def safe_call(manager: OpenAIKeyManager, fn, retries=3):
+    def current_key_index(self) -> int:
+        """Return the index (1-based) of the current key."""
+        keys = list(self.keys.keys())
+        return keys.index(self.current_key) + 1
+
+    def status(self):
+        """Print status of all keys with cooldown times."""
+        now = time.time()
+        for i, (k, until) in enumerate(self.keys.items(), start=1):
+            cooldown_left = max(0, until - now)
+            marker = "<-- current" if k == self.current_key else ""
+            print(f"{i}. {k[:8]}... cooldown {cooldown_left:.1f}s {marker}")
+
+async def safe_call(manager: OpenAIKeyManager, fn, retries=10):
     last_exc = None
     for _ in range(retries):
         try:
