@@ -100,7 +100,8 @@ async def safe_call(manager: OpenAIKeyManager, fn, retries=10):
     raise last_exc
 
 # Load keys from environment
-OPENAI_KEYS = [os.getenv(f"OPENAI_KEY_{i}") for i in range(1, 121) if os.getenv(f"OPENAI_KEY_{i}")]
+OPENAI_KEYS = [os.getenv(f"OPENAI_KEY_{i}") for i in range(1, 126) if os.getenv(f"OPENAI_KEY_{i}")]
 
 # Shared manager instance (importable everywhere)
 key_manager = OpenAIKeyManager(OPENAI_KEYS, cooldown_seconds=15, wrap=False)
+
