@@ -245,13 +245,27 @@ def clean_monika_reply(text: str, bot_user: discord.User, user_obj: discord.User
 
 def is_friend_bot(message: discord.Message) -> bool:
     """
-    Return True if the message author is a bot in the FRIENDS set.
-    Excludes Monika herself.
+    True if the author is a bot in FRIENDS.
+    Excludes this bot itself. Works in guilds and DMs.
     """
-    if not message.author.bot:
+    # Not a bot? Not a friend bot.
+    if not getattr(message.author, "bot", False):
         return False
-    if message.author.id == message.guild.me.id:
+    
+    me = getattr(getattr(message, "guild", None), "me", None)
+    if me and message.author.id == me.id:
         return False
+
+    # Exclude this bot (Monika) herself
+    # bot.user is available in both guilds and DMs after on_ready
+    try:
+        if message.author.id == bot.user.id:
+            return False
+    except Exception:
+        # In rare startup edge-cases if bot.user isn't ready yet, just skip the self-check
+        pass
+
+    # Finally, check your allowlist
     return message.author.id in FRIENDS
 
 def get_time_based_outfit():
