@@ -32,11 +32,6 @@ class OpenAIKeyManager:
 
         print(f"[OpenAI] ✅ {len(self.keys)} keys are good and ready.")
 
-        self.keys = valid
-        if not self.keys:
-            raise RuntimeError("No valid OpenAI keys available.")
-        self.current_key = next(iter(self.keys))
-
     def get_client(self) -> AsyncOpenAI:
         now = time.time()
         if now < self.keys[self.current_key]:
@@ -83,7 +78,8 @@ class OpenAIKeyManager:
 
 async def safe_call(manager: OpenAIKeyManager, fn, retries=10):
     last_exc = None
-    for _ in range(retries):
+    delay = 2  # initial backoff in seconds
+    for attempt in range(retries):
         try:
             client = manager.get_client()
             return await fn(client)
@@ -93,7 +89,9 @@ async def safe_call(manager: OpenAIKeyManager, fn, retries=10):
             if "429" in err or "rate limit" in err:
                 manager.mark_cooldown(manager.current_key)
                 await manager.rotate()
-                await asyncio.sleep(2)
+                print(f"[OpenAI] ⚠️ Rate limit hit. Backing off for {delay}s (attempt {attempt+1}/{retries})...")
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 60)  # exponential backoff capped at 60s
                 continue
             if "401" in err or "invalid api key" in err or "400" in err:
                 print(f"[OpenAI] Fatal error on key {manager.current_key[:8]}: {e}")
