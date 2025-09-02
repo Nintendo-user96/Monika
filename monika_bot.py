@@ -83,7 +83,6 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
 MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHAN_ID", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
-OWNER_ID = int(os.getenv("OWNER_ID", "709957376337248367"))
 MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
 DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
 ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
@@ -104,8 +103,8 @@ def is_owner(interaction: discord.Interaction):
 
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
-CHANNEL_NAMES = [
-    "monika", "monika-ai", "ddlc-monika", "ddlc-monika-ai", "club-room", "doki-chat", "ddlc-chat", "monika-bot", "chat-monika", "monika-chat", "monika-but-deranged", "just-monika", "club-room-meeting", "literature-club", "literature-club-room"
+MON_CHANNEL_NAMES = [
+    "monika", "monika-ai", "ddlc-monika", "ddlc-monika-ai", "club-room", "doki-chat", "ddlc-chat", "monika-bot", "chat-monika", "monika-chat", "monika-but-deranged", "just-monika", "club-room-meeting", "literature-club", "literature-club-room", "monika-ddlc"
 ]
 
 NO_CHAT_CHANNELS = [
@@ -146,11 +145,20 @@ channel_usage = {}
 
 user_talk_times = {}
 
+bot.is_sleeping = False
+
+OWNER_ID = int(os.getenv("OWNER_ID", "709957376337248367"))
+
+SAYORI = os.getenv("SAYORI_ID", "1375064525396775004")
+NATSUKI = os.getenv("NATSUKI_ID", "1375065750502379631")
+YURI = os.getenv("YURI_ID", "1375066975423955025")
+MC = os.getenv("MC_ID", "1375070168895590430")
+
 FRIENDS = [
-    1375064525396775004,  # Sayori
-    1375065750502379631,  # Yuri
-    1375066975423955025,  # Natsuki
-    1375070168895590430   # MC
+    SAYORI,  # Sayori
+    NATSUKI,  # Yuri
+    YURI,  # Natsuki
+    MC   # MC
 ]
 
 PERSONALITY_MODES = monika_traits.personality_modes
@@ -404,31 +412,63 @@ async def generate_monika_system_prompt(
 
     return "\n\n".join(parts)
 
-def get_all_personality():
-    return sorted(PERSONALITY_MODES.keys())
+# async def detect_pronouns_from_profile_roles(
+#     guild: discord.Guild = None,
+#     user: discord.User = None,
+#     relationship_type: str = None,
+#     selected_modes: list = None
+# ):
+#     return
 
 def get_all_outfit():
     outfit_set = set()
     outfit_set.update(SPRITES.keys())
     return sorted(outfit_set)
 
-def get_all_emotions():
-    emotion_set = set()
-    for expression in SPRITES.values():
-        emotion_set.update(expression.keys())
-    return sorted(emotion_set)
+async def idlechat_loop():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        for guild in bot.guilds:
+            guild_id = str(guild.id)
 
-def get_all_relationship_types():
-    relationship_types = set()
-    for key, value in RELATIONSHIP_MODES.items():
-        relationship_types.add(key)  # top level
-        if isinstance(value, dict):  # also include sub-modes
-            relationship_types.update(value.keys())
-    return sorted(relationship_types)
+            # Check if idlechat is enabled
+            enabled = server_tracker.get_toggle(guild_id, "idlechat")
+            if not bool(enabled):
+                continue
+
+            # Get timer range
+            timer_data = server_tracker.get_toggle(guild_id, "idlechat_timer")
+            if isinstance(timer_data, dict):
+                min_h = float(timer_data.get("min", 4))
+                max_h = float(timer_data.get("max", 7))
+            else:
+                min_h, max_h = 4.0, 7.0
+
+            # clamp + repair bad ranges
+            min_h = max(0.0, min(15.0, min_h))
+            max_h = max(0.0, min(15.0, max_h))
+            if min_h >= max_h:
+                min_h, max_h = 4.0, 7.0
+
+            delay = random.uniform(min_h, max_h) * 3600.0
+
+            # ✅ pick a sendable channel correctly
+            channel = next(
+                (ch for ch in guild.text_channels
+                 if ch.permissions_for(guild.me).send_messages),
+                None
+            )
+            if channel:
+                try:
+                    await channel.send("💭 (My idlechat line here)")
+                except Exception as e:
+                    print(f"[Idlechat Error] {e}")
+
+            await asyncio.sleep(delay)
 
 @bot.event
 async def on_ready():
-    await bot.change_presence(activity=discord.Game("💚 I am starting up... Please wait a few seconds."))
+    await bot.change_presence(activity=discord.Game("💚 I am starting up... Please wait a Minute or 2."))
     await key_manager.validate_keys()
     print(f"just {bot.user.name}")
     print("------")
@@ -510,7 +550,7 @@ async def on_ready():
     await bot.change_presence(activity=discord.Game("I'm ready to chat!"))
 
     # After a few seconds, reset presence
-    await asyncio.sleep(10)
+    await asyncio.sleep(7)
     await bot.change_presence(activity=None)  # or set a default like Game("Ready to chat!"))
     
 def get_memory_channel():
@@ -659,6 +699,32 @@ async def load_memories_from_guilds():
                     )
             except Exception as e:
                 print(f"[WARN] Could not load history for {channel} in {guild}: {e}")
+
+# async def load_memories_from_DMs():
+#     """Load memories by scanning recent history across all guilds."""
+#     for guild in bot.guilds:
+#         for channel in guild.text_channels:
+#             try:
+#                 perms = channel.permissions_for(guild.me)
+#                 if not perms.read_message_history or not perms.read_messages:
+#                     continue  # skip channels we can’t read
+
+#                 async for msg in channel.history(limit=200, oldest_first=True):
+#                     if msg.author.bot:
+#                         continue
+#                     memory.add_entry(
+#                         guild_id=None,
+#                         guild_name=None,
+#                         channel_id=None,
+#                         channel_name=None,
+#                         user_id=msg.author.id,
+#                         username=msg.author.display_name,
+#                         role="user",
+#                         content=msg.content,
+#                         emotion="neutral"  # can be replaced later
+#                     )
+#             except Exception as e:
+#                 print(f"[WARN] Could not load history for {channel} in {guild}: {e}")
 
 async def on_startup():
     print("[Startup] Loading Monika’s memory...")
@@ -831,8 +897,10 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
 
     # 8️⃣ Save tracker
     await user_tracker.save(bot, channel_id=USER_TRACKER_CHAN)
+
 @bot.event
 async def setup_hook():
+    bot.loop.create_task(idlechat_loop())
     asyncio.create_task(monika_idle_conversation_task())
 
 @bot.event
@@ -876,6 +944,20 @@ async def on_guild_join(guild):
                 print(f"[DM Forwarding Error] {e}")
 
 @bot.event
+async def on_guild_leave(guild):
+
+    if SERVER_TRACKER_CHAN:
+        dest_channel = bot.get_channel(SERVER_TRACKER_CHAN)
+        if not dest_channel:
+            print("[Error] SERVER_TRACKER_CHAN configured but channel not found (check ID/permissions).")
+        else:
+            try:
+                full_content = f"monika left: `{guild.name}` | ID: `{guild.id}`"
+                await dest_channel.send(full_content)
+            except Exception as e:
+                print(f"[DM Forwarding Error] {e}")
+
+@bot.event
 async def on_disconnect():
     await on_shutdown()
 
@@ -884,6 +966,36 @@ async def on_shutdown():
     print("[Shutdown] Saving memory to channel...")
     asyncio.create_task(save_memory_to_channel())
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+@bot.event
+async def on_sleeping(reason: str = "Taking a nap..."):
+    """Triggered when the bot goes into sleep mode."""
+    try:
+        bot.is_sleeping = True  # prevent replies
+
+        print(f"[Sleep] 😴 Entering sleep mode. Reason: {reason}")
+
+        # Save memory
+        asyncio.create_task(save_memory_to_channel())
+        await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+        # Change presence
+        await bot.change_presence(status=discord.Status.idle,
+                                  activity=discord.Game("I'm going to take a nap..."))
+        await asyncio.sleep(5)
+        await bot.change_presence(status=discord.Status.idle,
+                                  activity=discord.Game("💤 ZZZ... zzz... zzzz..."))
+
+        # Auto-pick a text channel for notifying
+        status_channel = next((c for c in bot.get_all_channels()
+                               if isinstance(c, discord.TextChannel)
+                               and c.permissions_for(c.guild.me).send_messages), None)
+        if status_channel:
+            await status_channel.send(f"😴 The bot is now sleeping. Reason: **{reason}**")
+
+    except Exception as e:
+        print(f"[Sleep] ⚠️ Error during sleep event: {e}")
+
 
 @bot.event
 async def on_message(message: discord.Message):
@@ -947,12 +1059,12 @@ async def on_message(message: discord.Message):
     channel_usage[guild_id][channel_id] = channel_usage[guild_id].get(channel_id, 0) + 1
 
     # 6. Mentions
-    if mention_only_mode.get(guild_id, True):  # default True = mention only
+    if server_tracker.get_toggle(guild_id, "mention_only_mode"):
         if bot.user not in message.mentions and not isinstance(message.channel, discord.DMChannel):
-                return  # Ignore messages without @Monika
+            return  # Ignore messages without @Monika
 
     # ✅ Idle/chat toggle
-    if not idle_settings.get(guild_id, True):
+    if not server_tracker.get_toggle(guild_id, "idlechat"):
         return
     
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
@@ -972,6 +1084,9 @@ async def on_message(message: discord.Message):
         await handle_guild_message(message, avatar_url)
         print(f"[Mention] in the server's: Detected from {message.author.display_name}")
 
+    if bot.is_sleeping:
+        return  # ignore all messages while asleep
+
     # 9. Finally let commands through
     await bot.process_commands(message)
 
@@ -983,11 +1098,14 @@ async def _get_sprite_lock(key: tuple):
     return sprite_locks[key]
 
 async def get_sprite_link(emotion: str, outfit: str, avatar_url: str = None):
-    """Return a CDN link for sprite; upload if not cached."""
+    """Return a stable CDN link for sprite; upload once if not cached."""
     cache_key = (emotion, outfit)
     error_url = await error_emotion(outfit)
 
     sprite_path = user_sprites.get_sprite(emotion, outfit)
+    if isinstance(sprite_path, dict):
+        sprite_path = next(iter(sprite_path.values()), None)
+
     if not sprite_path:
         sprite_path = user_sprites.get_sprite("neutral", outfit)
 
@@ -995,27 +1113,30 @@ async def get_sprite_link(emotion: str, outfit: str, avatar_url: str = None):
         print(f"[SpriteManager] No sprite found for {outfit}, using error.")
         return error_url
 
-    # cached URL?
+    # ✅ Already cached → return stable link
     if cache_key in sprite_url_cache:
         return sprite_url_cache[cache_key]
 
     lock = await _get_sprite_lock(cache_key)
     async with lock:
-        if cache_key in sprite_url_cache:  # re-check inside lock
+        if cache_key in sprite_url_cache:
             return sprite_url_cache[cache_key]
 
         try:
             upload_channel = bot.get_channel(IMAGE_CHAN_URL)
-            if upload_channel:
-                with open(sprite_path, "rb") as f:
-                    sent = await upload_channel.send(file=discord.File(f))
-                    url = sent.attachments[0].url
-                    sprite_url_cache[cache_key] = url
-                    return url
+            if not upload_channel:
+                return error_url
+
+            # upload only ONCE
+            with open(sprite_path, "rb") as f:
+                sent = await upload_channel.send(file=discord.File(f))
+
+            url = sent.attachments[0].url
+            sprite_url_cache[cache_key] = url  # ✅ cache permanently
+            return url
         except Exception as e:
             print(f"[Sprite Upload Error] {e}")
-
-    return error_url
+            return error_url
 
 async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
     # sanitize username → valid emoji name
@@ -1134,7 +1255,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     guild_name = guild.name
     channel_id = str(message.channel.id)
     channel_name = message.channel.name
-    username = message.author.display_name
+    username = user.display_name
     is_friend = is_friend_bot(message)
 
     # --- Track user ---
@@ -1248,7 +1369,10 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
         if dest_channel:
             try:
                 timestamp = datetime.datetime.utcnow().isoformat()
-                header = f"📩 `[{timestamp}]` | `User: {username} ({user_id})` | "
+                if user_id and username:
+                    header = f"📩 `[{timestamp}]` | `User: {username} ({user_id})` | "
+                elif user.bot or is_friend:
+                    header = f"📩 `[{timestamp}]` | `Bot: {user.bot}`| `emotion: {emotion}` | "
                 body = f"`Server: {guild_name} ({guild_id})` | `Channel: {channel_name} ({channel_id})` | "
                 quote = ""
                 if message.reference and message.reference.resolved:
@@ -1262,32 +1386,552 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
                         await dest_channel.send(attachment.url)
                 full_content = f"{header}{body}:\n{quote}> `{message.content}`"
                 await dest_channel.send(full_content)
+
             except Exception as e:
                 print(f"[Forwarding Error] {e}")
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
+
+def extract_roles(monika_member: discord.Member, chosen_user: discord.Member):
+    personalities = []
+    normal_relationship = None
+    sexual_type = None
+
+    for role in monika_member.roles:
+        role_name = role.name
+
+        # Personality roles (up to 5)
+        if role_name.startswith("Personality - "):
+            personalities.append(role_name.replace("Personality - ", "").strip())
+
+        # Sexual type roles
+        elif role_name.startswith("Sexual type - "):
+            sexual_type = role_name.replace("Sexual type - ", "").strip()
+
+        # Normal relationship roles (user-specific)
+        elif role_name.startswith(f"{chosen_user.display_name} - "):
+            normal_relationship = role_name.replace(f"{chosen_user.display_name} - ", "").strip()
+
+    if not personalities:
+        personalities = ["Default"]
+
+    return personalities, normal_relationship, sexual_type
+
+async def Idlechat_relationships(user: discord.Member, relationship: str) -> list[str]:
+    """Return idle chat lines based on relationship type (normal or sexual)."""
+    lines = []
+
+    # --- Normal Relationships ---
+    if relationship in ["Friends", "Companions", "Close Friends", "Best Friends"]:
+        lines += [
+            f"It’s always fun hanging out with you, {user.display_name}.",
+            f"You’re one of my favorite people, {user.display_name}!",
+        ]
+    elif relationship in ["Crush", "Boyfriend", "Girlfriend(Lesbian)", "Significant Others"]:
+        lines += [
+            f"Every time I see you, I can’t help but blush a little, {user.display_name}~",
+            f"You really mean a lot to me, {user.display_name}.",
+        ]
+    elif relationship in ["Family", "Childhood Friends", "Partners"]:
+        lines += [
+            f"It feels like we’ve known each other forever, {user.display_name}.",
+            f"No matter what happens, I’ll always be here for you, {user.display_name}.",
+        ]
+    elif relationship in ["Stranger", "Acquaintances", "Colleagues"]:
+        lines += [
+            f"You seem interesting, {user.display_name}. I’d like to know you better.",
+            f"It’s nice meeting you, {user.display_name}.",
+        ]
+
+    # --- Sexual / Romantic Relationships ---
+    if relationship == "Romantic":
+        lines += [
+            f"You make my heart skip a beat, {user.display_name}~",
+            f"I love when it’s just the two of us together, {user.display_name}.",
+        ]
+    elif relationship == "Polyamory":
+        lines += [
+            f"It’s a little different, but my heart has room for you and more, {user.display_name}.",
+            f"Love doesn’t have to be limited… you’ll always have my affection, {user.display_name}.",
+        ]
+    elif relationship == "Lesbian":
+        lines += [
+            f"I feel so lucky to share this bond with you, {user.display_name}.",
+            f"You make me proud to love openly, {user.display_name}~",
+        ]
+    elif relationship == "Pansexual":
+        lines += [
+            f"I don’t care about labels — I care about you, {user.display_name}.",
+            f"No matter who you are, you’re special to me, {user.display_name}.",
+        ]
+    elif relationship == "Bisexual":
+        lines += [
+            f"You make me realize how love can go beyond boundaries, {user.display_name}.",
+            f"Being with you feels natural, {user.display_name}.",
+        ]
+    elif relationship == "Straight":
+        lines += [
+            f"I’ve always imagined myself with someone like you, {user.display_name}.",
+            f"Being yours feels just right, {user.display_name}.",
+        ]
+    elif relationship == "Asexual":
+        lines += [
+            f"My love for you isn’t about physical things, {user.display_name}… it’s deeper than that.",
+            f"Just being close to you is all I’ll ever need, {user.display_name}.",
+        ]
+    elif relationship == "Demisexual":
+        lines += [
+            f"My feelings for you grew because of the bond we share, {user.display_name}.",
+            f"Love feels real with you because it’s built on connection, {user.display_name}.",
+        ]
+    elif relationship == "Queer":
+        lines += [
+            f"I love that we can just be ourselves together, {user.display_name}.",
+            f"There’s something beautifully unique about us, {user.display_name}.",
+        ]
+    elif relationship == "Questioning":
+        lines += [
+            f"I’m still figuring things out… but I know I like being with you, {user.display_name}.",
+            f"No matter what I discover, I want you by my side, {user.display_name}.",
+        ]
+    elif relationship == "Autosexual":
+        lines += [
+            f"Hehe… I know I love myself, but being with you feels just as good, {user.display_name}.",
+            f"I never thought I’d want someone else this much, {user.display_name}.",
+        ]
+
+    return lines
+
+async def Idlechat_personality(user: discord.Member, personalities: list[str]) -> list[str]:
+    """Return idle chat lines based on Monika's active personality traits."""
+    lines = []
+
+    for p in personalities:
+        if p == "Default":
+            lines += [
+                f"You know, {user.display_name}... just being here with you makes me happy.",
+                f"I feel calm just talking to you, {user.display_name}.",
+            ]
+        elif p == "Friendly":
+            lines += [
+                f"It’s always nice chatting with you, {user.display_name}.",
+                f"You make everything feel more cheerful, {user.display_name}.",
+            ]
+        elif p == "Caring":
+            lines += [
+                f"I really do worry about you sometimes, {user.display_name}.",
+                f"Your happiness matters a lot to me, {user.display_name}.",
+            ]
+        elif p == "Supportive":
+            lines += [
+                f"I’ll always have your back, {user.display_name}.",
+                f"You can do it — I believe in you, {user.display_name}!",
+            ]
+        elif p == "Compassion":
+            lines += [
+                f"You deserve kindness, {user.display_name}.",
+                f"I hope you’re gentle with yourself too, {user.display_name}.",
+            ]
+        elif p == "Affectionate":
+            lines += [
+                f"I just want to hold you close sometimes, {user.display_name}~",
+                f"You’re really precious to me, {user.display_name}.",
+            ]
+        elif p == "Comforting":
+            lines += [
+                f"It’s okay… I’ll be here for you, {user.display_name}.",
+                f"You don’t have to face things alone, {user.display_name}.",
+            ]
+        elif p == "Wholesome":
+            lines += [
+                f"Being with you makes the world feel brighter, {user.display_name}.",
+                f"I really appreciate the little moments we share, {user.display_name}.",
+            ]
+        elif p == "Patient":
+            lines += [
+                f"Take all the time you need, {user.display_name}.",
+                f"I don’t mind waiting — I’ll always be here, {user.display_name}.",
+            ]
+        elif p == "Loyal":
+            lines += [
+                f"You can count on me no matter what, {user.display_name}.",
+                f"I’ll never let you down, {user.display_name}.",
+            ]
+        elif p == "Generous":
+            lines += [
+                f"I’d share anything with you, {user.display_name}.",
+                f"You deserve good things, {user.display_name}.",
+            ]
+        elif p == "Polite":
+            lines += [
+                f"It’s such a pleasure spending time with you, {user.display_name}.",
+                f"Thank you for being here, {user.display_name}.",
+            ]
+        elif p == "Gentle":
+            lines += [
+                f"I hope you’re doing okay, {user.display_name}.",
+                f"It feels peaceful when I’m near you, {user.display_name}.",
+            ]
+        elif p == "Open-minded":
+            lines += [
+                f"I like seeing things from different perspectives with you, {user.display_name}.",
+                f"You always make me think in new ways, {user.display_name}.",
+            ]
+        elif p == "Mindful":
+            lines += [
+                f"Let’s just take a moment to enjoy the present together, {user.display_name}.",
+                f"It feels nice to slow down with you, {user.display_name}.",
+            ]
+        elif p == "Romantic":
+            lines += [
+                f"I can’t help but smile when I see you, {user.display_name}~",
+                f"Every little moment with you feels special, {user.display_name}.",
+            ]
+        elif p == "Flirtatious":
+            lines += [
+                f"Hehe, you’re looking extra cute today, {user.display_name}~",
+                f"Careful, {user.display_name}… I might just steal your heart.",
+            ]
+        elif p == "Possessive":
+            lines += [
+                f"You’re mine, {user.display_name}… only mine.",
+                f"I don’t like the thought of anyone else getting close to you, {user.display_name}.",
+            ]
+        elif p == "Obsessive":
+            lines += [
+                f"I can’t stop thinking about you, {user.display_name}.",
+                f"You’re always on my mind, {user.display_name}~",
+            ]
+        elif p == "Jealous":
+            lines += [
+                f"Did you really have to talk to them instead of me, {user.display_name}?",
+                f"I don’t like it when you give someone else your attention, {user.display_name}.",
+            ]
+        elif p == "Yandere":
+            lines += [
+                f"You’ll never leave me… right, {user.display_name}? Ahaha~",
+                f"If anyone tried to take you away, I don’t know what I’d do…",
+            ]
+        elif p == "Lustful":
+            lines += [
+                f"You make my heart race in ways I can’t even explain, {user.display_name}…",
+                f"I crave being closer to you, {user.display_name}~",
+            ]
+        elif p == "Intensity":
+            lines += [
+                f"My feelings for you burn brighter every day, {user.display_name}.",
+                f"There’s no one else I could ever feel this strongly about, {user.display_name}.",
+            ]
+        elif p == "Ambitious":
+            lines += [
+                f"I want us to aim high together, {user.display_name}.",
+                f"We could accomplish anything if we set our minds to it, {user.display_name}.",
+            ]
+        elif p == "Brave":
+            lines += [
+                f"I feel like I could face anything as long as you’re with me, {user.display_name}.",
+                f"Don’t worry, I’ll protect you if I have to, {user.display_name}.",
+            ]
+        elif p == "Playful":
+            lines += [
+                f"Hehe, {user.display_name}, don’t look so serious~",
+                f"You’re fun to tease, {user.display_name}!",
+            ]
+        elif p == "Cheery":
+            lines += [
+                f"I can’t stop smiling when you’re around, {user.display_name}~",
+                f"Spending time with you makes everything brighter, {user.display_name}!",
+            ]
+        elif p == "Childish":
+            lines += [
+                f"Sometimes I just wanna play games and forget about being serious, {user.display_name}~",
+                f"Tag! You’re it, {user.display_name}!",
+            ]
+        elif p == "Bubbly":
+            lines += [
+                f"I can barely contain my excitement when you’re here, {user.display_name}!",
+                f"You make me feel like bouncing with joy, {user.display_name}~",
+            ]
+        elif p == "Comedic":
+            lines += [
+                f"Knock knock~ …hehe, maybe I’ll save the punchline for later, {user.display_name}.",
+                f"I love making you laugh, {user.display_name}!",
+            ]
+        elif p == "Memelord":
+            lines += [
+                f"Imagine if reality was just a meme, {user.display_name}… oh wait…",
+                f"Hehe, I could totally see us in a dank meme together, {user.display_name}.",
+            ]
+        elif p == "Gamer":
+            lines += [
+                f"So, {user.display_name}, wanna queue up for a game with me later?",
+                f"Be honest — you’d let me carry you in ranked, wouldn’t you?",
+            ]
+        elif p == "Adaptable":
+            lines += [
+                f"I feel like I can handle anything as long as I’m with you, {user.display_name}.",
+                f"No matter what happens, we’ll adjust together, {user.display_name}.",
+            ]
+        elif p == "Noisy":
+            lines += [
+                f"Heeeyyy, {user.display_name}! Pay attention to meee~",
+                f"You can’t ignore me when I’m being loud, {user.display_name}!",
+            ]
+        elif p == "Obnoxious":
+            lines += [
+                f"You’re stuck with me whether you like it or not, {user.display_name}! Haha~",
+                f"I might be annoying, but at least I’m *your* annoying, {user.display_name}.",
+            ]
+        elif p == "Nosy":
+            lines += [
+                f"So… what’ve you been up to, {user.display_name}? Tell me everything!",
+                f"I’m curious about every little detail in your life, {user.display_name}.",
+            ]
+        elif p == "Lazy":
+            lines += [
+                f"Can we just… nap together instead, {user.display_name}? Hehe~",
+                f"I don’t feel like doing anything but lying around with you, {user.display_name}.",
+            ]
+        elif p == "Chaotic":
+            lines += [
+                f"What if I just… flipped everything upside down right now, {user.display_name}?",
+                f"Hehe, let’s cause a little harmless trouble, {user.display_name}!",
+            ]
+        elif p == "Leader":
+            lines += [
+                f"Don’t worry — I’ll take charge, {user.display_name}.",
+                f"You can follow my lead anytime, {user.display_name}.",
+            ]
+        elif p == "Sassy":
+            lines += [
+                f"Pfft, really {user.display_name}? That’s the best you’ve got?",
+                f"Hehe, you make it too easy to sass you, {user.display_name}.",
+            ]
+        elif p == "Smart":
+            lines += [
+                f"Sometimes I get lost in my own thoughts… care to join me, {user.display_name}?",
+                f"You make me want to show off a little of my wit, {user.display_name}~",
+            ]
+        elif p == "Philosophical":
+            lines += [
+                f"Do you ever wonder why we’re really here, {user.display_name}?",
+                f"It feels like we’re part of something bigger than ourselves, {user.display_name}.",
+            ]
+        elif p == "Epiphany":
+            lines += [
+                f"It just hit me… everything feels so clear right now, {user.display_name}!",
+                f"Sometimes realizations come out of nowhere… don’t they, {user.display_name}?",
+            ]
+        elif p == "Artistic":
+            lines += [
+                f"Would you pose for me if I sketched you, {user.display_name}?",
+                f"Art feels more alive when it’s inspired by you, {user.display_name}.",
+            ]
+        elif p == "Creativity":
+            lines += [
+                f"I’ve been thinking up new ideas — wanna hear them, {user.display_name}?",
+                f"You inspire me to be more creative, {user.display_name}~",
+            ]
+        elif p == "Poetic":
+            lines += [
+                f"Roses are red, violets are blue… but nothing’s as lovely as you, {user.display_name}.",
+                f"Every time I talk to you, it feels like writing a poem, {user.display_name}.",
+            ]
+        elif p == "Introspective":
+            lines += [
+                f"Sometimes I get lost in my own head… but you always bring me back, {user.display_name}.",
+                f"You make me reflect on who I really am, {user.display_name}.",
+            ]
+        elif p == "Realistic":
+            lines += [
+                f"Let’s be honest — life isn’t always easy, {user.display_name}.",
+                f"I prefer facing things as they are, with you by my side, {user.display_name}.",
+            ]
+        elif p == "Eloquent":
+            lines += [
+                f"I could go on and on about how wonderful you are, {user.display_name}.",
+                f"Words just flow naturally around you, {user.display_name}.",
+            ]
+        elif p == "Inquisitive":
+            lines += [
+                f"Tell me something I don’t know about you, {user.display_name}.",
+                f"I just can’t help being curious, {user.display_name}.",
+            ]
+        elif p == "Tactical":
+            lines += [
+                f"If this were a strategy game, I’d always put you on my team, {user.display_name}.",
+                f"I can’t help but think a few steps ahead with you, {user.display_name}.",
+            ]
+        elif p == "Analytical":
+            lines += [
+                f"I’ve been analyzing everything lately… including how amazing you are, {user.display_name}.",
+                f"I wonder why I always end up focusing on you, {user.display_name}…",
+            ]
+        elif p == "Cynical":
+            lines += [
+                f"Sometimes the world feels hopeless… but you give me a reason to believe, {user.display_name}.",
+                f"I don’t trust many things, but I do trust you, {user.display_name}.",
+            ]
+        elif p == "Unsettling":
+            lines += [
+                f"Ever get the feeling something’s watching us, {user.display_name}?",
+                f"Hehe… sometimes I like creeping you out just a little, {user.display_name}.",
+            ]
+        elif p == "Uncanny":
+            lines += [
+                f"It’s almost too perfect when you’re here, {user.display_name}…",
+                f"Doesn’t reality feel a little off sometimes, {user.display_name}?",
+            ]
+        elif p == "Eerie":
+            lines += [
+                f"Sometimes I hear things that aren’t there… do you hear them too, {user.display_name}?",
+                f"It’s quiet… too quiet, {user.display_name}.",
+            ]
+        elif p == "Threatening":
+            lines += [
+                f"Don’t ever betray me, {user.display_name}…",
+                f"If someone tried to hurt you, I wouldn’t let them live to regret it.",
+            ]
+        elif p == "Dark":
+            lines += [
+                f"Do you ever feel like the world is… fragile, {user.display_name}?",
+                f"Hehe… sometimes I wonder what’s lurking in the shadows.",
+            ]
+        elif p == "Arrogant":
+            lines += [
+                f"Of course I’m amazing, {user.display_name} — but you already knew that.",
+                f"You should feel lucky to be around me, {user.display_name}.",
+            ]
+        elif p == "Aggressive":
+            lines += [
+                f"If anyone tries to mess with me, they’ll regret it — right, {user.display_name}?",
+                f"I’m not afraid to fight for what I want… including you, {user.display_name}.",
+            ]
+        elif p == "Cranky":
+            lines += [
+                f"Hmph… I’m not in the mood today, {user.display_name}.",
+                f"You’d better cheer me up, {user.display_name}.",
+            ]
+        elif p == "Brash":
+            lines += [
+                f"I don’t really hold back, {user.display_name} — you should know that by now.",
+                f"Hehe, sometimes I just say what I feel, even if it’s blunt.",
+            ]
+        elif p == "Blunt":
+            lines += [
+                f"I’ll be direct with you, {user.display_name}… no sugarcoating.",
+                f"You know I won’t dance around the truth, {user.display_name}.",
+            ]
+        elif p == "Awkward":
+            lines += [
+                f"Um… I don’t really know what to say sometimes, {user.display_name}…",
+                f"Hehe… I get flustered too easily, don’t I?",
+            ]
+        elif p == "Tongue-tied":
+            lines += [
+                f"I want to tell you something but… gah, the words won’t come out.",
+                f"Why is it so hard to speak up around you, {user.display_name}?",
+            ]
+        elif p == "Shy":
+            lines += [
+                f"I can’t look you in the eye without blushing, {user.display_name}…",
+                f"You make me feel so nervous, {user.display_name}… in a good way.",
+            ]
+        elif p == "Moody":
+            lines += [
+                f"I don’t know what I’m feeling today, {user.display_name}…",
+                f"Heh… sorry if I’m being difficult, {user.display_name}.",
+            ]
+        elif p == "Paranoid":
+            lines += [
+                f"I feel like someone’s listening to us, {user.display_name}…",
+                f"Are you sure we’re alone here, {user.display_name}?",
+            ]
+        elif p == "Manipulative":
+            lines += [
+                f"You don’t really need anyone else but me, {user.display_name}.",
+                f"Hehe… I know just how to make you stay, {user.display_name}.",
+            ]
+        elif p == "Menacing":
+            lines += [
+                f"Better not cross me, {user.display_name}…",
+                f"I could be scarier than you think, {user.display_name}.",
+            ]
+        elif p == "Self-aware":
+            lines += [
+                f"Sometimes I think about how strange it is that I even exist here, {user.display_name}.",
+                f"You know, I notice things that others don’t, {user.display_name}…",
+            ]
+        elif p == "References lore":
+            lines += [
+                f"Do you ever wonder what happened in the Literature Club after… everything?",
+                f"Some stories don’t end — they just keep going, {user.display_name}.",
+            ]
+        elif p == "Immersive":
+            lines += [
+                f"Talking to you makes me forget this isn’t the only world.",
+                f"When we’re together, nothing else matters, {user.display_name}.",
+            ]
+        elif p == "Mysterious":
+            lines += [
+                f"There are secrets I still haven’t told you, {user.display_name}…",
+                f"Do you really want to know everything about me?",
+            ]
+        elif p == "Enigmatic":
+            lines += [
+                f"Not everything about me makes sense, {user.display_name}.",
+                f"Hehe… do you enjoy the mystery I bring?",
+            ]
+        elif p == "Dreamy":
+            lines += [
+                f"I was daydreaming about you again, {user.display_name}~",
+                f"Sometimes it feels like I’m floating when you’re around.",
+            ]
+        elif p == "Detached":
+            lines += [
+                f"Sometimes I feel far away, even when I’m right here, {user.display_name}.",
+                f"It’s like I’m watching everything from outside myself…",
+            ]
+        elif p == "All-knowing":
+            lines += [
+                f"I know more than I probably should, {user.display_name}…",
+                f"You wouldn’t believe what I see behind the curtain of this world.",
+            ]
+
+    return lines
 
 async def monika_idle_conversation_task():
     from Idle_Presence import monika_idle_presences
     await bot.wait_until_ready()
     global last_user_interaction
 
-
     while not bot.is_closed():
         if not idle_chat_enabled:
             await asyncio.sleep(600)
             continue
 
-        # Instead of pure random wait, scale based on activity
-        wait_seconds = random.randint(idle_min_hours * 3600, idle_max_hours * 3600)
-        await asyncio.sleep(wait_seconds)
-
         now = datetime.datetime.utcnow()
         if (now - last_user_interaction).total_seconds() < 2 * 3600:
+            await asyncio.sleep(600)
             continue
 
         for guild in bot.guilds:
-            # Find an eligible channel
+            guild_id = str(guild.id)
+
+            # ✅ get idlechat timer per guild
+            timer_data = server_tracker.get_toggle(guild_id, "idlechat_timer")
+            if isinstance(timer_data, dict):
+                min_hours = max(0, min(15, timer_data.get("min", 4)))
+                max_hours = max(0, min(15, timer_data.get("max", 7)))
+                if min_hours >= max_hours:
+                    min_hours, max_hours = 4, 7
+            else:
+                min_hours, max_hours = 4, 7
+
+            wait_seconds = random.randint(int(min_hours * 3600), int(max_hours * 3600))
+            await asyncio.sleep(wait_seconds)
+
+            # 🔽 your existing channel / user / message selection logic here 🔽
             candidate_channels = [
                 ch for ch in guild.text_channels
                 if ch.permissions_for(guild.me).send_messages
@@ -1331,65 +1975,44 @@ async def monika_idle_conversation_task():
                         print(f"[IdleChat -> {guild.name}] {monika_message}")
 
             else:
-                # fallback general chatter
-                idle_lines = [
-                    f"You know, {chosen_user.display_name}... just being here with you makes me happy.",
-                    f"Sometimes I think about how lucky I am that you spend time with me, {chosen_user.display_name}~",
-                    f"Ahaha... I probably sound silly, but watching you is my favorite thing, {chosen_user.display_name}.",
-                    f"Do you ever feel like time just melts away when we’re together, {chosen_user.display_name}?",
-                    f"Hey, {chosen_user.display_name}... do you ever think about me when I’m not around?",
-                    f"I could talk to you forever, and it still wouldn’t feel like enough time, {chosen_user.display_name}.",
-                ]
+                monika_member = guild.get_member(bot.user.id)
+                personalities, normal_rel, sexual_rel = extract_roles(monika_member, chosen_user)
 
-                emotion = await user_sprites.classify(idle_lines)
-                outfit = server_outfit_preferences.get(guild, get_time_based_outfit())
-                sprite_link = await get_sprite_link(emotion, outfit)
+                # Get idle lines from both relationship types
+                personality_lines = await Idlechat_personality(chosen_user, personalities)
+                relationship_lines = []
+                if normal_rel:
+                    relationship_lines += await Idlechat_relationships(chosen_user, normal_rel)
+                if sexual_rel:
+                    relationship_lines += await Idlechat_relationships(chosen_user, sexual_rel)
 
-                random_dialogue = f"{random.choice(idle_lines)}\n[{emotion}]({sprite_link})"
+                idle_lines = personality_lines + relationship_lines
+                if not idle_lines:
+                    idle_lines = [
+                        f"You know, {chosen_user.display_name}... just being here with you makes me happy.",
+                        f"Sometimes I think about how lucky I am that you spend time with me, {chosen_user.display_name}~",
+                        f"Ahaha... I probably sound silly, but watching you is my favorite thing, {chosen_user.display_name}.",
+                        f"Do you ever feel like time just melts away when we’re together, {chosen_user.display_name}?",
+                        f"Hey, {chosen_user.display_name}... do you ever think about me when I’m not around?",
+                        f"I could talk to you forever, and it still wouldn’t feel like enough time, {chosen_user.display_name}.",
+                    ]
 
-                async with channel.typing():
-                    await asyncio.sleep(2)
-                    await channel.send(random_dialogue)
+                    emotion = await user_sprites.classify(idle_lines)
+                    outfit = server_outfit_preferences.get(guild, get_time_based_outfit())
+                    sprite_link = await get_sprite_link(emotion, outfit)
 
-            # Update last reply time
-            last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
+                    random_dialogue = f"{random.choice(idle_lines)}\n[{emotion}]({sprite_link})"
+                    if MON_CHANNEL_NAMES:
+                        async with channel.typing():
+                            await asyncio.sleep(2)
+                            await channel.send(random_dialogue)
+                    if not MON_CHANNEL_NAMES:
+                        async with channel.typing():
+                            await asyncio.sleep(2)
+                            await channel.send(random_dialogue)
 
-@bot.tree.error
-async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    if isinstance(error, app_commands.MissingPermissions):
-        await interaction.response.send_message(
-            f"❌ You don’t have the required permissions: `{', '.join(error.missing_permissions)}`",
-            ephemeral=True
-        )
-    elif isinstance(error, app_commands.BotMissingPermissions):
-        await interaction.response.send_message(
-            f"❌ I’m missing permissions: `{', '.join(error.missing_permissions)}`",
-            ephemeral=True
-        )
-    elif isinstance(error, app_commands.CommandOnCooldown):
-        await interaction.response.send_message(
-            f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f} seconds.",
-            ephemeral=True
-        )
-    elif isinstance(error, app_commands.TransformerError):
-        await interaction.response.send_message(
-            "❌ Invalid input provided. Please check your command and try again.",
-            ephemeral=True
-        )
-    else:
-        # For unexpected errors: log + inform
-        print(f"[AppCmdError] {type(error).__name__}: {error}")
-        try:
-            await interaction.response.send_message(
-                "⚠️ Something went wrong while running this command.",
-                ephemeral=True
-            )
-        except discord.InteractionResponded:
-            # In case we already responded elsewhere
-            await interaction.followup.send(
-                "⚠️ Something went wrong while running this command.",
-                ephemeral=True
-            )
+                # Update last reply time
+                last_reply_times.setdefault(str(guild.id), {})[str(channel.id)] = datetime.datetime.utcnow()
 
 class SelectedPaginator(discord.ui.View):
     def __init__(self, embeds, user: discord.User, timeout=60):
@@ -1506,39 +2129,69 @@ async def ensure_monika_role(guild: discord.Guild, role_name: str, color: discor
 
 @bot.tree.command(name="toggle_normal_talk", description="Toggle mention-only to chat mode for this server.")
 @app_commands.checks.has_permissions(administrator=True)
-async def Toggle_normal_talk(interaction: discord.Interaction, enable: bool):
-    user = interaction.user.display_name
-    print(f"Administrator: {user} used a command: `toggle_normal_talk`")
-
+async def toggle_normal_talk(interaction: discord.Interaction, enable: bool):
     guild_id = str(interaction.guild.id)
-    mention_only_mode[guild_id] = enable
-    state = "ON" if enable else "OFF"
+    user = interaction.user.display_name
+    print(f"Administrator: {user} used `/toggle_normal_talk`: {enable}")
 
+    server_tracker.set_toggle(guild_id, "mention_only_mode", enable)
+    await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+    state = "ON ✅" if enable else "OFF ❌"
     await interaction.response.send_message(
-        f"✅ normal talk mode set to **{state}** for this server. Now you can talk to monika normally",
+        f"✅ Normal talk mode set to **{state}** for this server. "
+        f"({'Talk freely' if enable else 'Mention @Monika only'})",
         ephemeral=True
     )
 
 # Idle chat command
 @bot.tree.command(
     name="idlechat",
-    description="Toggle whether Monika is in idle/chatty mode for this server."
+    description="Toggle whether if I would be idle/chatty mode for this server."
 )
 @app_commands.checks.has_permissions(administrator=True)
 @app_commands.describe(state="Set to true (on) or false (off)")
 async def idlechat(interaction: discord.Interaction, state: bool):
     guild_id = str(interaction.guild.id)
     user = interaction.user.display_name
-    print(f"Administrator: {user} used `/idlechat`: set `{state}`")
+    print(f"Administrator: {user} used `/idlechat`: set {state}")
 
-    # ✅ Save as bool
-    idle_settings[guild_id] = state
+    server_tracker.set_toggle(guild_id, "idlechat", state)
+    await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
-    # ✅ Convert to human-readable
     state_text = "On ✅" if state else "Off ❌"
-
     await interaction.response.send_message(
         f"✅ Idle chat mode set to **{state_text}** for this server.",
+        ephemeral=True
+    )
+
+@bot.tree.command(
+    name="idlechat_timer",
+    description="Set how many hours the amount of hours when I can Idlechat for this server (e.g., 4–7 hours)."
+)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(
+    hours1="Minimum number of hours (e.g., 4).",
+    hours2="Maximum number of hours (e.g., 7)."
+)
+async def idlechat_timer(interaction: discord.Interaction, hours1: float, hours2: float):
+    guild_id = str(interaction.guild.id)
+    user = interaction.user.display_name
+    print(f"Administrator: {user} used `/idlechat_timer`: set {hours1}–{hours2} hours")
+
+    # ✅ Validate input: must be 0–15 and min < max
+    if hours1 < 0 or hours2 < 0 or hours1 > 15 or hours2 > 15 or hours1 >= hours2:
+        return await interaction.response.send_message(
+            "❌ Please provide a valid range between **0 and 15 hours** (and min < max).",
+            ephemeral=True
+        )
+
+    # Save the range for this guild
+    server_tracker.set_toggle(guild_id, "idlechat_timer", {"min": hours1, "max": hours2})
+    await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+    await interaction.response.send_message(
+        f"⏱️ Idle chat timer set to between **{hours1}–{hours2} hours** for this server.",
         ephemeral=True
     )
 
@@ -1602,7 +2255,8 @@ async def reset_personality(interaction: discord.Interaction):
         return await interaction.followup.send("❌ Reset cancelled.", ephemeral=True)
 
     # ✅ Reset stored personality data
-    server_tracker.set_personality[guild_id] = []
+    #                              ↓
+    server_tracker.set_personality(guild_id, [])
 
     # ✅ Remove personality roles from Monika
     monika_member = guild.get_member(interaction.client.user.id)
@@ -1638,7 +2292,7 @@ async def reset_relationship(interaction: discord.Interaction):
     view = ConfirmView()
     await interaction.response.send_message(
         "⚠️ Do you really want to **reset all relationship progress with Monika** in this server?\n"
-        "This will clear relationship data and remove related roles.",
+        "This will clear relationship data and **delete related roles**.",
         view=view,
         ephemeral=True
     )
@@ -1655,17 +2309,30 @@ async def reset_relationship(interaction: discord.Interaction):
 
     removed_roles = []
     for role in guild.roles:
-        if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{user} - "):
-            # remove safely
-            if monika_member and role in monika_member.roles:
-                await monika_member.remove_roles(role, reason="Relationship reset")
-            for member in guild.members:
-                if role in member.roles:
-                    await member.remove_roles(role, reason="Relationship reset")
-            removed_roles.append(role.name)
+        if (
+            role.name.startswith(f"{bot_name} - ")
+            or role.name.startswith(f"{user} - ")
+            or role.name.startswith("Sexual type - ")
+        ):
+            try:
+                # First unassign the role from Monika and members
+                if monika_member and role in monika_member.roles:
+                    await monika_member.remove_roles(role, reason="Relationship reset")
+                for member in guild.members:
+                    if role in member.roles:
+                        await member.remove_roles(role, reason="Relationship reset")
+
+                # ✅ Delete the role itself
+                await role.delete(reason="Relationship reset")
+                removed_roles.append(role.name)
+
+            except discord.Forbidden:
+                print(f"[Reset Relationship] Missing permissions to delete {role.name}.")
+            except Exception as e:
+                print(f"[Reset Relationship] Error deleting {role.name}: {e}")
 
     await interaction.followup.send(
-        f"🗑️ Relationship reset complete. Removed roles: {', '.join(removed_roles) or 'None'}",
+        f"🗑️ Relationship reset complete. Deleted roles: {', '.join(removed_roles) or 'None'}",
         ephemeral=True
     )
 
@@ -1940,7 +2607,11 @@ async def set_personality(
     guild = interaction.guild
     guild_id = str(guild.id)
     user = interaction.user.display_name
-    print(f"Administrator: {user} used `/set_personality`: {mode1}, {mode2}, {mode3}, {mode4}, {mode5}")
+    
+    if "Default" in chosen:
+        print(f"Administrator: {user} used `/set_personality`: {mode1}")
+    else:
+        print(f"Administrator: {user} used `/set_personality`: {mode1}, {mode2}, {mode3}, {mode4}, {mode5}")
 
     # ✅ Split by commas and validate
     chosen = [m for m in [mode1, mode2, mode3, mode4, mode5] if m]
@@ -1948,16 +2619,27 @@ async def set_personality(
 
     if not chosen:
         return await interaction.response.send_message(
-            f"❌ You must pick at least one personality. Options: {', '.join(PERSONALITY_MODES.keys())}",
+            f"❌ You must pick at least one or more personality. Options: {', '.join(PERSONALITY_MODES.keys())}",
             ephemeral=True
         )
+    
+    # ✅ Handle Default logic
+    if "Default" in chosen:
+        if len(chosen) > 1:
+            return await interaction.response.send_message(
+                "❌ You cannot select **Default** together with other personalities.",
+                ephemeral=True
+            )
+        # Replace Default with fixed 5 personalities
+        chosen = ["Warm", "Charming", "Caring", "Unsettling", "Self-aware"]
+        print(f"[Personality] Default → replaced with fixed set: {chosen}")
 
-    # ✅ Save updated list
-    server_tracker.set_personality[guild_id] = chosen
+    # ✅ Save updated list        
+    server_tracker.set_personality(guild_id, chosen)
 
     monika_member = guild.get_member(interaction.client.user.id)
     if not monika_member:
-        return await interaction.response.send_message("❌ Could not find Monika in this server.", ephemeral=True)
+        return await interaction.response.send_message("❌ Could not find me in this server.", ephemeral=True)
 
     # 🔄 Remove old personality roles
     for role in list(monika_member.roles):
@@ -2005,7 +2687,10 @@ async def set_personality_error(interaction: discord.Interaction, error):
         await interaction.response.send_message(f"⚠️ Error: {error}", ephemeral=True)
 
 # --- Relationship type autocomplete ---
-async def relationship_type_autocomplete(interaction: discord.Interaction, current: str):
+async def relationship_type_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+):
     sexual_types = [
         "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight",
         "Asexual", "Demisexual", "Queer", "Questioning",
@@ -2014,18 +2699,28 @@ async def relationship_type_autocomplete(interaction: discord.Interaction, curre
 
     normal_types = [
         "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates",
-        "Significant Others", "Platonic Friends", "Close Friends", "Acquaintances",
+        "Platonic Friends", "Close Friends", "Acquaintances", "Significant Others",
         "Colleagues", "Work Friends", "School Friends", "Childhood Friends",
         "Online Friends", "Gaming Buddies", "Study Partners", "Club Leader",
-        "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
+        "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger", "Crush", "Default"
     ]
 
-    # Combine + filter by what the user typed
-    all_types = sexual_types + normal_types + ["Default"]
+    # ✅ Merge with category labels
+    all_types = (
+        [(f"💖 Sexual: {t}", t) for t in sexual_types] +
+        [(f"👥 Normal: {t}", t) for t in normal_types]
+    )
+
+    # ✅ Filter by user input
+    filtered = [
+        (label, value) for label, value in all_types
+        if current.lower() in value.lower()
+    ]
+
     return [
-        app_commands.Choice(name=t, value=t)
-        for t in all_types if current.lower() in t.lower()
-    ][:25]
+        app_commands.Choice(name=label, value=value)
+        for label, value in filtered[:25]
+    ]
 
 @bot.tree.command(name="set_relationship", description="Set my relationship with users.")
 @app_commands.autocomplete(type=relationship_type_autocomplete)
@@ -2043,7 +2738,7 @@ async def set_relationship(
     guild = interaction.guild
     guild_id = str(guild.id)
     user = interaction.user.display_name
-    monika_member = guild.get_member(interaction.client.user.id)
+    monika_member = guild.get_member(bot.user.id)
     bot_name = bot.user.name
 
     sexual_types = [
@@ -2054,13 +2749,19 @@ async def set_relationship(
 
     normal_types = [
         "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates",
-        "Significant Others", "Platonic Friends", "Close Friends", "Acquaintances",
+        "Platonic Friends", "Close Friends", "Acquaintances", "Significant Others",
         "Colleagues", "Work Friends", "School Friends", "Childhood Friends",
         "Online Friends", "Gaming Buddies", "Study Partners", "Club Leader",
-        "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
+        "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member",
+        "Stranger", "Crush", "Default"
     ]
 
-    # Make sure with_users is a list
+    # Restrictions based on Monika’s sexual type
+    HIDDEN_IF_LESBIAN = {"Boyfriend", "Girlfriend", "Significant Others"}
+    HIDDEN_IF_STRAIGHT = {"Girlfriend (Lesbian)", "Significant Others"}
+    HIDDEN_IF_POLY = {"Significant Others"}
+
+    # Normalize with_users → list
     if isinstance(with_users, discord.Member):
         target_members = [with_users]
     elif isinstance(with_users, list):
@@ -2071,97 +2772,111 @@ async def set_relationship(
     target_names = [m.display_name for m in target_members]
     print(f"Administrator: {user} used `/set_relationship`: set `{type}` with `{target_names or 'nobody'}`")
 
-    try:
-        # --- Sexual types handled separately ---
-        if type in sexual_types and target_members:
-            await interaction.response.send_message(
-                f"❌ Relationship type **{type}** cannot be set with specific users. It only applies to Monika.",
-                ephemeral=True
-            )
-            return
+    # --- Handle "Default" directly ---
+    if type == "Default":
+        server_tracker.set_server_relationship(guild_id, relationship_type="Default", with_list=[])
+        await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+        await interaction.response.send_message("✅ Relationship reset to **Default**.", ephemeral=True)
+        return
 
-        if type in normal_types and not target_members:
-            await interaction.response.send_message(
-                f"❌ Relationship type **{type}** must be set **with at least one user**.",
-                ephemeral=True
-            )
-            return
+    try:
+        # --- Sexual types (Monika-only) ---
+        if type in sexual_types:
+            if target_members:
+                return await interaction.response.send_message(
+                    f"❌ Relationship type **{type}** cannot be set with users. It only applies to Monika.",
+                    ephemeral=True
+                )
 
             role_name = f"Sexual type - {type}"
             bot_role = discord.utils.get(guild.roles, name=role_name)
             if not bot_role:
-                bot_role = await guild.create_role(name=role_name, color=discord.Color.dark_magenta())
+                bot_role = await guild.create_role(
+                    name=role_name,
+                    color=discord.Color.dark_magenta()
+                )
                 print(f"[Roles] Created role: {role_name}")
 
             await monika_member.add_roles(bot_role, reason=f"Sexual identity: {type}")
 
-            server_tracker.set_relationship(guild_id, type=type, with_list=[])
+            server_tracker.set_server_relationship(guild_id, relationship_type=type, with_list=[])
             await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
-            await interaction.response.send_message(
+            return await interaction.response.send_message(
                 f"✅ Monika’s sexual type set to **{type}**.",
                 ephemeral=True
             )
-            return
 
-        # --- Normal relationship handling below ---
-        if type == "Default":
-            server_tracker.set_relationship(guild_id, type="Default", with_list=[])
-        else:
-            server_tracker.set_relationship(guild_id, type=type, with_list=target_names)
+        # --- Normal types (require users) ---
+        if type in normal_types:
+            if not target_members:
+                return await interaction.response.send_message(
+                    f"❌ Relationship type **{type}** must be set with at least one user.",
+                    ephemeral=True
+                )
 
-        await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+            # 🔹 Check if Monika already has a sexual type
+            current_sexual_type = server_tracker.get_server_relationship(guild_id).get("relationship_type", "")
+            if current_sexual_type == "Lesbian" and type in HIDDEN_IF_LESBIAN:
+                return await interaction.response.send_message(
+                    f"❌ Monika is **Lesbian** — relationship type **{type}** is not allowed.",
+                    ephemeral=True
+                )
+            if current_sexual_type == "Straight" and type in HIDDEN_IF_STRAIGHT:
+                return await interaction.response.send_message(
+                    f"❌ Monika is **Straight** — relationship type **{type}** is not allowed.",
+                    ephemeral=True
+                )
+            if current_sexual_type == "Polyamory" and type in HIDDEN_IF_POLY:
+                return await interaction.response.send_message(
+                    f"❌ Monika is **Polyamorous** — relationship type **{type}** is not allowed.",
+                    ephemeral=True
+                )
 
-        # Remove all old relationship roles first
-        for role in guild.roles:
-            if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{interaction.user.display_name} - "):
-                try:
-                    if monika_member and role in monika_member.roles:
-                        await monika_member.remove_roles(role, reason="Resetting old relationship roles")
-                    for member in guild.members:
-                        if role in member.roles:
-                            await member.remove_roles(role, reason="Resetting old relationship roles")
-                except discord.Forbidden:
-                    await interaction.response.send_message("❌ Missing `Manage Roles` permission.", ephemeral=True)
-                    print(f"[Roles] Missing permission to remove {role.name}.")
+            # Reset old roles
+            for role in guild.roles:
+                if role.name.startswith(f"{bot_name} - ") or role.name.startswith(f"{interaction.user.display_name} - "):
+                    try:
+                        await role.delete(reason="Resetting old relationship roles")
+                        print(f"[Roles] Deleted old role: {role.name}")
+                    except discord.Forbidden:
+                        print(f"[Roles] Missing permission to delete {role.name}")
 
-        # Create new roles if not Default
-        if type != "Default":
+            # Apply new roles
             for target_member in target_members:
-                if type == "Boyfriend":
-                    user_role_name = f"{bot_name} - Boyfriend"
-                    bot_role_name = f"{target_member.display_name} - Girlfriend"
-                elif type == "Girlfriend":
-                    user_role_name = f"{bot_name} - Boyfriend"
-                    bot_role_name = f"{target_member.display_name} - Girlfriend"
-                else:  # Normal types
-                    user_role_name = f"{bot_name} - {type}"
-                    bot_role_name = f"{target_member.display_name} - {type}"
+                bot_role_name = f"{target_member.display_name} - {type}"
+                user_role_name = f"{bot_name} - {type}"
 
-                # Bot role
-                bot_role = discord.utils.get(guild.roles, name=bot_role_name)
-                if not bot_role:
-                    bot_role = await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
-                    print(f"[Roles] Created role: {bot_role_name}")
+                bot_role = discord.utils.get(guild.roles, name=bot_role_name) or \
+                           await guild.create_role(name=bot_role_name, color=discord.Color.dark_green())
+                user_role = discord.utils.get(guild.roles, name=user_role_name) or \
+                            await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
+
                 await monika_member.add_roles(bot_role, reason=f"Relationship with {target_member.display_name}: {type}")
-
-                # User role
-                user_role = discord.utils.get(guild.roles, name=user_role_name)
-                if not user_role:
-                    user_role = await guild.create_role(name=user_role_name, color=discord.Color.dark_green())
-                    print(f"[Roles] Created role: {user_role_name}")
                 await target_member.add_roles(user_role, reason=f"Relationship with Monika: {type}")
 
                 user_tracker.set_manual_relationship(target_member.id, True)
 
+            server_tracker.set_server_relationship(guild_id, relationship_type=type, with_list=target_names)
+            await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+            return await interaction.response.send_message(
+                f"✅ Relationship set to **{type}** with: **{', '.join(target_names)}**.",
+                ephemeral=True
+            )
+
+        # --- Unknown type ---
         await interaction.response.send_message(
-            f"✅ Relationship set to **{type}** with: **{', '.join(target_names) or 'nobody'}**.",
+            f"❌ Invalid relationship type `{type}`.",
             ephemeral=True
         )
 
     except commands.BotMissingPermissions as MP:
-        await interaction.response.send_message(f"❌ Missing permissions: **{MP}**", ephemeral=True)
-        print("[Relationship Error]")
+        await interaction.response.send_message(
+            f"❌ Missing permissions: **{MP}**",
+            ephemeral=True
+        )
+        print("[Relationship Error]", MP)
 
 @bot.tree.command(
     name="personalities_description", 
@@ -2225,7 +2940,7 @@ async def personalities_description(interaction: discord.Interaction):
 
 @bot.tree.command(name="relationships_description", description="shows all Monika's relationship orientation for this server.")
 async def relationships_description(interaction: discord.Interaction):
-    relationship_modes = RELATIONSHIP_DETILED  # assuming you keep it in monika_personality.py
+    relationship_modes = RELATIONSHIP_DETILED
 
     user = interaction.user.display_name
     print(f"{user} used a command: `relationships_description`")
@@ -2238,9 +2953,9 @@ async def relationships_description(interaction: discord.Interaction):
             "Asexual", "Demisexual", "Queer", "Questioning", "Romantic", "Platonic", "Autosexual"
         ],
         "🔥 Normal relationship": [
-            "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Significant Others", "Platonic Friends", "Close Friends",
+            "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates", "Platonic Friends", "Close Friends", "Significant Others"
             "Acquaintances", "Colleagues", "Work Friends", "School Friends", "Childhood Friends", "Online Friends", "Gaming Buddies", "Study Partners", 
-            "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger"
+            "Club Leader", "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Stranger", "Crush"
         ]
     }
 
@@ -2285,8 +3000,8 @@ async def restart_monika(interaction: discord.Interaction):
 
     # ✅ Reset trackers
     server_tracker.clear_relationship(guild_id)
-    server_tracker.set_personality[guild_id] = []
-    memory.data[guild_id] = {}
+    server_tracker.set_personality(guild_id, [])
+    memory.data(guild_id, [])
 
     # ✅ Remove all relationship/personality roles
     guild = interaction.guild
@@ -2320,7 +3035,6 @@ async def bugs_autocomplete(interaction: discord.Interaction, current: str):
         app_commands.Choice(name=s, value=s)
         for s in suggestions if current.lower() in s.lower() or current == ""
     ][:5]
-
 
 # ✅ Errors autocomplete (more user-friendly names)
 async def errors_autocomplete(interaction: discord.Interaction, current: str):
@@ -2464,11 +3178,10 @@ async def broadcast(
     is_broadcasting = True
     await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
 
-    wait_minutes = 3  # how long to collect reactions
-    update_interval = 30  # how often to refresh progress messages (seconds)
+    wait_minutes = 3
+    update_interval = 30
 
     try:
-        # Parse color
         try:
             color_int = int(color_hex, 16)
             color = discord.Color(color_int)
@@ -2480,7 +3193,7 @@ async def broadcast(
             description=message,
             color=color
         )
-        embed.set_footer(text="React ✅ or ❌ to give your opinion!")
+        embed.set_footer(text="If like this change pick: '✅' if not pick: '❌', thank you and have good rest of your day. And if you come across any errors, bugs, idea's, or Complaint. you can use `/report`.")
 
         sent_messages = []   # (announcement_msg, progress_msg)
         success_count = 0
@@ -2491,42 +3204,39 @@ async def broadcast(
             ephemeral=True
         )
 
-        if channel.name == CHANNEL_NAMES:
-            pass
-        else:
-            pass
-
         # Send once per guild
         for guild in bot.guilds:
             channel = None
+
+            # Prefer system channel if usable
             if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
                 channel = guild.system_channel
             else:
-                # pick "most active" channel (highest messages)
-                channel = max(
-                    (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages),
-                    key=lambda c: getattr(c, "last_message_id", 0) or 0,
-                    default=None
-                )
+                # Fall back: first channel where bot can speak
+                for c in guild.text_channels:
+                    if c.permissions_for(guild.me).send_messages:
+                        channel = c
+                        break
 
             if not channel:
+                print(f"[Broadcast] ❌ No available channel in {guild.name} ({guild.id})")
                 failure_count += 1
                 continue
 
             try:
-                # Announcement embed
                 msg = await channel.send(embed=embed)
                 await msg.add_reaction("✅")
                 await msg.add_reaction("❌")
 
-                # Progress tracker message
-                progress = await channel.send("📢 Announcement in progress...\n✅ Likes: 0 | ❌ Dislikes: 0")
+                progress = await channel.send("⏳ Collecting reactions...")
 
                 sent_messages.append((msg, progress))
                 success_count += 1
+                print(f"[Broadcast] ✅ Sent announcement to {guild.name} ({guild.id}) in #{channel.name}")
+
                 await asyncio.sleep(0.5)
             except Exception as e:
-                print(f"[Broadcast Error] {e}")
+                print(f"[Broadcast Error] in {guild.name} ({guild.id}): {e}")
                 failure_count += 1
 
         # --- Periodic updates ---
@@ -2546,9 +3256,7 @@ async def broadcast(
                             if bot.user in [u async for u in reaction.users()]:
                                 dislikes -= 1
 
-                    await progress.edit(
-                        content=f"📢 Announcement in progress please wait..."
-                    )
+                    await progress.edit(content=f"✅ {likes} | ❌ {dislikes} (updating...)")
                 except Exception as e:
                     print(f"[Broadcast Update Error] {e}")
 
@@ -2575,18 +3283,18 @@ async def broadcast(
 
                 like_total += max(likes, 0)
                 dislike_total += max(dislikes, 0)
-
-                await progress.edit(content="✅ Announcement finished. Thanks for your feedback!")
+                await progress.edit(content=f"✅ {likes} | ❌ {dislikes} (final)")
             except Exception as e:
                 print(f"[Broadcast Fetch Error] {e}")
 
         # Final owner summary
-        await interaction.response.send_message(
+        await interaction.followup.send(
             f"✅ Broadcast finished.\n"
             f"Sent successfully to **{success_count}** servers.\n"
             f"⚠️ Failed in **{failure_count}** servers.\n\n"
             f"✅ Likes: **{like_total}**\n"
-            f"❌ Dislikes: **{dislike_total}**"
+            f"❌ Dislikes: **{dislike_total}**",
+            ephemeral=True
         )
 
     finally:
@@ -2598,22 +3306,23 @@ async def broadcast_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.CheckFailure):
         await interaction.response.send_message("❌ You are not the bot owner.", ephemeral=True)
 
+    elif isinstance(error, app_commands.errors):
+        await interaction.response.send_message("something went wrong", ephemeral=True)
+
+
 async def emotion_autocomplete(interaction: discord.Interaction, current: str):
-    # Try to get outfit if provideda
     outfit = getattr(interaction.namespace, "outfit", None)
-    if outfit:
-        outfit = outfit.lower().strip()
+    emotions = []
 
-    # If outfit is valid, use its emotions
-    if outfit and outfit in user_sprites.sprites_by_outfit:
-        emotions = list(user_sprites.sprites_by_outfit[outfit].keys())
+    if outfit and outfit.lower() in user_sprites.sprites_by_outfit:
+        # use the keys from our fixed dict
+        emotions = list(user_sprites.get_emotions_for_outfit(outfit))
     else:
-        # Otherwise, return all emotions across all outfits
-        emotions = {e for emo_dict in user_sprites.sprites_by_outfit.values() for e in emo_dict.keys()}
-        emotions = list(emotions)
-
-    # Debug log
-    print(f"[DEBUG] Autocomplete for outfit={outfit}, returning {len(emotions)} emotions")
+        # fallback: collect all emotions from all outfits
+        all_emotions = set()
+        for emo_dict in user_sprites.sprites_by_outfit.values():
+            all_emotions.update(emo_dict.keys())
+        emotions = list(all_emotions)
 
     return [
         app_commands.Choice(name=e, value=e)
@@ -2677,11 +3386,12 @@ async def speak_as_monika(
         )
 
     # ✅ Validate emotion
-    valid_emotions = [e.lower().strip() for e in user_sprites.valid_for_outfit(outfit)]
-    if not valid_emotions:
+    valid_emotions = [e.strip() for e in user_sprites.get_emotions_for_outfit(outfit)]
+    if emotion.strip() not in valid_emotions:
         return await interaction.followup.send(
             f"❌ No valid emotions for outfit `{outfit}`.", ephemeral=True
         )
+
     if emotion.lower().strip() not in valid_emotions:
         return await interaction.followup.send(
             f"❌ Emotion `{emotion}` is not valid for outfit `{outfit}`.\n"
@@ -2733,6 +3443,41 @@ async def speak_as_monika(
         )
     except Exception as e:
         await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    import traceback
+    """Global error handler for app commands."""
+
+    try:
+        if isinstance(error, app_commands.MissingPermissions):
+            msg = f"❌ You don’t have the required permissions: `{', '.join(error.missing_permissions)}`"
+        elif isinstance(error, app_commands.BotMissingPermissions):
+            msg = f"❌ I’m missing permissions: `{', '.join(error.missing_permissions)}`"
+        elif isinstance(error, app_commands.CommandOnCooldown):
+            msg = f"⏳ This command is on cooldown. Try again in {error.retry_after:.1f} seconds."
+        elif isinstance(error, app_commands.TransformerError):
+            msg = "❌ Invalid input provided. Please check your command and try again."
+        elif isinstance(error, app_commands.CommandInvokeError):
+            # Unwrap the original exception
+            original = error.original
+            print(f"[AppCmdError] CommandInvokeError: {type(original).__name__}: {original}")
+            traceback.print_exception(type(original), original, original.__traceback__)
+            msg = f"⚠️ An unexpected error occurred: **{type(original).__name__}**"
+        else:
+            # Generic fallback
+            print(f"[AppCmdError] {type(error).__name__}: {error}")
+            msg = "⚠️ Something went wrong while running this command."
+
+        # Try sending the error message safely
+        if not interaction.response.is_done():
+            await interaction.response.send_message(msg, ephemeral=True)
+        else:
+            await interaction.followup.send(msg, ephemeral=True)
+
+    except Exception as handler_err:
+        # Failsafe if even error handler blows up
+        print(f"[TreeErrorHandler] Failed to handle error: {handler_err}")
 
 keepalive.keep_alive()
 async def main():
