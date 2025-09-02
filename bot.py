@@ -1,3 +1,5 @@
+## This is what it was going to look like ##
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -1065,3 +1067,4 @@ async def speak_as_monika(interaction: discord.Interaction, channel_id: str, mes
 
 keepalive.keep_alive()
 bot.run(TOKEN, reconnect=True)
+
