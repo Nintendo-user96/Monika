@@ -176,6 +176,7 @@ RELATIONSHIP_MODES = monika_traits.relationship_modes
 RELATIONSHIP_DETILED = monika_traits.relationships
 
 is_broadcasting = False
+last_broadcast_guilds = set()
 
 async def error_emotion(outfit="bug"):
     # Prefer bug outfit if available
@@ -2553,7 +2554,7 @@ async def set_outfit(interaction: discord.Interaction, outfit: str):
     user = interaction.user.display_name
     print(f"Administrator: {user} used a command: `set_outfit`: set `{outfit}`")
 
-    if outfit not in ["school_uniform", "casual 1", "casual 2", "casual 3", "white dress", "hoodie", "pajamas", "white summer dress", "special", "bug"]:
+    if outfit not in ["school_uniform", "casual 1", "casual 2", "casual 3", "white dress", "hoodie", "pajamas", "white summer dress", "green dress"]:
         await interaction.response.send_message(
             "❌ Invalid outfit. Options are: school_uniform, casual's, white dress, hoodie, pajamas.",
             ephemeral=True
@@ -3178,6 +3179,11 @@ async def broadcast(
     is_broadcasting = True
     await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
 
+    # ✅ Reset broadcast flags so every server is eligible again
+    for gid in server_tracker.guilds:
+        server_tracker.guilds[gid]["last_broadcast"] = False
+    await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
     wait_minutes = 3
     update_interval = 30
 
@@ -3195,24 +3201,23 @@ async def broadcast(
         )
         embed.set_footer(text="If like this change pick: '✅' if not pick: '❌', thank you and have good rest of your day. And if you come across any errors, bugs, idea's, or Complaint. you can use `/report`.")
 
-        sent_messages = []   # (announcement_msg, progress_msg)
+        global last_broadcast_guilds
+        sent_messages = []
         success_count = 0
         failure_count = 0
 
-        await interaction.response.send_message(
-            f"📣 Broadcast started. Collecting reactions for {wait_minutes} minutes…",
-            ephemeral=True
-        )
-
-        # Send once per guild
         for guild in bot.guilds:
-            channel = None
+            gid = str(guild.id)
+            server_tracker.ensure_guild(gid)
 
-            # Prefer system channel if usable
+            # ✅ Skip if already broadcasted
+            if server_tracker.guilds[gid].get("last_broadcast", False):
+                continue
+
+            channel = None
             if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
                 channel = guild.system_channel
             else:
-                # Fall back: first channel where bot can speak
                 for c in guild.text_channels:
                     if c.permissions_for(guild.me).send_messages:
                         channel = c
@@ -3232,9 +3237,17 @@ async def broadcast(
 
                 sent_messages.append((msg, progress))
                 success_count += 1
-                print(f"[Broadcast] ✅ Sent announcement to {guild.name} ({guild.id}) in #{channel.name}")
 
+                # ✅ Save to tracker
+                server_tracker.ensure_guild(str(guild.id))
+                server_tracker.guilds[str(guild.id)]["last_broadcast"] = True
+                await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+                print(f"[Broadcast] ✅ Sent announcement to {guild.name} ({guild.id}) in #{channel.name}")
                 await asyncio.sleep(0.5)
+            except discord.Forbidden:
+                print(f"[Broadcast Error] Forbidden in {guild.name} ({guild.id})")
+                failure_count += 1
             except Exception as e:
                 print(f"[Broadcast Error] in {guild.name} ({guild.id}): {e}")
                 failure_count += 1
