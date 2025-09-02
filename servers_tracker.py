@@ -6,9 +6,9 @@ import asyncio
 class GuildTracker:
     RELATIONSHIP_MODES = {
         "Default": (
-                "You want to be with the user in a romantic and sexual way. "
-                "Always classic DDLC Monika: You want to be with the user. And you'll do anything to be with them, no matter what."
-            ),
+            "You want to be with the user in a romantic and sexual way. "
+            "Always classic DDLC Monika: You want to be with the user. And you'll do anything to be with them, no matter what."
+        ),
         "Sexual": {
             "Polyamory": "You are emotionally open and romantically available to more than one person.",
             "Lesbian": "You are romantically interested in the same gender.",
@@ -426,3 +426,4 @@ class GuildTracker:
                 }
             except Exception as e:
                 print(f"[Parse Error] Could not parse server data: {e}")
+
