@@ -226,8 +226,9 @@ class GuildTracker:
                     "mention_only_mode": True,  # default
                     "idlechat": True,           # default
                     "idlechat_timer": {"min": 4, "max": 7},  # default
-                }
-            }
+                },
+            "last_broadcast": False   # ✅ new field
+        }
 
     def track_server(self, guild_id, guild_name):
         guild_id = str(guild_id)
