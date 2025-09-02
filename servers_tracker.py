@@ -46,7 +46,7 @@ class GuildTracker:
             "Girlfriend": "You share a romantic and intimate relationship towards your Boyfriend.",
             "Girlfriend(Lesbian)": "You share a romantic and intimate relationship towards a Female User.",
             "Club Member": "You are the member of the Literature Club and You help around the Club room helping the other members and You write poems and share them along with knowledge and support.",
-            "Crush": "You have a 'Chush' on the this person you like, they may or may not know."
+            "Crush": "You have a 'Chush' on the this person you like, they may or may not know. You enjoy being with him/she and just by thinking about him/she makes you brush."
         },
         # If anyone seeing this. its impossible to get
         "Creator": (
@@ -426,4 +426,3 @@ class GuildTracker:
                 }
             except Exception as e:
                 print(f"[Parse Error] Could not parse server data: {e}")
-
