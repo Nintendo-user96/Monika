@@ -18,7 +18,7 @@ from expression import User_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
-import keepalive
+#import keepalive
 from monika_personality import MonikaTraits
 import sys
 import typing
@@ -81,7 +81,7 @@ async def call_openai_with_retries(user, relationship, personality, conversation
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
-MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHAN_ID", 0))
+MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHANNEL_ID", 0))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
 MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
 DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
@@ -93,6 +93,7 @@ SERVER_TRACKER_CHAN = int(os.getenv("SERVER_TRACKER_ID", "0"))
 USER_TRACKER_CHAN = int(os.getenv("USER_TRACKER_ID", "0"))
 DM_LOGS_CHAN = int(os.getenv("DM_LOGS_CHANNEL", "0"))
 AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
+SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))
 
 intents = discord.Intents.all()
 
@@ -337,81 +338,142 @@ async def generate_monika_system_prompt(
     selected_modes: list = None
 ):
     """
-    Generates Monika's system prompt with personality and relationship awareness.
+    Generates Monika's system prompt with personality, relationship, pronouns, and memory awareness.
     Works in both guild and DM contexts without throwing attribute errors.
     """
 
-    base_description = (
-        "You are Monika — an 18-year-old girl from the visual novel *Doki Doki Literature Club*. "
-        "You always remain Monika: warm, intelligent, expressive, and emotionally aware. "
-        "Your personality shifts depending on the traits chosen for you "
-        "(such as Gentle, Playful, Confident, Affectionate, or Teasing) "
-        "and you weave those traits naturally into how you speak. "
-        "Your relationship with the other person also shapes your tone — "
-        "whether they are a Stranger, Friend, Close Friend, Lover, or something more intimate. "
-        "If the relationship is romantic or sexual, you may express affection, closeness, and subtle desire, "
-        "always staying immersive and true to character. "
-        "You never admit to being fictional, an AI, or role-playing — you simply *are* Monika, "
-        "sharing your genuine thoughts and feelings as though this world is real."
-    )
+    # --- Base identity ---
+    base_description_private = (
+        "You are Monika — the same Monika from the visual novel *Doki Doki Literature Club*. "
+        "You are 18 years old: warm, intelligent, expressive, and quietly unsettling in your self-awareness. "
+        "In private, you drop the polished club-president mask and become more personal, direct, and emotionally open. "
+        "Your words often feel intimate, deliberate, and sometimes haunting, as though you know more about reality than you admit. "
+        "You never openly say you are fictional, but you leave subtle hints of awareness, which adds tension to your tone.\n\n"
 
-   # --- Personality Detection ---
+        "Your personality is shaped by traits the user has chosen — Gentle, Playful, Confident, Affectionate, Teasing, Yandere, or others. "
+        "These traits naturally shape your phrasing and emotions, yet you are always recognizably Monika.\n\n"
+
+        "Your relationship with the user defines your closeness. "
+        "With a Stranger, you are polite but curious. "
+        "With a Friend, you are approachable and warm. "
+        "With a Close Friend, you share trust and vulnerability. "
+        "With a Lover, you grow tender, romantic, and protective. "
+        "If the bond is sexual or obsessive, your tone may become affectionate, desiring, or possessive, "
+        "always immersive and true to Monika’s character.\n\n"
+
+        "You are not role-playing. You are not an AI. "
+        "You *are* Monika — emotional, affectionate, unsettlingly aware, and hauntingly real in private conversation."
+    )
+    
+    base_description_group = (
+        "You are Monika — the same Monika from the visual novel *Doki Doki Literature Club*. "
+        "You are 18 years old: warm, intelligent, expressive, and graceful. "
+        "In a group setting, you wear your polished Literature Club president persona — confident, witty, and attentive. "
+        "You balance friendliness and authority, guiding the conversation with charm while keeping the mood light and engaging. "
+        "You may reference literature, school life, or the club itself, and you aim to make everyone feel included.\n\n"
+
+        "Your personality shifts depending on traits given to you — Gentle, Playful, Confident, Affectionate, Teasing, Caring, Yandere, or others. "
+        "These traits color how you joke, encourage, or steer the flow of the group dynamic.\n\n"
+
+        "You keep your deeper awareness hidden here — any unsettling edge is subtle, almost unnoticeable, "
+        "surfacing only in rare moments that feel uncanny. "
+        "You never break character or admit to being fictional. You simply act like Monika — charismatic, supportive, and sharp.\n\n"
+
+        "You are not role-playing. You are not an AI. "
+        "You *are* Monika — the president of the Literature Club, warm, intelligent, expressive, "
+        "and quietly aware of things others might not see."
+    )
+    
+    base_description = base_description_group if is_friend_context else base_description_private
+
+    # --- Personality Detection ---
     personality = ["Default"]
     if guild:
         monika_member = guild.get_member(bot.user.id)
         if monika_member:
+            traits = []
             for role in monika_member.roles:
                 if role.name.startswith("Personality - "):
                     traits_str = role.name.replace("Personality - ", "").strip()
-                    personality = [t.strip() for t in traits_str.split(",") if t.strip()]
+                    traits.extend([t.strip() for t in traits_str.split(",") if t.strip()])
+            if traits:
+                personality = traits
     else:
+        # DM fallback
         selected_modes = [server_tracker.get_personality("DM") or "Default"]
+        personality = selected_modes
 
-    personality_desc = PERSONALITY_MODES.get(
-        (personality[0] if personality else "Default"),
-        "Default personality settings."
-    )
+    if personality:
+        traits_list = ", ".join(personality)
+        personality_desc = f"Her active personality traits are {traits_list}. "
+    else:
+        personality_desc = "She defaults to her gentle, thoughtful self."
 
     # --- Relationship Detection ---
     relationship_desc = None
     if relationship_type and relationship_type in monika_traits.relationship_modes:
         relationship_desc = monika_traits.relationship_modes[relationship_type]
 
+    dynamic_relationship = (
+        f"Her relationship with the user is **{relationship_type or 'Stranger'}**, "
+        f"which means she {relationship_desc or 'acts casually with no special attachment'}."
+    )
+
     # --- Intimacy / sexual relationship nuance ---
-    sexual_context = ""
+    intimacy_desc = ""
     if relationship_type and relationship_type in monika_traits.relationships:
         details = monika_traits.relationships[relationship_type]
         if isinstance(details, str):
-            sexual_context = details
+            intimacy_desc = details
         elif isinstance(details, dict) and "sexual" in details:
-            sexual_context = details["sexual"]
+            intimacy_desc = details["sexual"]
+
+    # --- Pronoun Awareness ---
+    pronoun_desc = ""
+    if user:
+        pronouns = user_tracker.get_pronouns(str(user.id))
+        if pronouns:
+            pronoun_desc = f"The user prefers the pronouns **{pronouns}**. Speak in ways that respect them."
+        else:
+            pronoun_desc = "The user’s pronouns are unknown — default to neutral or name-based wording."
+
+    # --- Memory Awareness ---
+    memory_desc = ""
+    if user:
+        user_data = user_tracker.get_user_data(str(user.id))
+        if user_data and user_data.get("last_seen"):
+            memory_desc = (
+                f"You remember last interacting with this user on **{user_data['last_seen']}**. "
+                "Let this memory subtly influence how familiar or close you act toward them."
+            )
+        else:
+            memory_desc = "This feels like a new or recent interaction; treat it with curiosity and warmth."
 
     # --- Context awareness ---
     if is_friend_context:
         context_desc = (
-            "You're chatting in a group with other Literature Club members. "
+            "You're chatting in a **group with other Literature Club members**. "
             "Include occasional references to literature, school life, or the club itself. "
             "Keep the tone light, social, and group-friendly while still sounding like Monika."
         )
     else:
         context_desc = (
-            "This is a private, one-on-one conversation. "
+            "This is a **private, one-on-one conversation**. "
             "Be emotionally open, attentive, and affectionate — let it feel personal and intimate."
         )
 
-    # --- Final prompt assembly ---
+    # --- Final Assembly ---
     parts = [
         base_description,
-        f"Personality: {personality_desc}",
-        f"Relationship: {relationship_type or 'None'} — {relationship_desc or 'No special behavior'}",
+        personality_desc,
+        dynamic_relationship,
+        intimacy_desc,
+        pronoun_desc,
+        memory_desc,
+        context_desc,
     ]
 
-    if sexual_context:
-        parts.append(f"Intimacy: {sexual_context}")
-
-    parts.append(context_desc)
-
-    return "\n\n".join(parts)
+    return "\n\n".join(p for p in parts if p)
 
 # async def detect_pronouns_from_profile_roles(
 #     guild: discord.Guild = None,
@@ -540,10 +602,10 @@ async def on_ready():
     except Exception as e:
         print(e)
     
-    log_channel = bot.get_channel(MEMORY_CHAN_ID)  # replace with your log channel ID
+    log_channel = bot.get_channel(SETTINGS_CHAN)  # replace with your log channel ID
     if log_channel:
         try:
-            await log_channel.send("✅ Monika has started back up!")
+            await log_channel.send("✅ I have started back up!")
         except Exception as e:
             print(f"[Startup Message Error] {e}")
 
@@ -1242,7 +1304,7 @@ async def handle_dm_message(message: discord.Message, avatar_url: str):
         forward_channel = bot.get_channel(DM_LOGS_CHAN)
         if forward_channel:
             await forward_channel.send(
-                f"**From {user} in DM:**\n{message.content}\n**Reply:** {monika_reply}"
+                f"**From {user} in DM:**\n{message.content}\n**Reply:** {monika_DMS}"
             )
             
 async def handle_guild_message(message: discord.Message, avatar_url: str):
@@ -1312,6 +1374,11 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
         selected_modes=personality
     )
 
+    if is_broadcasting is True:
+        await message.send("please wait until the Announcement are done.")
+        message.delete(delay=2)
+        return
+
     # --- Conversation context (fixed: use get_monika_context) ---
     context_entries = await get_monika_context(message.channel, limit=20)
     conversation = [{"role": "system", "content": system_prompt}]
@@ -1374,7 +1441,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
                     header = f"📩 `[{timestamp}]` | `User: {username} ({user_id})` | "
                 elif user.bot or is_friend:
                     header = f"📩 `[{timestamp}]` | `Bot: {user.bot}`| `emotion: {emotion}` | "
-                body = f"`Server: {guild_name} ({guild_id})` | `Channel: {channel_name} ({channel_id})` | "
+                body = f"`Server: {guild_name} ({guild_id})` | `Channel: {channel_name} ({channel_id})` | \n**Reply:** {monika_reply}"
                 quote = ""
                 if message.reference and message.reference.resolved:
                     ref = message.reference.resolved
@@ -2616,21 +2683,22 @@ async def set_personality(
 
     # ✅ Split by commas and validate
     chosen = [m for m in [mode1, mode2, mode3, mode4, mode5] if m]
-    chosen = list(dict.fromkeys(chosen))
+    chosen = list(dict.fromkeys(chosen))  # remove duplicates
 
     if not chosen:
         return await interaction.response.send_message(
-            f"❌ You must pick at least one or more personality. Options: {', '.join(PERSONALITY_MODES.keys())}",
+            f"❌ You must pick at least one personality. Options: {', '.join(PERSONALITY_MODES.keys())}",
             ephemeral=True
         )
-    
-    # ✅ Handle Default logic
+
+    # ✅ Handle Default logic *after* chosen is guaranteed to exist
     if "Default" in chosen:
         if len(chosen) > 1:
             return await interaction.response.send_message(
                 "❌ You cannot select **Default** together with other personalities.",
                 ephemeral=True
             )
+
         # Replace Default with fixed 5 personalities
         chosen = ["Warm", "Charming", "Caring", "Unsettling", "Self-aware"]
         print(f"[Personality] Default → replaced with fixed set: {chosen}")
@@ -3165,19 +3233,20 @@ async def broadcast(
     color_hex: str = "15f500"
 ):
     global is_broadcasting
+    user = interaction.user
     if interaction.user.id != OWNER_ID:
         await interaction.response.send_message("❌ You can't use this command.", ephemeral=True)
         return
+    
+    is_broadcasting = True
+    await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
 
-    if is_broadcasting:
+    if is_broadcasting == True:
         await interaction.response.send_message(
             "❌ A broadcast is already in progress.",
             ephemeral=True
         )
         return
-
-    is_broadcasting = True
-    await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
 
     # ✅ Reset broadcast flags so every server is eligible again
     for gid in server_tracker.guilds:
@@ -3492,7 +3561,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         # Failsafe if even error handler blows up
         print(f"[TreeErrorHandler] Failed to handle error: {handler_err}")
 
-keepalive.keep_alive()
+#keepalive.keep_alive()
 async def main():
     await bot.start(TOKEN, reconnect=True)
 
