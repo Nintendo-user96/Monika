@@ -18,7 +18,7 @@ from expression import User_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
 import logging
-#import keepalive
+import keepalive
 from monika_personality import MonikaTraits
 import sys
 import typing
@@ -3561,9 +3561,10 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         # Failsafe if even error handler blows up
         print(f"[TreeErrorHandler] Failed to handle error: {handler_err}")
 
-#keepalive.keep_alive()
+keepalive.keep_alive()
 async def main():
     await bot.start(TOKEN, reconnect=True)
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
