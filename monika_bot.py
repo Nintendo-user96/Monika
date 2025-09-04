@@ -2675,15 +2675,11 @@ async def set_personality(
     guild = interaction.guild
     guild_id = str(guild.id)
     user = interaction.user.display_name
-    
-    if "Default" in chosen:
-        print(f"Administrator: {user} used `/set_personality`: {mode1}")
-    else:
-        print(f"Administrator: {user} used `/set_personality`: {mode1}, {mode2}, {mode3}, {mode4}, {mode5}")
+    print(f"Administrator: {user} used `/set_personality`: {mode1}, {mode2}, {mode3}, {mode4}, {mode5}")
 
-    # ✅ Split by commas and validate
+    # 1) Build chosen list first (prevents UnboundLocalError)
     chosen = [m for m in [mode1, mode2, mode3, mode4, mode5] if m]
-    chosen = list(dict.fromkeys(chosen))  # remove duplicates
+    chosen = list(dict.fromkeys(chosen))  # dedupe, keep order
 
     if not chosen:
         return await interaction.response.send_message(
@@ -2691,26 +2687,45 @@ async def set_personality(
             ephemeral=True
         )
 
-    # ✅ Handle Default logic *after* chosen is guaranteed to exist
+    # Helper: map a user-typed label to the canonical key in PERSONALITY_MODES
+    def normalize_mode(name: str) -> str:
+        target = name.lower().replace("-", "").strip()
+        for k in PERSONALITY_MODES.keys():
+            if k.lower().replace("-", "").strip() == target:
+                return k
+        return name  # if not found, keep as is
+
+    # 2) Handle Default exactly as requested
     if "Default" in chosen:
         if len(chosen) > 1:
             return await interaction.response.send_message(
                 "❌ You cannot select **Default** together with other personalities.",
                 ephemeral=True
             )
+        # Replace Default with your fixed five (normalize to real keys if casing differs)
+        desired = ["Warm", "Charming", "Caring", "Unsettlingly", "Self-aware"]
+        chosen = [normalize_mode(x) for x in desired]
+        print(f"[Personality] Default → {chosen}")
 
-        # Replace Default with fixed 5 personalities
-        chosen = ["Warm", "Charming", "Caring", "Unsettling", "Self-aware"]
-        print(f"[Personality] Default → replaced with fixed set: {chosen}")
+    # 3) Persist to tracker (works whether you have a method or just the dict)
+    try:
+        if hasattr(server_tracker, "set_personality") and callable(server_tracker.set_personality):
+            server_tracker.set_personality(guild_id, chosen)
+        else:
+            server_tracker.ensure_guild(guild_id)
+            server_tracker.guilds[guild_id]["personality"] = chosen
+        # If your tracker supports save:
+        if hasattr(server_tracker, "save"):
+            await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+    except Exception as e:
+        print(f"[Tracker Error] {e}")
 
-    # ✅ Save updated list        
-    server_tracker.set_personality(guild_id, chosen)
-
+    # 4) Apply roles
     monika_member = guild.get_member(interaction.client.user.id)
     if not monika_member:
         return await interaction.response.send_message("❌ Could not find me in this server.", ephemeral=True)
 
-    # 🔄 Remove old personality roles
+    # Remove old personality roles
     for role in list(monika_member.roles):
         if role.name.startswith("Personality - "):
             try:
@@ -2718,10 +2733,9 @@ async def set_personality(
             except discord.errors.Forbidden:
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
-    # 🔄 Create or update combined role
+    # Create/ensure combined role
     role_name = f"Personality - {', '.join(chosen)}"
     role = discord.utils.get(guild.roles, name=role_name)
-
     if not role:
         try:
             role = await guild.create_role(
@@ -2735,11 +2749,14 @@ async def set_personality(
                 ephemeral=True
             )
 
-    # 🔄 Assign role
+    # Assign role
     try:
         await monika_member.add_roles(role, reason=f"Personality updated: {', '.join(chosen)}")
     except discord.errors.Forbidden:
-        return await interaction.response.send_message("❌ I am missing permission to **Manage Roles**.", ephemeral=True)
+        return await interaction.response.send_message(
+            "❌ I am missing permission to **Manage Roles**.",
+            ephemeral=True
+        )
 
     await interaction.response.send_message(
         f"✅ Monika’s personality updated to: **{', '.join(chosen)}**",
@@ -3567,4 +3584,5 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
 
