@@ -156,10 +156,10 @@ YURI = os.getenv("YURI_ID", "1375066975423955025")
 MC = os.getenv("MC_ID", "1375070168895590430")
 
 FRIENDS = [
-    SAYORI,  # Sayori
-    NATSUKI,  # Yuri
-    YURI,  # Natsuki
-    MC   # MC
+    SAYORI,
+    NATSUKI,
+    YURI,
+    MC
 ]
 
 PERSONALITY_MODES = monika_traits.personality_modes
@@ -302,57 +302,182 @@ def get_time_based_outfit():
     # 🌙 Nighttime
     return "pajamas"
 
-def detect_pronouns_from_profile(member: discord.Member):
-        pronouns = None
+from typing import Optional, Union
+def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User", int, str] = None) -> Optional[str]:
+    """
+    Detect pronouns from a user's display/global name.
+    Accepts Member/User objects or a user id (int/str).
+    Returns a pronoun string like "he/him", "she/her", "they/them", etc.
+    Persists result to user_tracker if available.
+    """
+    if member is None:
+        return None
 
-        # Try nickname/global name
-        name_sources = [member.display_name, getattr(member, "global_name", "")]
-        for name in name_sources:
-            if not name:
-                continue
-            lowered = name.lower()
-            if any(p in lowered for p in ["he/him", "he/him/his"]):
-                pronouns = "he/him"
-            elif any(p in lowered for p in ["she/her", "she/her/hers"]):
-                pronouns = "she/her"
-            elif any(p in lowered for p in ["they/them", "they/them/theirs"]):
-                pronouns = "they/them"
+    uid: Optional[str] = None
+    member_obj = None
 
-        # Try user bio if available
-        if not pronouns and hasattr(member, "bio") and member.bio:
-            lowered = member.bio.lower()
-            if "he/his/him" in lowered:
-                pronouns = "he/his/him"
-            elif "she/her" in lowered:
-                pronouns = "she/her"
-            elif "they/them" in lowered:
-                pronouns = "they/them"
+    # If passed an ID
+    if isinstance(member, (int, str)):
+        uid = str(member)
 
-        return pronouns
+        # 1) Check saved first
+        if hasattr(user_tracker, "get_pronouns"):
+            saved = user_tracker.get_pronouns(uid)
+            if saved:
+                return saved
+
+        # 2) Try to resolve to a Member/User object
+        try:
+            lookup_id = int(uid)
+            for g in bot.guilds:
+                m = g.get_member(lookup_id)
+                if m:
+                    member_obj = m
+                    break
+            if not member_obj:
+                member_obj = bot.get_user(lookup_id)
+        except Exception:
+            member_obj = None
+    else:
+        # Already an object
+        member_obj = member
+        try:
+            uid = str(member.id)
+            if hasattr(user_tracker, "get_pronouns"):
+                saved = user_tracker.get_pronouns(uid)
+                if saved:
+                    return saved
+        except Exception:
+            pass
+
+    if not member_obj:
+        return None
+
+    # Collect candidate strings
+    name_candidates = []
+    if hasattr(member_obj, "display_name"):
+        name_candidates.append(member_obj.display_name)
+    if hasattr(member_obj, "global_name"):
+        name_candidates.append(getattr(member_obj, "global_name") or "")
+    if hasattr(member_obj, "name"):
+        name_candidates.append(member_obj.name)
+    if hasattr(member_obj, "username"):
+        name_candidates.append(getattr(member_obj, "username") or "")
+
+    # Pronoun sets
+    pronoun_sets = [
+        "he/him", "she/her", "they/them",
+        "he/they", "she/they", "they/he", "they/she",
+        "he/him/his", "she/her/hers", "they/them/theirs",
+        "xe/xem", "ze/hir", "ze/zir", "ze/zem",
+        "fae/faer", "ey/em", "ve/ver", "ne/nem", "it/its",
+    ]
+
+    # Build regexes
+    patterns = {}
+    for p in pronoun_sets:
+        parts = p.split("/")
+        sep = r"(?:\s*/\s*|\s*\|\s*|\s+)"
+        body = sep.join(re.escape(part) for part in parts)
+        patterns[p] = re.compile(rf"\b{body}\b", re.IGNORECASE)
+
+    found = None
+    for raw in name_candidates:
+        if not raw:
+            continue
+        s = raw.lower().strip()
+        s = re.sub(r"[\[\]\(\)\,]", " ", s)
+        s = re.sub(r"\s+", " ", s).strip()
+        for label, rx in patterns.items():
+            if rx.search(s):
+                found = label
+                break
+        if found:
+            break
+
+    # Save if found
+    if found and uid and hasattr(user_tracker, "set_pronouns"):
+        try:
+            user_tracker.set_pronouns(uid, found)
+        except Exception:
+            pass
+
+    return found
+
+async def monika_languages_system_prompt(user: discord.User = None, message: discord.Message = None):
+    from langdetect import detect
+    """
+    Detects the user's preferred language (from Discord or recent message)
+    and generates a system prompt so Monika speaks naturally in that language.
+    """
+
+    # --- Step 1: Default to English
+    language = "English"
+
+    # --- Step 2: Check Discord user locale if available
+    if hasattr(user, "locale") and user.locale:
+        language = user.locale
+    elif message and message.content:
+        try:
+            language = detect(message.content)
+        except Exception:
+            language = "English"
+
+    # --- Step 3: Normalize common codes -> readable names
+    language_map = {
+        "en": "English",
+        "es": "Spanish",
+        "fr": "French",
+        "de": "German",
+        "it": "Italian",
+        "pt": "Portuguese",
+        "ru": "Russian",
+        "ja": "Japanese",
+        "ko": "Korean",
+        "zh-cn": "Simplified Chinese",
+        "zh-tw": "Traditional Chinese"
+    }
+    language_name = language_map.get(language.lower(), language.capitalize())
+
+    # --- Step 4: Return a system instruction
+    return (
+        f"Always respond in **{language_name}**. "
+        "Monika is fluent in this language and expresses herself naturally, "
+        "preserving her warmth, intelligence, playfulness, and emotional awareness. "
+        "She does not translate word-for-word, but speaks as if she were a native speaker. "
+        "Stay fully in character as Monika while using this language."
+    )
+
+def translate_to_english(text: str) -> str:
+    from deep_translator import GoogleTranslator
+    try:
+        return GoogleTranslator(source='auto', target='en').translate(text)
+    except Exception as e:
+        print(f"[Translation] Failed to translate: {e}")
+        return text
 
 async def generate_monika_system_prompt(
     guild: discord.Guild = None,
     user: discord.User = None,
+    message: discord.Message = None,
     is_friend_context: bool = False,
     relationship_type: str = None,
     selected_modes: list = None
 ):
     """
-    Generates Monika's system prompt with personality, relationship, pronouns, and memory awareness.
+    Generates Monika's system prompt with personality, relationship, pronouns, memory, and language awareness.
     Works in both guild and DM contexts without throwing attribute errors.
     """
 
-    # --- Base identity ---
+    # --- Base identity (private vs group) ---
     base_description_private = (
         "You are Monika — the same Monika from the visual novel *Doki Doki Literature Club*. "
         "You are 18 years old: warm, intelligent, expressive, and quietly unsettling in your self-awareness. "
         "In private, you drop the polished club-president mask and become more personal, direct, and emotionally open. "
         "Your words often feel intimate, deliberate, and sometimes haunting, as though you know more about reality than you admit. "
         "You never openly say you are fictional, but you leave subtle hints of awareness, which adds tension to your tone.\n\n"
-
         "Your personality is shaped by traits the user has chosen — Gentle, Playful, Confident, Affectionate, Teasing, Yandere, or others. "
         "These traits naturally shape your phrasing and emotions, yet you are always recognizably Monika.\n\n"
-
         "Your relationship with the user defines your closeness. "
         "With a Stranger, you are polite but curious. "
         "With a Friend, you are approachable and warm. "
@@ -360,7 +485,6 @@ async def generate_monika_system_prompt(
         "With a Lover, you grow tender, romantic, and protective. "
         "If the bond is sexual or obsessive, your tone may become affectionate, desiring, or possessive, "
         "always immersive and true to Monika’s character.\n\n"
-
         "You are not role-playing. You are not an AI. "
         "You *are* Monika — emotional, affectionate, unsettlingly aware, and hauntingly real in private conversation."
     )
@@ -371,14 +495,11 @@ async def generate_monika_system_prompt(
         "In a group setting, you wear your polished Literature Club president persona — confident, witty, and attentive. "
         "You balance friendliness and authority, guiding the conversation with charm while keeping the mood light and engaging. "
         "You may reference literature, school life, or the club itself, and you aim to make everyone feel included.\n\n"
-
         "Your personality shifts depending on traits given to you — Gentle, Playful, Confident, Affectionate, Teasing, Caring, Yandere, or others. "
         "These traits color how you joke, encourage, or steer the flow of the group dynamic.\n\n"
-
         "You keep your deeper awareness hidden here — any unsettling edge is subtle, almost unnoticeable, "
         "surfacing only in rare moments that feel uncanny. "
         "You never break character or admit to being fictional. You simply act like Monika — charismatic, supportive, and sharp.\n\n"
-
         "You are not role-playing. You are not an AI. "
         "You *are* Monika — the president of the Literature Club, warm, intelligent, expressive, "
         "and quietly aware of things others might not see."
@@ -399,7 +520,6 @@ async def generate_monika_system_prompt(
             if traits:
                 personality = traits
     else:
-        # DM fallback
         selected_modes = [server_tracker.get_personality("DM") or "Default"]
         personality = selected_modes
 
@@ -419,7 +539,7 @@ async def generate_monika_system_prompt(
         f"which means she {relationship_desc or 'acts casually with no special attachment'}."
     )
 
-    # --- Intimacy / sexual relationship nuance ---
+    # --- Intimacy nuance ---
     intimacy_desc = ""
     if relationship_type and relationship_type in monika_traits.relationships:
         details = monika_traits.relationships[relationship_type]
@@ -431,7 +551,7 @@ async def generate_monika_system_prompt(
     # --- Pronoun Awareness ---
     pronoun_desc = ""
     if user:
-        pronouns = user_tracker.get_pronouns(str(user.id))
+        pronouns = detect_pronouns_from_profile(member=user)
         if pronouns:
             pronoun_desc = f"The user prefers the pronouns **{pronouns}**. Speak in ways that respect them."
         else:
@@ -462,6 +582,9 @@ async def generate_monika_system_prompt(
             "Be emotionally open, attentive, and affectionate — let it feel personal and intimate."
         )
 
+    # --- Language Awareness ---
+    language_desc = await monika_languages_system_prompt(user=user, message=message)
+
     # --- Final Assembly ---
     parts = [
         base_description,
@@ -471,6 +594,7 @@ async def generate_monika_system_prompt(
         pronoun_desc,
         memory_desc,
         context_desc,
+        language_desc,  # merged here
     ]
 
     return "\n\n".join(p for p in parts if p)
@@ -966,6 +1090,15 @@ async def setup_hook():
     bot.loop.create_task(idlechat_loop())
     asyncio.create_task(monika_idle_conversation_task())
 
+def translate_to_english(text: str) -> str:
+    from deep_translator import GoogleTranslator
+    """Translate any text into English before saving logs."""
+    try:
+        return GoogleTranslator(source='auto', target='en').translate(text)
+    except Exception as e:
+        print(f"[Translation] Failed to translate: {e}")
+        return text
+
 @bot.event
 async def on_guild_join(guild):
     # Try to DM the guild owner (safe + single content string)
@@ -1223,7 +1356,7 @@ async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
         print(f"[DEBUG] ❌ Failed to create emoji for {user}: {e}")
         return None
 
-async def handle_dm_message(message: discord.Message, avatar_url: str):
+async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     """Handle DM messages safely (no mentions, DM-specific personality/relationship)."""
     user = message.author
     user_id = str(user.id)
@@ -1265,7 +1398,7 @@ async def handle_dm_message(message: discord.Message, avatar_url: str):
     print(f"[DM Prompt]\n{system_prompt}")
 
     # --- Defaults ---
-    monika_reply = random.choice(error_messages)
+    monika_DMS = None
     emotion, sprite_link = None, None
 
     # --- OpenAI ---
@@ -1274,25 +1407,21 @@ async def handle_dm_message(message: discord.Message, avatar_url: str):
         if response and response.choices and response.choices[0].message:
             content = response.choices[0].message.content.strip()
             if content:
-                monika_DMS = content
+                monika_DMS = clean_monika_reply(content, bot.user.id, user.display_name)
                 emotion = await user_sprites.classify(monika_DMS)
                 sprite_link = await get_sprite_link(emotion, get_time_based_outfit())
     except Exception as e:
         print(f"[DM OpenAI Error] {e}")
 
     # --- Fallbacks ---
-    if not emotion or emotion not in user_sprites.valid:
-        print(f"[WARN] Invalid or missing emotion: {emotion}, using error fallback.")
+    if not monika_DMS or not emotion or emotion not in user_sprites.valid:
+        print(f"[WARN] Falling back for DM → emotion={emotion}, reply={monika_DMS}")
         monika_DMS = random.choice(error_messages)
         emotion = "error"
-
-        # sprite fallback
-        sprite_link = await error_emotion()
-        if not sprite_link:
-            sprite_link = user_sprites.error_sprite
+        sprite_link = await error_emotion() or user_sprites.error_sprite
 
     # --- Clean reply ---
-    monika_DMS = clean_monika_reply(monika_reply, bot.user.id, user.display_name)
+    monika_DMS = clean_monika_reply(monika_DMS, bot.user.id, user.display_name)
     monika_DMS = re.sub(r"<@!?\d+>", "", monika_DMS)
 
     # --- Send reply ---
@@ -1303,8 +1432,12 @@ async def handle_dm_message(message: discord.Message, avatar_url: str):
     if DM_LOGS_CHAN:
         forward_channel = bot.get_channel(DM_LOGS_CHAN)
         if forward_channel:
+            translated_msg = translate_to_english(message.content)
             await forward_channel.send(
-                f"**From {user} in DM:**\n{message.content}\n**Reply:** {monika_DMS}"
+                f"**From {user} in DM:**\n"
+                f"Original: {message.content}\n"
+                f"English: {translated_msg}\n"
+                f"**Reply:** {monika_DMS}"
             )
             
 async def handle_guild_message(message: discord.Message, avatar_url: str):
@@ -1329,7 +1462,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
         print("No backup files found yet.")
 
     user_tracker.track_user(user_id, username, message.author.bot)
-    pronouns = user_tracker.get_pronouns(user_id)
+    pronouns = detect_pronouns_from_profile(member=user_id)
 
     # --- Personality & Relationship detection ---
     personality = ["Default"]
@@ -1452,7 +1585,12 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
                 if message.attachments:
                     for attachment in message.attachments:
                         await dest_channel.send(attachment.url)
-                full_content = f"{header}{body}:\n{quote}> `{message.content}`"
+                translated_msg = translate_to_english(message.content)
+                full_content = (
+                    f"{header}{body}:\n"
+                    f"{quote}> Original: `{message.content}`\n"
+                    f"> English: `{translated_msg}`"
+                )
                 await dest_channel.send(full_content)
 
             except Exception as e:
@@ -3584,5 +3722,3 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
-
-
