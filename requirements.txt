@@ -6,7 +6,10 @@ asyncio
 aiofiles
 pynacl
 requests
+langdetect
+deep_translator
 
 # pip install -r requirements.txt
 
 # python monika_bot.py
+
