@@ -1,220 +1,181 @@
-import os, time, asyncio
-from openai import AsyncOpenAI
+import discord, os, json
+from datetime import datetime
 
-class OpenAIKeyManager:
-    def __init__(self, keys: list[str], cooldown_seconds: int = 15, wrap: bool = False, idle_rotate_minutes: int = 5):
-        if not keys:
-            raise RuntimeError("No OpenAI API keys were provided.")
-        self.keys = {k: 0 for k in keys}  # key -> cooldown_until
-        self.current_key = keys[0]
-        self.cooldown_seconds = cooldown_seconds
-        self.wrap = wrap
-        self.used_keys = set()
-        self.stats = {k: {"uses": 0, "cooldowns": 0, "last_used": 0} for k in keys}
-        self.last_activity = time.time()
-        self.idle_rotate_minutes = max(5, idle_rotate_minutes)
-        self._idle_task = None
+class UserTracker:
+    def __init__(self, bot, user_channel_id):
+        self.bot = bot
+        self.user_channel_id = user_channel_id
+        self.data = {}  # user_id: {name, avatar, pronouns, last_seen}
+        self.users = {}
+        self.last_backup_message = None
 
-    # ⬇️ NEW
-    def refill_key(self, bad_key: str):
-        """Replace a failed key with the next available from ALL_KEYS."""
-        if not hasattr(self, "_all_keys"):
+    def _now(self):
+        return datetime.utcnow().isoformat()
+    
+    # ✅ Set language
+    def set_language(self, user_id: str, lang_code: str):
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["language"] = lang_code
+
+    # ✅ Get language (default = "en")
+    def get_language(self, user_id: str) -> str:
+        return self.users.get(user_id, {}).get("language", "en")
+    
+    async def load(self):
+        """Load the last user data backup from the channel."""
+        channel = self.bot.get_channel(self.user_channel_id)
+        if not channel:
+            print("[UserTracker] User channel not found.")
             return
 
-        if self._next_index >= len(self._all_keys):
-            print("[OpenAI] 🚨 No more spare keys available to refill.")
-            return
-
-        new_key = self._all_keys[self._next_index]
-        self._next_index += 1
-
-        if bad_key in self.keys:
-            del self.keys[bad_key]
-            del self.stats[bad_key]
-
-        self.keys[new_key] = 0
-        self.stats[new_key] = {"uses": 0, "cooldowns": 0, "last_used": 0}
-
-        if self.current_key == bad_key:
-            self.current_key = new_key
-
-        print(f"[OpenAI] 🔄 Replaced bad key {bad_key[:8]}... with new key {new_key[:8]}...")
-
-    def start_idle_rotator(self):
-        if self._idle_task is None or self._idle_task.done():
-            loop = asyncio.get_event_loop()
-            self._idle_task = loop.create_task(self._idle_rotator())
-            print("[OpenAI] 🔄 Idle rotator started.")
-
-    async def _idle_rotator(self):
-        while True:
-            try:
-                await asyncio.sleep(self.idle_rotate_minutes * 60)
-                now = time.time()
-                if now - self.last_activity >= self.idle_rotate_minutes * 60:
-                    print("[OpenAI] 🔄 Idle detected, rotating key...")
-                    await self.rotate(force=True)
-            except Exception as e:
-                print(f"[OpenAI] ⚠️ Idle rotator error: {e}")
-
-    def record_activity(self):
-        self.last_activity = time.time()
-
-    async def validate_keys(self, batch_size: int = 5):
-        """Test keys in batches and refill if bad keys are found."""
-        print("[OpenAI] 🔄 Validating keys...")
-
-        keys = list(self.keys.keys())
-        valid = {}
-
-        for i in range(0, len(keys), batch_size):
-            batch = keys[i:i + batch_size]
-
-            async def test_key(key):
+        async for message in channel.history(limit=50):
+            if message.author == self.bot.user and message.content.startswith("```json"):
                 try:
-                    client = AsyncOpenAI(api_key=key)
-                    await client.models.list()
-                    valid[key] = 0
-                    print(f"[OpenAI] ✅ Valid key {key[:8]}...")
+                    json_text = message.content.strip("```json\n").strip("```")
+                    self.data = json.loads(json_text)
+                    self.last_backup_message = message
+                    print("[UserTracker] Data loaded from channel.")
+                    return
                 except Exception as e:
-                    print(f"[OpenAI] ❌ Invalid key {key[:8]}... {e}")
-                    self.refill_key(key)   # ⬅️ Refill immediately
+                    print(f"[UserTracker] Failed to load user data: {e}")
 
-            await asyncio.gather(*(test_key(k) for k in batch))
+    async def save(self, bot, channel_id):
+        """Save the current user tracker data to the user channel as JSON."""
+        channel = self.bot.get_channel(int(channel_id))
+        if not channel:
+            print("[UserTracker] User channel not found.")
+            return
 
-        self.keys = valid
-        if not self.keys:
-            raise RuntimeError("No valid OpenAI keys available.")
-        self.current_key = next(iter(self.keys))
-        print(f"[OpenAI] ✅ {len(self.keys)} keys are good and ready.")
+        formatted = "```json\n" + json.dumps(self.data, indent=2) + "\n```"
 
-    def get_client(self) -> AsyncOpenAI:
-        """Return a usable AsyncOpenAI client, with auto-rotation/refill if needed."""
-        now = time.time()
-        local_hour = time.localtime(now).tm_hour
-
-        # Scheduled break check
-        if local_hour >= 23 or local_hour < 4:
-            raise RuntimeError("[OpenAI] ⏸ Scheduled break time (11PM–4AM).")
-
-        key = self.current_key
-        if key not in self.keys:
-            print(f"[OpenAI] ⚠️ Missing key {key[:8]}..., trying refill.")
-            self.refill_key(key)
-            if key not in self.keys:
-                raise RuntimeError("[OpenAI] 🚨 No usable keys available (missing).")
-            key = self.current_key
-
-        if now < self.keys[key]:
-            print(f"[OpenAI] ⏳ Key {key[:8]} cooling down, rotating...")
-            # auto-rotate to next available
-            asyncio.create_task(self.rotate())
-            raise RuntimeError(f"[OpenAI] Key {key[:8]} cooling down.")
-
-        # Mark usage
-        self.record_activity()
-        self.stats[key]["uses"] += 1
-        self.stats[key]["last_used"] = now
-        return AsyncOpenAI(api_key=key)
-
-    async def rotate(self, force: bool = False):
-        now = time.time()
-        available = [(k, until) for k, until in self.keys.items() if now >= until]
-
-        if not available:
-            soonest_key, soonest_time = min(self.keys.items(), key=lambda kv: kv[1])
-            wait_time = max(0, soonest_time - now)
-            print(f"[OpenAI] ⏳ All keys cooling. Waiting {wait_time:.1f}s...")
-            await asyncio.sleep(wait_time)
-            return await self.rotate(force=force)
-
-        unused = [k for k, _ in available if k not in self.used_keys]
-        if unused:
-            candidate = min(unused, key=lambda k: self.stats[k]["last_used"])
-        else:
-            self.used_keys.clear()
-            candidate = min((k for k, _ in available), key=lambda k: self.stats[k]["last_used"])
-
-        self.current_key = candidate
-        self.used_keys.add(candidate)
-        self.stats[candidate]["last_used"] = now
-        print(f"[OpenAI] 🔄 Rotated to key {candidate[:8]}...")
-
-    def mark_cooldown(self, key=None):
-        key = key or self.current_key
-        self.keys[key] = time.time() + self.cooldown_seconds
-        self.stats[key]["cooldowns"] += 1
-        print(f"[OpenAI] ⏳ Cooldown {self.cooldown_seconds}s for {key[:8]}...")
-
-    def status(self):
-        now = time.time()
-        for i, (k, until) in enumerate(self.keys.items(), start=1):
-            cooldown_left = max(0, until - now)
-            marker = "<-- current" if k == self.current_key else ""
-            print(f"{i}. {k[:8]}... cooldown {cooldown_left:.1f}s, "
-                  f"uses={self.stats[k]['uses']}, cooldowns={self.stats[k]['cooldowns']} {marker}")
-
-async def safe_call(manager: OpenAIKeyManager, fn, retries=20, global_cooldown=60):
-    last_exc = None
-    delay = 2
-    for attempt in range(retries):
         try:
-            client = manager.get_client()
-            return await fn(client)
-
+            if self.last_backup_message:
+                await self.last_backup_message.edit(content=formatted)
+            else:
+                self.last_backup_message = await channel.send(formatted)
+            print("[UserTracker] Data saved to channel.")
         except Exception as e:
-            last_exc = e
-            err = str(e).lower()
+            print(f"[UserTracker] Failed to save user data: {e}")
 
-            if "scheduled break" in err:
-                now = time.localtime()
-                seconds_since_midnight = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
-                if now.tm_hour >= 23:
-                    wait_time = (24 * 3600 - seconds_since_midnight) + (4 * 3600)
-                else:
-                    wait_time = (4 * 3600) - seconds_since_midnight
-                print(f"[OpenAI] 😴 Scheduled break. Waiting {wait_time/3600:.1f} hours...")
-                await asyncio.sleep(wait_time)
-                continue
+    def register_user(self, user: discord.User, relationship=None, personality=None, pronouns=None):
+        """Register or update a user in memory only if something has changed."""
+        user_id = str(user.id)
+        existing = self.data.get(user_id, {})
 
-            if "429" in err or "rate limit" in err:
-                manager.mark_cooldown()
-                await manager.rotate()
-                if not manager.keys:
-                    print(f"[OpenAI] ❌ All keys exhausted (rate-limited). Pausing {global_cooldown}s...")
-                    await asyncio.sleep(global_cooldown)
-                else:
-                    print(f"[OpenAI] ⚠️ Rate limit hit. Backing off {delay}s (attempt {attempt+1}/{retries})...")
-                    await asyncio.sleep(delay)
-                    delay = min(delay * 2, 60)
-                continue
+        updated = {
+            "name": user.display_name,
+            "relationship": relationship or existing.get("relationship"),
+            "personality": personality or existing.get("personality"),
+            "pronouns": pronouns or existing.get("pronouns"),
+            "bot": user.bot,
+            "last_seen": datetime.utcnow().isoformat()
+        }
 
-            if "401" in err or "invalid api key" in err or "400" in err:
-                bad_key = manager.current_key
-                manager.mark_cooldown(bad_key)
-                manager.refill_key(bad_key)   # ⬅️ Auto refill
-                await manager.rotate()
-                if not manager.keys:
-                    raise RuntimeError("[OpenAI] 🚨 No valid keys available. Please update your keys.")
-                continue
+        # ✅ Only update if something is different
+        if updated != existing:
+            self.data[user_id] = updated
+            return True  # means changed
+        return False  # no change
+    
+    def set_user(self, user_id, name=None, avatar=None, pronouns=None):
+        self.data.setdefault(user_id, {})
+        if name:
+            self.data[user_id]["name"] = name
+        if avatar:
+            self.data[user_id]["avatar"] = avatar
+        if pronouns:
+            self.data[user_id]["pronouns"] = pronouns
 
-            break
-    raise last_exc
+    def track_user(self, user_id, name, is_bot=False):
+        if user_id not in self.users:
+            self.users[user_id] = {
+                "name": name,
+                "avatar": None,
+                "pronouns": None,
+                "relationship": None,  # 0 = Stranger
+                "has_manual_relationship": False,  # New field
+                "is_bot": is_bot
+            }
+        else:
+            self.users[user_id]["name"] = name
+            self.users[user_id]["is_bot"] = is_bot
 
-# Load keys from environment (preloaded)
-ALL_KEYS = [
-    os.getenv(f"OPENAI_KEY_{i}")
-    for i in range(1, 211)
-    if os.getenv(f"OPENAI_KEY_{i}")
-]
-if not ALL_KEYS:
-    raise RuntimeError("No OpenAI API keys were provided in environment variables.")
+    def set_manual_relationship(self, user_id, value=True):
+        if user_id in self.users:
+            self.users[user_id]["has_manual_relationship"] = value
 
-print("[DEBUG] Total keys available:", len(ALL_KEYS))
+    def has_manual_relationship(self, user_id):
+        return self.users.get(user_id, {}).get("has_manual_relationship", False)
 
-# Start with first 5 keys only
-INITIAL_KEYS = ALL_KEYS[:5]
+    def get_user_data(self, user_id):
+        return self.data.get(user_id, {})
 
-key_manager = OpenAIKeyManager(INITIAL_KEYS, cooldown_seconds=15, wrap=False, idle_rotate_minutes=5)
-key_manager._all_keys = ALL_KEYS
-key_manager._next_index = 5        # track where to pull the next key
+    def get_avatar(self, user_id):
+        user_info = self.get_user_data(user_id)
+        return user_info.get("avatar_url") if user_info else None
+        
+    def set_pronouns(self, user_id: str, pronouns: str):
+        """Save pronouns for a user."""
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["pronouns"] = pronouns
+
+    def get_pronouns(self, user_id: str):
+        """Retrieve saved pronouns, or None if unset."""
+        return self.users.get(user_id, {}).get("pronouns")
+    
+    def set_relationship(self, user_id, relationship):
+        """
+        Set or clear the stored relationship for a user.
+        - user_id may be int or str.
+        - relationship should be a string (e.g. "Lover") or None to clear.
+        Returns True if the stored value changed (useful to decide whether to save).
+        """
+        uid = str(user_id)
+
+        # ensure runtime entry exists
+        prev = self.users.get(uid, {}).get("relationship")
+        if uid not in self.users:
+            self.users[uid] = {}
+
+        # set runtime relationship
+        self.users[uid]["relationship"] = relationship
+
+        # persist to self.data so save() includes it
+        self.data.setdefault(uid, {})
+        if relationship is None:
+            # remove persistent relationship if clearing
+            if "relationship" in self.data[uid]:
+                del self.data[uid]["relationship"]
+        else:
+            self.data[uid]["relationship"] = relationship
+
+        return prev != relationship
+
+    def get_relationship(self, user_id: str) -> str:
+        """Return stored relationship for a user, or 'Stranger' if none set."""
+        user_data = self.users.get(user_id, {})
+        return user_data.get("relationship", "Stranger")
+
+    def set_nickname(self, user_id: str, nickname: str):
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["nickname"] = nickname
+
+    def get_nickname(self, user_id: str) -> str:
+        return self.users.get(user_id, {}).get("nickname", None)
+
+    async def log_to_channel(self, channel, user_id):
+        entry = self.data.get(user_id)
+        if not entry: return
+
+        ts = datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        log = f"[{ts}] User: {user_id} | Data: {entry}"
+        await channel.send(log)
+
+    def update_last_seen(self, user: discord.User):
+        if str(user.id) in self.data:
+            self.data[str(user.id)]["last_seen"] = datetime.utcnow().isoformat()
+        else:
+            self.register_user(user)
