@@ -814,7 +814,7 @@ async def run_bot_forever():
     """Run bot forever without shutting down."""
     while True:
         try:
-            await bot.start("YOUR_TOKEN")
+            await bot.start(TOKEN)
         except Exception as e:
             logging.error(f"❌ Bot error: {e}")
             logging.error(traceback.format_exc())
@@ -4713,3 +4713,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.get_event_loop().run_until_complete(main())
+
