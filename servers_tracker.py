@@ -382,6 +382,24 @@ class GuildTracker:
     
     # ----------------  PERSISTENCE ----------------
 
+    # ✅ Set language
+    def set_language(self, guild_id: str, lang_code: str):
+        if guild_id not in self.users:
+            self.users[guild_id] = {}
+        self.users[guild_id]["language"] = lang_code
+
+    # ✅ Get language (default = "en")
+    def get_language(self, guild_id: str) -> str:
+        return self.users.get(guild_id, {}).get("language", "en")
+
+    def set_nickname(self, guild_id: str, nickname: str):
+        if guild_id not in self.servers:
+            self.servers[guild_id] = {}
+        self.servers[guild_id]["nickname"] = nickname
+
+    def get_nickname(self, guild_id: str) -> str:
+        return self.servers.get(guild_id, {}).get("nickname", None)
+
     def set_memory_channel(self, guild_id, channel_id):
         if guild_id not in self.data:
             self.data[guild_id] = {}
