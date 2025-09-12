@@ -1,8 +1,5 @@
 # expression.py — fixed and more robust
-import os
-import datetime
-import random
-import asyncio
+import os, datetime, random, asyncio
 
 SPRITE_DIR = "Sprites/user's"
 
@@ -19,7 +16,7 @@ class User_SpritesManager:
         self._last_casual_date = None
 
         self.outfit_emotion_map = {
-            "school_uniform": ["happy", "smile speaking", "lean smile", "lean smile eyes close", "lean happy eyes close speaking", "lean happy speaking", "lean happy wink", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "lean wink point smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "pissed lean", "mad speaking lean", "mad leaning", "mad pitting face lean", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "smirk lean", "leaning kiss", "blushing leaning", "surprise speaking lean", "concerned speaking lean", "really...", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close", "thinking", "don't sure"],
+            "school uniform": ["happy", "smile speaking", "lean smile", "lean smile eyes close", "lean happy eyes close speaking", "lean happy speaking", "lean happy wink", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "lean wink point smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "pissed lean", "mad speaking lean", "mad leaning", "mad pitting face lean", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "smirk lean", "leaning kiss", "blushing leaning", "surprise speaking lean", "concerned speaking lean", "really...", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close", "thinking", "don't sure"],
             "casual 1": ["happy", "smile speaking", "lean smile", "lean smile eyes close", "lean happy eyes close speaking", "lean happy speaking", "lean happy wink", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "pissed lean", "mad speaking lean", "mad leaning", "mad pitting face lean", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "leaning kiss", "blushing leaning", "surprise speaking lean", "concerned speaking lean", "really...", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"],
             "casual 2": ["happy", "smile speaking", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"],
             "casual 3": ["happy", "smile speaking", "eyes close smile", "eyes close smile speaking", "pointing finger smile", "sad", "crying", "sad smile", "neutral", "eyes close neutral", "neutral speaking", "eyes close neutral speaking", "horrified screams", "horrified speaking", "horrified babbling", "horrified surprised", "horrified no words", "horrified really surprised", "horrified", "horrified concerned", "serious", "very serious", "disappointed", "serious pointing speaking", "serious pointing", "serious speaking", "serious pointing eyes close", "serious pointing speaking eyes close", "concerned", "concerned pointing", "concerned pointing speaking", "sad pointing smile looks away", "sad pointing smile", "sad pointing", "sad pointing smile speaking", "smile pointing speaking", "happy pointing speaking", "happy pointing", "neutral pointing speaking", "neutral pointing", "concerned speaking", "embarrass", "blushing with her eyes close", "nervous", "really nervous", "nervous speaking", "nervous laughing", "nervous laughing eyes close"],
@@ -35,7 +32,7 @@ class User_SpritesManager:
         # The raw mapping of outfit -> emotion -> path.
         # (Keeps the same structure as before — paths will be normalized in _load_sprites.)
         self.EXPRESSION_SPRITES = {
-            "school_uniform": {
+            "school uniform": {
                 "happy": f"{self.sprite_dir}/school_uniform/Mon1.png",
                 "smile speaking": f"{self.sprite_dir}/school_uniform/Mon2.png",
                 "lean smile": f"{self.sprite_dir}/school_uniform/3aa.png",
@@ -509,11 +506,19 @@ class User_SpritesManager:
                 "nervous laughing eyes close": f"{self.sprite_dir}/green_dress/Mon12.png",
             }
         }
+
+        self.error_sprite = {
+            "error": f"{self.sprite_dir}/bug/G1.png",
+            "glitching": f"{self.sprite_dir}/bug/G5.gif"
+        }
+
         self.sprites_by_outfit = {}
         self._load_sprites()
 
         # valid emotions (computed from loaded sprites)
         self.valid = self._extract_all_emotions()
+
+        print("[DEBUG] Loaded sprites:", self.sprites_by_outfit)
 
     # ---------------- Classify ----------------
     async def classify(self, text: str) -> str:
@@ -558,28 +563,51 @@ class User_SpritesManager:
         return "neutral"
 
     # ---------------- Validation ----------------
-    def valid_for_outfit(self, emotion: str, outfit: str) -> bool:
-        outfit = outfit.lower()
-        emotion = emotion.lower()
-        return outfit in self.EXPRESSION_SPRITES and emotion in self.EXPRESSION_SPRITES[outfit]
+    def valid_for_outfit(self, emotion: str, outfit: str = None):
+        """
+        If outfit is given, check only that outfit.
+        If not, search all outfits for the emotion.
+        """
+        if outfit:
+            outfit = outfit.lower()
+            return emotion in self.sprites_by_outfit.get(outfit, {})
+
+        # If no outfit, try to find emotion in any outfit
+        for emo_dict in self.sprites_by_outfit.values():
+            if emotion in emo_dict:
+                return True
+        return False
 
     # ---------------- Commands ----------------
+    def get_emotions_for_outfit(self, outfit: str):
+        return list(self.sprites_by_outfit.get(outfit.lower(), {}).keys())
+
     def command_outfit(self, outfit: str) -> str:
-        return outfit.lower() if outfit.lower() in self.EXPRESSION_SPRITES else "school_uniform"
+        outfit = outfit.lower()
+        return list(self.sprites_by_outfit.get(outfit, {}).keys())
 
     def command_sprite(self, emotion: str, outfit: str) -> str:
         return self.get_sprite(emotion, outfit)
 
     # ---------------- Sprite Handling ----------------
     def get_sprite(self, emotion: str, outfit: str) -> str:
+        today = datetime.date.today()
+        
         outfit = outfit.lower()
         emotion = emotion.lower()
 
         if outfit not in self.EXPRESSION_SPRITES:
-            print(f"[WARN] Outfit '{outfit}' not found. Using school_uniform.")
-            outfit = "school_uniform"
+            print(f"[WARN] Outfit '{outfit}' not found. Using school uniform.")
+            outfit = "school uniform"
 
         sprites = self.EXPRESSION_SPRITES[outfit]
+
+        # 🎂 Override Sep 21: Only one special expression allowed
+        if today.month == 9 and today.day == 21:
+            allowed_expressions = "green dress"   # change to the outfit you want
+            if emotion not in allowed_expressions:
+                # fallback: pick the first allowed one
+                emotion = allowed_expressions[0]
 
         if emotion in sprites:
             return sprites[emotion]
@@ -592,14 +620,11 @@ class User_SpritesManager:
 
     # ---------------- Sprite Loading ----------------
     def _load_sprites(self):
-        # Implement your logic to populate EXPRESSION_SPRITES here
-        # Example structure:
-        # self.EXPRESSION_SPRITES = {
-        #     "school_uniform": {"neutral": "sprites/school_uniform/neutral.png"}
-        # }
-        for outfit, mapping in self.EXPRESSION_SPRITES.items():
-            if "neutral" not in mapping:
-                print(f"[WARN] Outfit '{outfit}' missing neutral sprite.")
+        # Just copy the dictionary of emotions → paths
+        self.sprites_by_outfit = {
+            outfit.lower(): emotions
+            for outfit, emotions in self.EXPRESSION_SPRITES.items()
+        }
 
     def _extract_all_emotions(self):
         emotions = set()
