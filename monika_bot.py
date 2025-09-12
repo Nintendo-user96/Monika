@@ -810,14 +810,16 @@ async def on_error(event, *args, **kwargs):
     logging.error(f"⚠️ Error in event {event}:")
     logging.error(traceback.format_exc())
 
-async def safe_run():
-    try:
-        await bot.start(TOKEN)
-    except Exception as e:
-        logging.error(f"❌ Bot crashed but will not shut down: {e}")
-        logging.error(traceback.format_exc())
-        # Instead of exiting, we just reconnect
-        await safe_run()
+async def run_bot_forever():
+    """Run bot forever without shutting down."""
+    while True:
+        try:
+            await bot.start("YOUR_TOKEN")
+        except Exception as e:
+            logging.error(f"❌ Bot error: {e}")
+            logging.error(traceback.format_exc())
+            logging.info("🔄 Restarting bot loop in 10s...")
+            await asyncio.sleep(10)
 
 report_stats = {
     "total": 0,
@@ -4705,7 +4707,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         print(f"[TreeErrorHandler] Failed to handle error: {handler_err}")
 
 keepalive.keep_alive()
-asyncio.run(safe_run())
+asyncio.run(run_bot_forever())
 async def main():
     await bot.start(TOKEN, reconnect=True)
 
