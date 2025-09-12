@@ -1,6 +1,5 @@
-import discord
+import discord, os, json
 from datetime import datetime
-import os
 
 class UserTracker:
     def __init__(self, bot, user_channel_id):
@@ -13,6 +12,16 @@ class UserTracker:
     def _now(self):
         return datetime.utcnow().isoformat()
     
+    # ✅ Set language
+    def set_language(self, user_id: str, lang_code: str):
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["language"] = lang_code
+
+    # ✅ Get language (default = "en")
+    def get_language(self, user_id: str) -> str:
+        return self.users.get(user_id, {}).get("language", "en")
+    
     async def load(self):
         """Load the last user data backup from the channel."""
         channel = self.bot.get_channel(self.user_channel_id)
@@ -21,10 +30,10 @@ class UserTracker:
             return
 
         async for message in channel.history(limit=50):
-            if message.author == self.bot.user and message.content.startswith("```"):
+            if message.author == self.bot.user and message.content.startswith("```json"):
                 try:
-                    json_text = message.content.strip("```\n").strip("```")
-                    self.data = eval(json_text)
+                    json_text = message.content.strip("```json\n").strip("```")
+                    self.data = json.loads(json_text)
                     self.last_backup_message = message
                     print("[UserTracker] Data loaded from channel.")
                     return
@@ -32,19 +41,13 @@ class UserTracker:
                     print(f"[UserTracker] Failed to load user data: {e}")
 
     async def save(self, bot, channel_id):
-        """Save the current user tracker data to the user channel."""
+        """Save the current user tracker data to the user channel as JSON."""
         channel = self.bot.get_channel(int(channel_id))
         if not channel:
             print("[UserTracker] User channel not found.")
             return
 
-        formatted = "```\n"
-        for username, user_id, info in self.data.items():
-            formatted += f"Username: {info.get('name', username)} (User ID: {user_id})\n"
-            for key, value in info.items():
-                formatted += f"  {key}: {value}\n"
-            formatted += "\n"
-        formatted += "```"
+        formatted = "```json\n" + json.dumps(self.data, indent=2) + "\n```"
 
         try:
             if self.last_backup_message:
@@ -55,13 +58,25 @@ class UserTracker:
         except Exception as e:
             print(f"[UserTracker] Failed to save user data: {e}")
 
-    def register_user(self, user: discord.User, pronouns=None):
-        self.data[str(user.id)] = {
-            "name": user.name,
-            "avatar": str(user.avatar.url if user.avatar else ""),
-            "pronouns": pronouns or "unspecified",
+    def register_user(self, user: discord.User, relationship=None, personality=None, pronouns=None):
+        """Register or update a user in memory only if something has changed."""
+        user_id = str(user.id)
+        existing = self.data.get(user_id, {})
+
+        updated = {
+            "name": user.display_name,
+            "relationship": relationship or existing.get("relationship"),
+            "personality": personality or existing.get("personality"),
+            "pronouns": pronouns or existing.get("pronouns"),
+            "bot": user.bot,
             "last_seen": datetime.utcnow().isoformat()
         }
+
+        # ✅ Only update if something is different
+        if updated != existing:
+            self.data[user_id] = updated
+            return True  # means changed
+        return False  # no change
     
     def set_user(self, user_id, name=None, avatar=None, pronouns=None):
         self.data.setdefault(user_id, {})
@@ -100,16 +115,56 @@ class UserTracker:
         user_info = self.get_user_data(user_id)
         return user_info.get("avatar_url") if user_info else None
         
-    def set_pronouns(self, user_id, pronouns):
-        self.data.setdefault(str(user_id), {})["pronouns"] = pronouns
+    def set_pronouns(self, user_id: str, pronouns: str):
+        """Save pronouns for a user."""
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["pronouns"] = pronouns
 
-    def get_pronouns(self, user_id):
-        return self.data.get(user_id, {}).get("pronouns")
+    def get_pronouns(self, user_id: str):
+        """Retrieve saved pronouns, or None if unset."""
+        return self.users.get(user_id, {}).get("pronouns")
+    
+    def set_relationship(self, user_id, relationship):
+        """
+        Set or clear the stored relationship for a user.
+        - user_id may be int or str.
+        - relationship should be a string (e.g. "Lover") or None to clear.
+        Returns True if the stored value changed (useful to decide whether to save).
+        """
+        uid = str(user_id)
+
+        # ensure runtime entry exists
+        prev = self.users.get(uid, {}).get("relationship")
+        if uid not in self.users:
+            self.users[uid] = {}
+
+        # set runtime relationship
+        self.users[uid]["relationship"] = relationship
+
+        # persist to self.data so save() includes it
+        self.data.setdefault(uid, {})
+        if relationship is None:
+            # remove persistent relationship if clearing
+            if "relationship" in self.data[uid]:
+                del self.data[uid]["relationship"]
+        else:
+            self.data[uid]["relationship"] = relationship
+
+        return prev != relationship
 
     def get_relationship(self, user_id: str) -> str:
         """Return stored relationship for a user, or 'Stranger' if none set."""
         user_data = self.users.get(user_id, {})
         return user_data.get("relationship", "Stranger")
+
+    def set_nickname(self, user_id: str, nickname: str):
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["nickname"] = nickname
+
+    def get_nickname(self, user_id: str) -> str:
+        return self.users.get(user_id, {}).get("nickname", None)
 
     async def log_to_channel(self, channel, user_id):
         entry = self.data.get(user_id)
