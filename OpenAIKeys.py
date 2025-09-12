@@ -89,19 +89,33 @@ class OpenAIKeyManager:
         print(f"[OpenAI] ✅ {len(self.keys)} keys are good and ready.")
 
     def get_client(self) -> AsyncOpenAI:
+        """Return a usable AsyncOpenAI client, with auto-rotation/refill if needed."""
         now = time.time()
         local_hour = time.localtime(now).tm_hour
 
+        # Scheduled break check
         if local_hour >= 23 or local_hour < 4:
             raise RuntimeError("[OpenAI] ⏸ Scheduled break time (11PM–4AM).")
 
-        if now < self.keys[self.current_key]:
-            raise RuntimeError(f"[OpenAI] Key {self.current_key[:8]} cooling down.")
+        key = self.current_key
+        if key not in self.keys:
+            print(f"[OpenAI] ⚠️ Missing key {key[:8]}..., trying refill.")
+            self.refill_key(key)
+            if key not in self.keys:
+                raise RuntimeError("[OpenAI] 🚨 No usable keys available (missing).")
+            key = self.current_key
 
+        if now < self.keys[key]:
+            print(f"[OpenAI] ⏳ Key {key[:8]} cooling down, rotating...")
+            # auto-rotate to next available
+            asyncio.create_task(self.rotate())
+            raise RuntimeError(f"[OpenAI] Key {key[:8]} cooling down.")
+
+        # Mark usage
         self.record_activity()
-        self.stats[self.current_key]["uses"] += 1
-        self.stats[self.current_key]["last_used"] = now
-        return AsyncOpenAI(api_key=self.current_key)
+        self.stats[key]["uses"] += 1
+        self.stats[key]["last_used"] = now
+        return AsyncOpenAI(api_key=key)
 
     async def rotate(self, force: bool = False):
         now = time.time()
