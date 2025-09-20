@@ -4453,8 +4453,20 @@ async def broadcast(
                     emoji = str(reaction.emoji)
                     users = [u async for u in reaction.users() if u.id != bot.user.id]
                     counts[emoji] = len(users)
+
                 result_line = " | ".join([f"{emoji} {count}" for emoji, count in counts.items()])
-                await progress.edit(content=f"{result_line} (updating...)")
+                # ✅ Only edit if the progress message still exists
+                if progress:
+                    try:
+                        await progress.edit(content=f"{result_line} (updating...)")
+                    except discord.NotFound:
+                        print(f"[Broadcast Update Error] Progress message deleted in {orig.guild.name}")
+                        sent_messages.remove((orig, progress))
+                        continue
+            except discord.NotFound:
+                print(f"[Broadcast Update Error] Announcement message deleted in {orig.guild.name}")
+                sent_messages.remove((orig, progress))
+                continue
             except Exception as e:
                 print(f"[Broadcast Update Error] {e}")
 
@@ -4527,6 +4539,7 @@ async def broadcast(
 
     is_broadcasting = False
     await bot.change_presence(activity=None)
+    
 @broadcast.error
 async def broadcast_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.CheckFailure):
@@ -4832,4 +4845,5 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
