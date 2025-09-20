@@ -523,8 +523,8 @@ class User_SpritesManager:
     # ---------------- Classify ----------------
     async def classify(self, text: str) -> str:
         """Classify text into one of the valid emotion labels using OpenAI."""
-        from OpenAIKeys import safe_call, key_manager  # already in your project
-        model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
+        from OpenAIKeys import openai_safe_call, key_manager  # already in your project
+        model_priority = ["gpt-5-mini", "gpt-5", "gpt-5 nano", "gpt-3.5-turbo"]
 
         prompt = (
             "Return ONLY one label from this list:\n"
@@ -543,7 +543,7 @@ class User_SpritesManager:
                 )
 
             try:
-                response = await safe_call(key_manager, call_fn)
+                response = await openai_safe_call(key_manager, call_fn)
                 if not response or not response.choices:
                     continue
 
