@@ -4377,13 +4377,26 @@ async def broadcast(
 
         # ✅ Find usable channel
         channel = None
-        if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
-            channel = guild.system_channel
-        else:
+
+        # First try: Monika channels
+        for c in guild.text_channels:
+            if not c.permissions_for(guild.me).send_messages:
+                continue
+            if c.name in OFF_LIMITS_CHANNELS:
+                continue
+            if c.name in MON_CHANNEL_NAMES:
+                channel = c
+                break
+
+        # Fallback: first available non-off-limits channel
+        if not channel:
             for c in guild.text_channels:
-                if c.permissions_for(guild.me).send_messages:
-                    channel = c
-                    break
+                if not c.permissions_for(guild.me).send_messages:
+                    continue
+                if c.name in OFF_LIMITS_CHANNELS:
+                    continue
+                channel = c
+                break
 
         if not channel:
             print(f"[Broadcast] ❌ No available channel in {guild.name} ({guild.id})")
@@ -4514,7 +4527,6 @@ async def broadcast(
 
     is_broadcasting = False
     await bot.change_presence(activity=None)
-
 @broadcast.error
 async def broadcast_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.CheckFailure):
@@ -4820,3 +4832,4 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
