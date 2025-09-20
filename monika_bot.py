@@ -1,32 +1,67 @@
-import discord, requests, os, asyncio, random, datetime, re, io, atexit, logging, sys, typing, time, traceback, error_detector
+import os
+import re
+import io
+import sys
+import time
+import random
+import asyncio
+import logging
+import traceback
+import datetime
+import threading
+import typing
+import atexit
+import requests
+
+import discord
 from discord import File, app_commands
 from discord.ext import commands
 from discord.permissions import Permissions
-from OpenAIKeys import OpenAIKeyManager, safe_call, key_manager
+
+# Local modules
+import error_detector
+import keepalive
+from OpenAIKeys import (
+    OpenAIKeyManager,
+    openai_safe_call,
+    init_key_manager,
+    periodic_rescan,
+    key_manager,
+)
 from memory import MemoryManager
 from expression import User_SpritesManager
-#from expression_dokitubers import DOKITUBER_MANAGERS
+# from expression_dokitubers import DOKITUBER_MANAGERS
+# from expression_MAS import MAS_SpritesManager
 from user_tracker import UserTracker
 from servers_tracker import GuildTracker
-import keepalive
 from monika_personality import MonikaTraits
-from performance import background_task, cache_result, get_memory_usage, cleanup_memory, monitor_event_loop
+from performance import (
+    background_task,
+    cache_result,
+    get_memory_usage,
+    cleanup_memory,
+    monitor_event_loop,
+)
 from vote_tracker import VoteTracker
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=logging.INFO,
+    format="[%(asctime)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S"
+)
 logger = logging.getLogger("Monika")
-
 logger.info("Just Monika!")
 
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    """Try models in priority order, using safe_call for retries + key rotation."""
-    model_priority = ["gpt-5-mini", "gpt-5", "gpt-3.5-turbo"]
-    last_exception = None
+    """Try models in priority order using safe_call.
+       If one key/model fails, ignore and move on to the next.
+       Returns a valid response or None if all fail.
+    """
+    model_priority = ["gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-3.5-turbo"]
 
     for model in model_priority:
 
         async def call_fn(client):
-            # Ensure conversation is valid
             if not isinstance(conversation, list):
                 raise ValueError("Conversation must be a list of messages.")
 
@@ -40,33 +75,39 @@ async def call_openai_with_retries(user, relationship, personality, conversation
 
             full_conversation = [{"role": "system", "content": system_prompt}] + conversation
 
-            # Hit the API
+            # Call API
             return await client.chat.completions.create(
                 model=model,
                 messages=full_conversation
             )
 
         try:
-            response = await safe_call(key_manager, call_fn)
+            response = await openai_safe_call(key_manager, call_fn)
 
+            if response is None:
+                print(f"[OpenAI] ❌ {model} failed (ignored). Trying next model...")
+                continue
+
+            # Check response validity
             if (response and response.choices and
                 response.choices[0].message and
                 response.choices[0].message.content.strip()):
                 print(f"[OpenAI] ✅ {model} → Success")
+                key_manager.mark_success()  # improve key health
                 return response
-
-            print(f"[OpenAI] ⚠️ {model} returned empty/invalid response, trying next...")
-            await asyncio.sleep(1)
+            else:
+                print(f"[OpenAI] ⚠️ {model} returned empty/invalid response. Trying next...")
+                key_manager.mark_cooldown()
+                continue
 
         except Exception as e:
-            last_exception = e
-            print(f"[OpenAI] ❌ {model} failed: {e}")
+            print(f"[OpenAI] ⚠️ {model} error ignored: {e}")
+            key_manager.mark_cooldown()
             continue
 
-    # All models failed
-    if last_exception:
-        raise last_exception
-    raise RuntimeError("All models exhausted or failed.")
+    # If all models failed
+    print("[OpenAI] ❌ All models failed, returning None.")
+    return None
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
@@ -85,13 +126,16 @@ AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
 SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))
 
 intents = discord.Intents.all()
-
 bot = commands.Bot(command_prefix="/", intents=intents)
 
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
 MON_CHANNEL_NAMES = [
     "monika", "monika-ai", "ddlc-monika", "ddlc-monika-ai", "club-room", "doki-chat", "ddlc-chat", "monika-bot", "chat-monika", "monika-chat", "monika-but-deranged", "just-monika", "club-room-meeting", "literature-club", "literature-club-room", "monika-ddlc"
+]
+
+OFF_LIMITS_CHANNELS = [
+    "get-roles", "rules", "announcements", "osu", "food", "pets", "teasers", "owo", "tubberbox"
 ]
 
 NO_CHAT_CHANNELS = [
@@ -154,12 +198,7 @@ NATSUKI = os.getenv("NATSUKI_ID", "1375065750502379631")
 YURI = os.getenv("YURI_ID", "1375066975423955025")
 MC = os.getenv("MC_ID", "1375070168895590430")
 
-FRIENDS = [
-    SAYORI,
-    NATSUKI,
-    YURI,
-    MC
-]
+FRIENDS = [SAYORI, NATSUKI, YURI, MC]
 
 PERSONALITY_MODES = monika_traits.personality_modes
 
@@ -176,7 +215,6 @@ RELATIONSHIP_MODES = monika_traits.relationship_modes
 RELATIONSHIP_DETILED = monika_traits.relationships
 
 is_broadcasting = False
-last_broadcast_guilds = set()
 
 async def error_emotion(outfit="bug"):
     # Prefer bug outfit if available
@@ -291,7 +329,7 @@ def get_time_based_outfit():
 
     # 🌞 Morning/School
     if 6 <= hour < 15:
-        return "school_uniform"
+        return "school uniform"
 
     # 🌆 Evening casual (stick to one per day)
     if 15 <= hour < 20:
@@ -668,16 +706,25 @@ async def idlechat_loop():
                 await asyncio.sleep(delay)
 
 @bot.event
+async def on_connect():
+    await bot.change_presence(status=discord.Status.online, activity=discord.Game("Rebooting..."))
+
+@bot.event
 async def on_ready():
-    global idlechat_task, is_waking_up
+    global idlechat_task, is_waking_up, key_manager
 
     is_waking_up = True
 
-    print("------")
-    await key_manager.validate_keys()
-    print("------")
+    print("---------------------------------------------------")
+    key_manager = await init_key_manager()
+
+    # Attach Monika’s hooks
+    key_manager.on_all_keys_exhausted = lambda: on_sleeping("All OpenAI keys exhausted")
+    key_manager.on_key_recovered = lambda key: on_wake_up(f"Key {key[:8]} recovered")
+    print("---------------------------------------------------")
     print(f"just {bot.user.name}")
-    print("------")
+    print("---------------------------------------------------")
+    update_heartbeat()  # refresh on connect
 
     app_info = await bot.application_info()
     bot_owner = app_info.owner  # the bot’s registered owner (you)
@@ -764,8 +811,11 @@ async def on_ready():
     # ✅ Start idle tasks only AFTER wake-up finishes
     bot.loop.create_task(idlechat_loop())               # fire-and-forget
     idlechat_task = asyncio.create_task(monika_idle_conversation_task())  # keep handle
+    asyncio.create_task(periodic_rescan(6))
     bot.loop.create_task(monitor_event_loop())  # lag monitor
     bot.loop.create_task(periodic_cleanup())    # memory cleanup
+
+    key_manager.start_idle_rotator()
 
     if idle_chat_enabled or idlechat_loop() or monika_idle_conversation_task():
         return []
@@ -782,6 +832,15 @@ async def periodic_cleanup():
         print(f"[Perf] Memory cleaned. Current: {current} MB | Peak: {peak} MB")
         await asyncio.sleep(3600)  # run once per hour
 
+def update_heartbeat():
+    status_info["last_seen"] = time.time()
+
+async def heartbeat_task():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        update_heartbeat()
+        await asyncio.sleep(5)
+
 status_info = {
     "last_error": "None",
     "error_count": 0,
@@ -792,6 +851,16 @@ status_info = {
     "sleep_reason": "N/A",
     "wake_reason": "Started up"
 }
+
+async def watchdog():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        await asyncio.sleep(15)
+        now = time.time()
+        if now - status_info["last_seen"] > 15:
+            logging.warning("⚠️ Watchdog: Bot heartbeat stale (>15s). Keeping process alive...")
+        else:
+            logging.info("✅ Watchdog: Bot heartbeat OK")
 
 @bot.event
 async def on_command_error(ctx, error):
@@ -809,17 +878,7 @@ async def on_error(event, *args, **kwargs):
     await error_detector.report_error(bot, SETTINGS_CHAN, err_text, severity="Event Error")
     logging.error(f"⚠️ Error in event {event}:")
     logging.error(traceback.format_exc())
-
-async def run_bot_forever():
-    """Run bot forever without shutting down."""
-    while True:
-        try:
-            await bot.start(TOKEN)
-        except Exception as e:
-            logging.error(f"❌ Bot error: {e}")
-            logging.error(traceback.format_exc())
-            logging.info("🔄 Restarting bot loop in 10s...")
-            await asyncio.sleep(10)
+    logging.info("✅ Ignored, continuing...")
 
 report_stats = {
     "total": 0,
@@ -1303,6 +1362,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
 
 @bot.event
 async def setup_hook():
+    bot.loop.create_task(heartbeat_task())  # start heartbeat
     bot.loop.create_task(periodic_cleanup())
     bot.loop.create_task(monitor_event_loop())
     return
@@ -1373,10 +1433,12 @@ async def on_guild_leave(guild):
 @bot.event
 async def on_disconnect():
     await on_shutdown()
-    print(f"I have shutdown at [{timestamp}]")
 
 @bot.event
 async def on_shutdown():
+    await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game("shutting down..."))
+    print(f"I have shutdown at [{timestamp}]")
+    await asyncio.sleep(2)
     print("[Shutdown] Saving memory to channel...")
     asyncio.create_task(save_memory_to_channel())
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
@@ -1387,98 +1449,124 @@ async def on_sleeping(reason: str = "Taking a nap..."):
     """Triggered when the bot goes into sleep mode (no replies until wake)."""
     global idle_chat_enabled, idlechat_paused
 
-    try:
-        # 💤 Update status info
-        now = datetime.datetime.utcnow()
-        status_info.update({
-            "is_sleeping": True,
-            "last_sleep": now,
-            "sleep_reason": reason
-        })
-        bot.is_sleeping = True
-        idle_chat_enabled = False
-        idlechat_paused = True
+    status_info.update({
+        "is_sleeping": True,
+        "last_sleep": datetime.datetime.utcnow(),
+        "sleep_reason": reason
+    })
+    bot.is_sleeping = True
+    idle_chat_enabled = False
+    idlechat_paused = True
 
-        print(f"[Sleep] 😴 Entering sleep mode at {now.isoformat()} | Reason: {reason}")
+    print(f"[Sleep] 😴 Entering sleep mode. Reason: {reason}")
 
-        # Presence cycle (progression)
-        sleep_statuses = [
-            ("I'm going to take a nap...", 5),
-            ("💤 ZZZ... zzz... zzzz...", 7),
-            ("Dreaming about you...", 10)
-        ]
-        for text, delay in sleep_statuses:
-            await bot.change_presence(status=discord.Status.idle,
-                                      activity=discord.Game(text))
-            await asyncio.sleep(delay)
+    statuses = [
+        ("I'm going to take a nap...", 5),
+        ("💤 ZZZ... zzz... zzzz...", 7),
+        ("Dreaming about you...", 10),
+        ("Dreaming about you...(secretly editing my coding)", 3)
+    ]
+    for text, delay in statuses:
+        await bot.change_presence(status=discord.Status.idle,
+                                  activity=discord.Game(text))
+        await asyncio.sleep(delay)
 
-        # 📢 Notify the first available channel
-        status_channel = next(
-            (c for c in bot.get_all_channels()
-             if isinstance(c, discord.TextChannel)
-             and c.permissions_for(c.guild.me).send_messages),
-            None
-        )
-        if status_channel:
-            await status_channel.send(
-                f"😴 I'm going to sleep now.\n"
-                f"**Reason:** {reason}\n"
-                f"**Time (UTC):** {now.strftime('%Y-%m-%d %H:%M:%S')}"
-            )
-        else:
-            print("[Sleep] ℹ️ No available text channel to announce sleep.")
+    # Announce in first available channel
+    channel = next((c for c in bot.get_all_channels()
+                   if isinstance(c, discord.TextChannel)
+                   and c.permissions_for(c.guild.me).send_messages), None)
 
-    except Exception as e:
-        print(f"[Sleep] ⚠️ Error during sleep event: {e}")
+    if channel:
+        await channel.send(f"😴 The bot is now sleeping. Reason: **{reason}**")
+
+last_wakeup_date = None  
 
 async def on_wake_up(reason: str = "I'm back online!"):
-    global is_waking_up, wakeup_replies
+    global is_waking_up, last_wakeup_date, idle_chat_enabled
+
+    status_info.update({
+        "is_sleeping": False,
+        "last_wake": datetime.datetime.utcnow(),
+        "wake_reason": reason
+    })
     bot.is_sleeping = False
+
+    print(f"[Wake] 🌅 Waking up. Reason: {reason}")
     is_waking_up = True
+
+    today = datetime.date.today()
+
+    # Prevent multiple wakeups per day
+    if last_wakeup_date == today:
+        print("[Wakeup] Already sent a wakeup message today, skipping...")
+        return
+    last_wakeup_date = today
 
     print(f"[Wakeup] 🌅 Monika is waking up: {reason}")
 
     # Presence cycle
-    statuses = [("Waking up...", 3), ("Stretching...", 3), ("Getting dress...", 3), ("Ready to chat! 💚", 0)]
+    statuses = [
+        ("Waking up...", 3),
+        ("Stretching...", 3),
+        ("Getting dressed...", 3),
+        ("Ready to chat! 💚", 0),
+        ("Ready to chat!! 💚", 2),
+        ("Ready to chat!!! 💚", 2)
+    ]
     for text, delay in statuses:
         await bot.change_presence(status=discord.Status.online, activity=discord.Game(text))
         if delay > 0:
             await asyncio.sleep(delay)
 
-    wake_messages = [
-        "🌅 *yawns* Good Morning, @everyone! *Stretches* Are we ready for today?", 
+    # 🌅 Wake-up messages (pick one per day)
+    wakeup_lines = [
+        "🌅 *yawns* Good morning, everyone! *stretches* Ready for today?",
         "☀️ Rise and shine! Let’s make this day amazing 💚",
         "🌸 Good morning! I hope you slept well~",
         "💫 Time to wake up and chase our dreams together!",
         "🍵 Morning! Let’s share some tea and smiles~",
         "🌅 A brand new day, a brand new chance for us 💚",
-        "✨ Good morning, @everyone! Today feels special already.",
+        "✨ Good morning, everyone! Today feels special already.",
         "📖 Let’s write a wonderful story today together!",
         "🎶 Morning! *hums a little tune* I’m so glad to see you again.",
         "💚 Another beautiful morning with you all!"
     ]
-    wake_reply = random.choice(wake_messages)
 
-    # 🌅 Wake-up line (only one message)
+    # ✅ Send only one random message per guild
     for guild in bot.guilds:
-        channel = None
-        if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
-            channel = guild.system_channel
-        else:
-            for c in guild.text_channels:
-                if c.permissions_for(guild.me).send_messages:
-                    channel = c
-                    break
-        if channel:
-            try:
-                await channel.send(wake_reply)
-                print(f"[Wakeup] Sent wakeup message to {guild.name} ({guild.id})")
-                await asyncio.sleep(5)
-                idlechat_paused = False
-            except Exception as e:
-                print(f"[Wakeup Error] Could not send to {guild.name}: {e}")
+        wakeup_line = random.choice(wakeup_lines)
 
-    await asyncio.sleep(7)
+        target_channel = None
+
+        # First try: look for a preferred channel
+        for channel in guild.text_channels:
+            if not channel.permissions_for(guild.me).send_messages:
+                continue
+            if channel.name in OFF_LIMITS_CHANNELS:
+                continue
+            if channel.name in MON_CHANNEL_NAMES:
+                target_channel = channel
+                break
+
+        # Fallback: pick the first available channel if no preferred one found
+        if not target_channel:
+            for channel in guild.text_channels:
+                if not channel.permissions_for(guild.me).send_messages:
+                    continue
+                if channel.name in OFF_LIMITS_CHANNELS:
+                    continue
+                target_channel = channel
+                break
+
+        # Send to chosen channel
+        if target_channel:
+            try:
+                await target_channel.send(wakeup_line)
+                print(f"[Wakeup] Sent wakeup message to #{target_channel.name} in {guild.name}")
+            except Exception as e:
+                print(f"[Wakeup Error] Could not send to #{target_channel.name} in {guild.name}: {e}")
+
+    await asyncio.sleep(3)
     await bot.change_presence(activity=None)
 
     # ✅ Resume idle chat afterwards
@@ -1492,6 +1580,10 @@ async def on_wake_up(reason: str = "I'm back online!"):
 async def on_message(message: discord.Message):
     # 1. Safety checks
     if message.author.bot:
+        return
+    
+    global is_broadcasting
+    if is_broadcasting:
         return
     
     # Ignore other bots (unless they're "friend bots")
@@ -1838,6 +1930,11 @@ async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
 
 async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     """Handle DM messages safely (no mentions, DM-specific personality/relationship)."""
+    global is_broadcasting
+
+    if is_broadcasting:
+        return
+    
     user = message.author
     user_id = str(user.id)
 
@@ -1862,11 +1959,6 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
                 relationship = getattr(monika_traits, "get_relationship", lambda _: "Stranger")(user_id)
                 personality = server_personality_modes.get(str(g.id), ["Default"])
                 break
-
-    if is_broadcasting is True:
-        await message.send("please wait until the Announcement are done.")
-        message.delete(delay=2)
-        return
 
     # --- Build system prompt ---
     system_prompt = await generate_monika_system_prompt(
@@ -1934,7 +2026,10 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
             
 async def handle_guild_message(message: discord.Message, avatar_url: str):
     """Handle messages inside guilds with personality/relationship context."""
-    global last_reply_times
+    global last_reply_times, is_broadcasting
+
+    if is_broadcasting:
+        return
 
     guild = message.guild
     user_id = str(message.author.id)
@@ -1951,7 +2046,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
 
     # --- Track user ---
     try:
-        save_trackers()
+        await save_trackers()
     except FileNotFoundError:
         print("No backup files found yet.")
 
@@ -2000,11 +2095,6 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
         relationship_type=relationship_type,
         selected_modes=personality
     )
-
-    if is_broadcasting is True:
-        await message.send("please wait until the Announcement are done.")
-        message.delete(delay=2)
-        return
 
     # --- Conversation context (fixed: use get_monika_context) ---
     context_entries = await get_monika_context(message.channel, limit=20)
@@ -4160,6 +4250,20 @@ async def safe_add_reaction(msg: discord.Message, emoji: str):
     except discord.HTTPException:
         print(f"[Broadcast] ⚠️ Failed to add reaction {emoji} in {msg.guild.name}")
 
+async def has_announcement(channel, title: str, message: str, limit: int = 100) -> bool:
+    """Check recent channel history for an identical announcement embed."""
+    try:
+        async for msg in channel.history(limit=limit):
+            if not msg.embeds:
+                continue
+            embed = msg.embeds[0]
+            if embed.title == title and embed.description == message:
+                return True
+        return False
+    except Exception as e:
+        print(f"[Broadcast Scan Error] {e}")
+        return False
+
 async def reaction_set_autocomplete(
     interaction: discord.Interaction,
     current: str
@@ -4205,7 +4309,7 @@ async def broadcast(
 ):
     await interaction.response.defer(ephemeral=True)
 
-    global is_broadcasting, last_broadcast_guilds
+    global is_broadcasting
     user = interaction.user
 
     if user.id != OWNER_ID:
@@ -4216,21 +4320,10 @@ async def broadcast(
         await interaction.response.send_message("❌ A broadcast is already in progress.", ephemeral=True)
         return
     
-    wait_minutes = 5
+    wait_minutes = 3
     update_interval = 30
-
     is_broadcasting = True
     await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
-
-    await interaction.followup.send(
-        "✅ Broadcast finished.\n...",
-        ephemeral=True
-    )
-
-    # ✅ Reset broadcast flags
-    for gid in server_tracker.guilds:
-        server_tracker.guilds[gid]["last_broadcast"] = False
-    await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
     # --- Reaction sets ---
     available_sets = {
@@ -4242,10 +4335,9 @@ async def broadcast(
     else:
         reactions = available_sets.get(reaction_set, available_sets["default"])
 
-    # Show reaction set choice in console
     print(f"[Broadcast] Using reaction set ({reaction_set}): {' '.join(reactions)}")
 
-    # --- Embed ---
+    # --- Embed setup ---
     try:
         color_int = int(color_hex, 16)
         color = discord.Color(color_int)
@@ -4255,21 +4347,35 @@ async def broadcast(
     embed = discord.Embed(title=title, description=message, color=color)
     embed.set_footer(
         text="Pick your reaction to vote. Use /report for bugs, errors, or feedback. "
-             "Please wait until Monika finishes sharing this announcement."
+             "Please wait until I am finishes sharing this announcement."
     )
 
-    success_count, failure_count = 0, 0
+    success_count, failure_count, skip_count = 0, 0, 0
     sent_messages = []
+    announcement_id = f"{title}:{message}"
 
-    # --- Warning message first ---
+    # --- Step 1: Find servers that should get this announcement ---
+    servers_to_announce = []
     for guild in bot.guilds:
         gid = str(guild.id)
         server_tracker.ensure_guild(gid)
 
-        # Skip if already broadcasted
-        if server_tracker.guilds[gid].get("last_broadcast", False):
+        # ✅ Skip if already broadcasted within 24 hours
+        last_time = server_tracker.guilds[gid].get("last_broadcast_time")
+        if last_time:
+            last_dt = datetime.datetime.fromisoformat(last_time)
+            if (datetime.datetime.utcnow() - last_dt).total_seconds() < 86400:
+                print(f"[Broadcast] ⏭ Skipping {guild.name}, announced in last 24h")
+                skip_count += 1
+                continue
+
+        # ✅ Skip if announcement already logged
+        if announcement_id in server_tracker.guilds[gid].get("announcements", []):
+            print(f"[Broadcast] ⏭ Skipping {guild.name}, already logged")
+            skip_count += 1
             continue
 
+        # ✅ Find usable channel
         channel = None
         if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
             channel = guild.system_channel
@@ -4284,35 +4390,29 @@ async def broadcast(
             failure_count += 1
             continue
 
+        servers_to_announce.append((guild, gid, channel))
+
+    # --- Step 2: Send warning message ---
+    confirmed_servers = []
+    for guild, gid, channel in servers_to_announce:
         try:
             await channel.send("⚠️ **Attention everyone!** An announcement will begin shortly. Please stand by...")
-            success_count += 1
+
+            # Log immediately (prevents dupes on crash)
+            server_tracker.guilds[gid].setdefault("announcements", [])
+            server_tracker.guilds[gid]["announcements"].append(announcement_id)
+            server_tracker.guilds[gid]["last_broadcast_time"] = datetime.datetime.utcnow().isoformat()
+            await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+            confirmed_servers.append((guild, gid, channel))
         except Exception as e:
             print(f"[Broadcast Warning Error] in {guild.name}: {e}")
             failure_count += 1
 
-    await asyncio.sleep(15)  # wait before sending announcements  # wait before sending the actual announcement
+    await asyncio.sleep(10)
 
-    for guild in bot.guilds:
-        gid = str(guild.id)
-        server_tracker.ensure_guild(gid)
-        if server_tracker.guilds[gid].get("last_broadcast", False):
-            continue
-
-        channel = None
-        if guild.system_channel and guild.system_channel.permissions_for(guild.me).send_messages:
-            channel = guild.system_channel
-        else:
-            for c in guild.text_channels:
-                if c.permissions_for(guild.me).send_messages:
-                    channel = c
-                    break
-
-        if not channel:
-            print(f"[Broadcast] ❌ No available channel in {guild.name} ({guild.id})")
-            failure_count += 1
-            continue
-
+    # --- Step 3: Send the actual announcement ---
+    for guild, gid, channel in confirmed_servers:
         try:
             msg = await channel.send(embed=embed)
             for r in reactions:
@@ -4321,50 +4421,40 @@ async def broadcast(
             progress = await channel.send("⏳ Collecting reactions...")
             sent_messages.append((msg, progress))
 
-            server_tracker.guilds[gid]["last_broadcast"] = True
-            await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
-
             print(f"[Broadcast] ✅ Sent to {guild.name} in #{channel.name}")
             success_count += 1
-            await asyncio.sleep(0.2)  # faster than 0.5
+            await asyncio.sleep(0.2)
         except Exception as e:
             print(f"[Broadcast Error] in {guild.name}: {e}")
             failure_count += 1
 
-    # --- Collect votes for a short time ---
+    # --- Step 4: Collect votes ---
     await asyncio.sleep(60)
-
     elapsed = 0
     while elapsed < wait_minutes * 60:
         for orig, progress in sent_messages:
             try:
                 refreshed = await orig.channel.fetch_message(orig.id)
-
                 counts = {}
                 for reaction in refreshed.reactions:
                     emoji = str(reaction.emoji)
                     users = [u async for u in reaction.users() if u.id != bot.user.id]
                     counts[emoji] = len(users)
-
                 result_line = " | ".join([f"{emoji} {count}" for emoji, count in counts.items()])
                 await progress.edit(content=f"{result_line} (updating...)")
-
             except Exception as e:
                 print(f"[Broadcast Update Error] {e}")
 
         await asyncio.sleep(update_interval)
         elapsed += update_interval
 
-    # --- Final pass ---
-    like_total = 0
-    dislike_total = 0
-    maybe_total = 0
+    # --- Step 5: Final pass ---
+    like_total, dislike_total, maybe_total = 0, 0, 0
     custom_totals = {}
 
     for orig, progress in sent_messages:
         try:
             refreshed = await orig.channel.fetch_message(orig.id)
-
             counts = {}
             for reaction in refreshed.reactions:
                 emoji = str(reaction.emoji)
@@ -4375,47 +4465,52 @@ async def broadcast(
             await progress.edit(content=f"{result_line} (final)")
 
             if reaction_set == "default":
-                if "✅" in counts:
-                    like_total += counts["✅"]
-                if "❌" in counts:
-                    dislike_total += counts["❌"]
-
-            if reaction_set == "poll":
-                if "👍" in counts:
-                    like_total += counts["👍"]
-                if "👎" in counts:
-                    dislike_total += counts["👎"]
-                if "🤔" in counts:
-                    maybe_total += counts["🤔"]
-
-            if reaction_set == "custom" and reactions:
+                like_total += counts.get("✅", 0)
+                dislike_total += counts.get("❌", 0)
+            elif reaction_set == "poll":
+                like_total += counts.get("👍", 0)
+                dislike_total += counts.get("👎", 0)
+                maybe_total += counts.get("🤔", 0)
+            elif reaction_set == "custom":
                 for emoji in reactions:
-                    if emoji in counts:
-                        custom_totals[emoji] = custom_totals.get(emoji, 0) + counts[emoji]
-
+                    custom_totals[emoji] = custom_totals.get(emoji, 0) + counts.get(emoji, 0)
         except Exception as e:
             print(f"[Broadcast Fetch Error] {e}")
 
-    summary_lines = [
-        f"✅ Likes: **{like_total}**",
-        f"❌ Dislikes: **{dislike_total}**"
-    ]
+    # --- Step 6: Build summary ---
+    if reaction_set == "default":
+        summary_lines = [f"✅ Likes: **{like_total}**", f"❌ Dislikes: **{dislike_total}**"]
+    elif reaction_set == "poll":
+        summary_lines = [
+            f"👍 Likes: **{like_total}**",
+            f"👎 Dislikes: **{dislike_total}**",
+            f"🤔 Maybe: **{maybe_total}**"
+        ]
+    else:
+        summary_lines = [f"{emoji}: **{total}**" for emoji, total in custom_totals.items()]
 
-    if reaction_set == "poll":
-        summary_lines.append(f"🤔 Maybe: **{maybe_total}**")
-
-    if reaction_set == "custom":
-        for emoji, total in custom_totals.items():
-            summary_lines.append(f"{emoji}: **{total}**")
-
-        # Final owner summary
-    await interaction.followup.send(
-        f"✅ Broadcast finished.\n"
-        f"Sent successfully to **{success_count}** servers.\n"
-        f"⚠️ Failed in **{failure_count}** servers.\n\n"
-        + "\n".join(summary_lines),
-        ephemeral=True
-    )
+    # --- Step 7: Final owner summary ---
+    if success_count == 0 and skip_count > 0:
+        await interaction.followup.send(
+            "⚠️ No new announcements were sent.\n"
+            f"Reason: All servers already had this announcement ({skip_count} skipped).",
+            ephemeral=True
+        )
+    elif success_count == 0 and failure_count > 0:
+        await interaction.followup.send(
+            f"❌ Broadcast failed in all servers.\n"
+            f"Failures: **{failure_count}**",
+            ephemeral=True
+        )
+    else:
+        await interaction.followup.send(
+            f"✅ Broadcast finished.\n"
+            f"Sent successfully to **{success_count}** servers.\n"
+            f"⚠️ Failed in **{failure_count}** servers.\n"
+            f"⏭ Skipped **{skip_count}** servers (already had this announcement).\n\n"
+            + "\n".join(summary_lines),
+            ephemeral=True
+        )
 
     is_broadcasting = False
     await bot.change_presence(activity=None)
@@ -4706,11 +4801,22 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
         # Failsafe if even error handler blows up
         print(f"[TreeErrorHandler] Failed to handle error: {handler_err}")
 
-keepalive.keep_alive()
-asyncio.run(run_bot_forever())
 async def main():
-    await bot.start(TOKEN, reconnect=True)
+    """Main bot runner with reconnect support."""
+    while True:
+        try:
+            await bot.start(TOKEN, reconnect=True)
+        except BaseException:
+            print("⚠️ Bot crashed, restarting in 10s")
+            traceback.print_exc()
+            await asyncio.sleep(10)  # wait before restarting
 
 if __name__ == "__main__":
-    asyncio.get_event_loop().run_until_complete(main())
-
+    keepalive.keep_alive()  # start keepalive Flask
+    while True:
+        try:
+            asyncio.run(main())  # run bot forever
+        except BaseException:
+            print("⚠️ Fatal asyncio error, restarting in 10s")
+            traceback.print_exc()
+            time.sleep(10)
