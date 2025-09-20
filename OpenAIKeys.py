@@ -146,7 +146,7 @@ class OpenAIKeyManager:
 
 # ---------------- Safe call helper ---------------- #
 
-async def safe_call(manager: OpenAIKeyManager, fn, retries=20, global_cooldown=60):
+async def openai_safe_call(manager: OpenAIKeyManager, fn, retries=20, global_cooldown=60):
     last_exc = None
     delay = 2  # backoff start
 
