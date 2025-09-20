@@ -158,6 +158,14 @@ class UserTracker:
         user_data = self.users.get(user_id, {})
         return user_data.get("relationship", "Stranger")
 
+    def set_language(self, user_id: str, lang_code: str):
+        if user_id not in self.users:
+            self.users[user_id] = {}
+        self.users[user_id]["language"] = lang_code
+
+    def get_language(self, user_id: str) -> str:
+        return self.users.get(user_id, {}).get("language", "en")
+
     def set_nickname(self, user_id: str, nickname: str):
         if user_id not in self.users:
             self.users[user_id] = {}
