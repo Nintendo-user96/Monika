@@ -108,7 +108,15 @@ async def call_openai_with_retries(user, relationship, personality, conversation
     # If all models failed
     print("[OpenAI] ❌ All models failed, returning None.")
     return None
+# ==============================
+# Discord Setup
+# ==============================
+intents = discord.Intents.all()
+bot = commands.Bot(command_prefix="/", intents=intents)
 
+# ==============================
+# Environment Variables
+# ==============================
 TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
 MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHANNEL_ID", 0))
@@ -125,8 +133,14 @@ DM_LOGS_CHAN = int(os.getenv("DM_LOGS_CHANNEL", "0"))
 AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
 SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))
 
-intents = discord.Intents.all()
-bot = commands.Bot(command_prefix="/", intents=intents)
+OWNER_ID = int(os.getenv("OWNER_ID", "709957376337248367"))
+
+SAYORI = os.getenv("SAYORI_ID", "1375064525396775004")
+NATSUKI = os.getenv("NATSUKI_ID", "1375065750502379631")
+YURI = os.getenv("YURI_ID", "1375066975423955025")
+MC = os.getenv("MC_ID", "1375070168895590430")
+
+FRIENDS = [SAYORI, NATSUKI, YURI, MC]
 
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
@@ -191,15 +205,6 @@ user_talk_times = {}
 
 bot.is_sleeping = False
 
-OWNER_ID = int(os.getenv("OWNER_ID", "709957376337248367"))
-
-SAYORI = os.getenv("SAYORI_ID", "1375064525396775004")
-NATSUKI = os.getenv("NATSUKI_ID", "1375065750502379631")
-YURI = os.getenv("YURI_ID", "1375066975423955025")
-MC = os.getenv("MC_ID", "1375070168895590430")
-
-FRIENDS = [SAYORI, NATSUKI, YURI, MC]
-
 PERSONALITY_MODES = monika_traits.personality_modes
 
 def SERVER_PERSONALITY_MODES(guild_id: str, modes: list[str] = None):
@@ -249,31 +254,34 @@ error_messages = [
     "Sorry, there has been a glitch with in the error."
 ]
 
-def clean_monika_reply(text: str, bot_user: discord.User, user_obj: discord.User = None) -> str:
+from functools import lru_cache
+from typing import Optional, Union, List, Dict
+
+# ---------- Reply cleaning ----------
+def clean_monika_reply(text: str, bot_user: discord.User, user_obj: Optional[discord.User] = None) -> str:
     """
     Cleans Monika's reply to:
     - Remove Discord mentions like <@123>, <@!123>, <#123>, <@&123>
     - Replace placeholders like {{user}}, {{bot}}, nobody
-    - Normalize whitespace & punctuation
+    - Normalize whitespace & trailing punctuation
     """
-
     if not text:
         return ""
 
-    # 1️⃣ Remove ALL Discord mentions
+    # Remove mentions and channel/role markers
     text = re.sub(r"<@!?[0-9]+>", "", text)   # user mentions
     text = re.sub(r"<#[0-9]+>", "", text)     # channel mentions
     text = re.sub(r"<@&[0-9]+>", "", text)    # role mentions
 
-    # 2️⃣ Replace placeholders safely
+    # Resolve display names if provided
     user_name = None
     if user_obj:
-        if hasattr(user_obj, "display_name"):
-            user_name = user_obj.display_name
-        else:
+        try:
+            user_name = getattr(user_obj, "display_name", str(user_obj))
+        except Exception:
             user_name = str(user_obj)
 
-    bot_name = bot_user.display_name if hasattr(bot_user, "display_name") else str(bot_user)
+    bot_name = getattr(bot_user, "display_name", str(bot_user))
 
     replacements = {
         "{{user}}": user_name or "",
@@ -285,62 +293,63 @@ def clean_monika_reply(text: str, bot_user: discord.User, user_obj: discord.User
         if value:
             text = text.replace(key, value)
 
-    # 3️⃣ Clean up any leftover double spaces, punctuation at edges
+    # Normalize spacing and strip stray punctuation at ends
     text = re.sub(r"\s{2,}", " ", text)
-    text = text.strip(" \t\r\n,.!?;:")
+    text = text.strip(" \t\r\n")
+    # Avoid trimming all punctuation inside — just remove odd leading/trailing punctuation
+    text = text.strip(".,!?;:")
 
     return text
 
+# ---------- Friend-bot check ----------
 def is_friend_bot(message: discord.Message) -> bool:
     """
     True if the author is a bot in FRIENDS.
-    Excludes this bot itself. Works in guilds and DMs.
+    Excludes this bot itself.
     """
-    # Not a bot? Not a friend bot.
     if not getattr(message.author, "bot", False):
         return False
-    
-    me = getattr(getattr(message, "guild", None), "me", None)
-    if me and message.author.id == me.id:
-        return False
 
-    # Exclude this bot (Monika) herself
-    # bot.user is available in both guilds and DMs after on_ready
+    # If this bot isn't ready, skip self-check
     try:
-        if message.author.id == bot.user.id:
+        if bot.user and message.author.id == bot.user.id:
             return False
     except Exception:
-        # In rare startup edge-cases if bot.user isn't ready yet, just skip the self-check
         pass
 
-    # Finally, check your allowlist
-    return message.author.id in FRIENDS
+    try:
+        return str(message.author.id) in FRIENDS or message.author.id in map(int, FRIENDS)
+    except Exception:
+        # If FRIENDS contains non-int values, gracefully fallback
+        return str(message.author.id) in FRIENDS
 
-def get_time_based_outfit():
+# ---------- Time-based outfit ----------
+def get_time_based_outfit() -> str:
+    """Return a preferred outfit string based on UTC time & weekday heuristics."""
     now = datetime.datetime.utcnow()
     hour = now.hour
-    today = datetime.datetime.utcnow().date()
+    today = now.date()
     weekday = now.weekday()  # Monday=0, Sunday=6
 
-    # 🎉 Weekend override (Sat=5, Sun=6)
+    # Weekend override
     if weekday in (5, 6):
-        random.seed(str(now.date()))  # ensures same choice all day
+        random.seed(str(now.date()))
         return random.choice(["casual 1", "casual 2", "casual 3"])
 
-    # 🌞 Morning/School
+    # Morning/School
     if 6 <= hour < 15:
         return "school uniform"
 
-    # 🌆 Evening casual (stick to one per day)
+    # Evening casual
     if 15 <= hour < 20:
         random.seed(str(today))
         return random.choice(["casual 1", "casual 2", "casual 3"])
 
-    # 🌙 Nighttime
+    # Night
     return "pajamas"
 
-from typing import Optional, Union
-def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User", int, str] = None) -> Optional[str]:
+# ---------- Pronoun detection ----------
+def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User", int, str, None] = None) -> Optional[str]:
     """
     Detect pronouns from a user's display/global name.
     Accepts Member/User objects or a user id (int/str).
@@ -358,28 +367,37 @@ def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User",
         uid = str(member)
 
         # 1) Check saved first
-        if hasattr(user_tracker, "get_pronouns"):
-            saved = user_tracker.get_pronouns(uid)
-            if saved:
-                return saved
+        try:
+            if hasattr(user_tracker, "get_pronouns"):
+                saved = user_tracker.get_pronouns(uid)
+                if saved:
+                    return saved
+        except Exception:
+            pass
 
         # 2) Try to resolve to a Member/User object
         try:
             lookup_id = int(uid)
             for g in bot.guilds:
-                m = g.get_member(lookup_id)
-                if m:
-                    member_obj = m
-                    break
+                try:
+                    m = g.get_member(lookup_id)
+                    if m:
+                        member_obj = m
+                        break
+                except Exception:
+                    continue
             if not member_obj:
-                member_obj = bot.get_user(lookup_id)
+                try:
+                    member_obj = bot.get_user(lookup_id)
+                except Exception:
+                    member_obj = None
         except Exception:
             member_obj = None
     else:
         # Already an object
         member_obj = member
         try:
-            uid = str(member.id)
+            uid = str(member_obj.id)
             if hasattr(user_tracker, "get_pronouns"):
                 saved = user_tracker.get_pronouns(uid)
                 if saved:
@@ -392,16 +410,19 @@ def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User",
 
     # Collect candidate strings
     name_candidates = []
-    if hasattr(member_obj, "display_name"):
-        name_candidates.append(member_obj.display_name)
-    if hasattr(member_obj, "global_name"):
-        name_candidates.append(getattr(member_obj, "global_name") or "")
-    if hasattr(member_obj, "name"):
-        name_candidates.append(member_obj.name)
-    if hasattr(member_obj, "username"):
-        name_candidates.append(getattr(member_obj, "username") or "")
+    try:
+        if hasattr(member_obj, "display_name"):
+            name_candidates.append(getattr(member_obj, "display_name") or "")
+        if hasattr(member_obj, "global_name"):
+            name_candidates.append(getattr(member_obj, "global_name") or "")
+        if hasattr(member_obj, "name"):
+            name_candidates.append(getattr(member_obj, "name") or "")
+        if hasattr(member_obj, "username"):
+            name_candidates.append(getattr(member_obj, "username") or "")
+    except Exception:
+        pass
 
-    # Pronoun sets
+    # Pronoun sets (expandable)
     pronoun_sets = [
         "he/him", "she/her", "they/them",
         "he/they", "she/they", "they/he", "they/she",
@@ -411,7 +432,7 @@ def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User",
     ]
 
     # Build regexes
-    patterns = {}
+    patterns: Dict[str, re.Pattern] = {}
     for p in pronoun_sets:
         parts = p.split("/")
         sep = r"(?:\s*/\s*|\s*\|\s*|\s+)"
@@ -441,26 +462,31 @@ def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User",
 
     return found
 
-async def monika_languages_system_prompt(user: discord.User = None, message: discord.Message = None):
-    from langdetect import detect
+# ---------- Language detection & system prompt ----------
+async def monika_languages_system_prompt(user: Optional[discord.User] = None, message: Optional[discord.Message] = None) -> str:
     """
     Detects the user's preferred language (from Discord or recent message)
-    and generates a system prompt so Monika speaks naturally in that language.
+    and generates a short system instruction so Monika speaks naturally in that language.
     """
-
-    # --- Step 1: Default to English
+    # Default to English
     language = "English"
 
-    # --- Step 2: Check Discord user locale if available
-    if hasattr(user, "locale") and user.locale:
-        language = user.locale
-    elif message and message.content:
-        try:
-            language = detect(message.content)
-        except Exception:
-            language = "English"
+    # Discord locale if available
+    try:
+        if user and hasattr(user, "locale") and user.locale:
+            language = user.locale
+    except Exception:
+        pass
 
-    # --- Step 3: Normalize common codes -> readable names
+    # Try detect from message content (langdetect may throw on short text)
+    if (not language or language == "English") and message and getattr(message, "content", ""):
+        try:
+            from langdetect import detect
+            detected = detect(message.content)
+            language = detected or language
+        except Exception:
+            language = language
+
     language_map = {
         "en": "English",
         "es": "Spanish",
@@ -474,9 +500,8 @@ async def monika_languages_system_prompt(user: discord.User = None, message: dis
         "zh-cn": "Simplified Chinese",
         "zh-tw": "Traditional Chinese"
     }
-    language_name = language_map.get(language.lower(), language.capitalize())
+    language_name = language_map.get(str(language).lower(), str(language).capitalize())
 
-    # --- Step 4: Return a system instruction
     return (
         f"Always respond in **{language_name}**. "
         "Monika is fluent in this language and expresses herself naturally, "
@@ -485,16 +510,20 @@ async def monika_languages_system_prompt(user: discord.User = None, message: dis
         "Stay fully in character as Monika while using this language."
     )
 
+# ---------- Translation helper (single definition) ----------
 def translate_to_english(text: str) -> str:
-    from deep_translator import GoogleTranslator
+    """
+    Translate text into English using deep_translator; if it fails, return original.
+    (Defined once; duplicate removed.)
+    """
     try:
+        from deep_translator import GoogleTranslator
         return GoogleTranslator(source='auto', target='en').translate(text)
     except Exception as e:
         print(f"[Translation] Failed to translate: {e}")
         return text
 
-from functools import lru_cache
-
+# ---------- Base prompt caching ----------
 @lru_cache(maxsize=1000)
 def get_base_prompt(is_group: bool) -> str:
     if is_group:
@@ -512,16 +541,18 @@ def get_base_prompt(is_group: bool) -> str:
             "You never admit fictionality, but hint subtly at deeper awareness."
         )
 
+# ---------- System prompt builder ----------
 async def generate_monika_system_prompt(
-    guild: discord.Guild = None,
-    user: discord.User = None,
-    message: discord.Message = None,
+    guild: Optional[discord.Guild] = None,
+    user: Optional[discord.User] = None,
+    message: Optional[discord.Message] = None,
     is_friend_context: bool = False,
-    relationship_type: str = None,
-    selected_modes: list = None
-):
-    """Build Monika's system prompt efficiently with caching + dynamic inserts."""
-
+    relationship_type: Optional[str] = None,
+    selected_modes: Optional[List[str]] = None
+) -> str:
+    """
+    Build Monika's system prompt with personality, relationship, pronouns, memory & language.
+    """
     base_description = get_base_prompt(is_friend_context)
 
     # Personality
@@ -530,27 +561,36 @@ async def generate_monika_system_prompt(
 
     # Relationship
     relationship_desc = "She acts casually with no special attachment."
-    if relationship_type and relationship_type in monika_traits.relationship_modes:
-        relationship_desc = monika_traits.relationship_modes[relationship_type]
+    try:
+        if relationship_type and relationship_type in monika_traits.relationship_modes:
+            relationship_desc = monika_traits.relationship_modes[relationship_type]
+    except Exception:
+        pass
     dynamic_relationship = f"Her relationship with the user is **{relationship_type or 'Stranger'}**: {relationship_desc}"
 
     # Pronouns
     pronoun_desc = ""
-    if user:
-        pronouns = detect_pronouns_from_profile(member=user)
-        if pronouns:
-            pronoun_desc = f"The user prefers pronouns **{pronouns}**."
-        else:
-            pronoun_desc = "The user’s pronouns are unknown — use neutral phrasing."
+    try:
+        if user:
+            pronouns = detect_pronouns_from_profile(member=user)
+            if pronouns:
+                pronoun_desc = f"The user prefers pronouns **{pronouns}**."
+            else:
+                pronoun_desc = "The user’s pronouns are unknown — use neutral phrasing."
+    except Exception:
+        pronoun_desc = "The user’s pronouns are unknown — use neutral phrasing."
 
     # Memory awareness
     memory_desc = ""
-    if user:
-        user_data = user_tracker.get_user_data(str(user.id))
-        if user_data and user_data.get("last_seen"):
-            memory_desc = f"You last interacted with this user on **{user_data['last_seen']}**."
-        else:
-            memory_desc = "This feels like a new interaction; act with curiosity."
+    try:
+        if user:
+            user_data = user_tracker.get_user_data(str(user.id))
+            if user_data and user_data.get("last_seen"):
+                memory_desc = f"You last interacted with this user on **{user_data['last_seen']}**."
+            else:
+                memory_desc = "This feels like a new interaction; act with curiosity."
+    except Exception:
+        memory_desc = "This feels like a new interaction; act with curiosity."
 
     # Language awareness
     language_desc = await monika_languages_system_prompt(user=user, message=message)
@@ -564,39 +604,48 @@ async def generate_monika_system_prompt(
         language_desc
     ]))
 
-async def detect_server_user_roles(bot, guild, user, user_tracker=None):
+# ---------- Server/user role detection ----------
+async def detect_server_user_roles(bot_ref: commands.Bot, guild: Optional[discord.Guild], user: discord.User, user_tracker_ref: Optional[UserTracker] = None):
     """
     Detects relationship and personality roles for a user.
     Works across servers and in DMs by checking stored memory.
+    Returns (relationship_role, personality_role)
     """
-
     relationship_role = None
     personality_role = None
 
-    # --- Case 1: In a server ---
+    # Case 1: In a server
     if guild:
-        member = guild.get_member(user.id)
-        if member:
-            for role in member.roles:
-                if role.name.startswith("Relationship - "):
-                    relationship_role = role.name.replace("Relationship - ", "").strip()
-                elif role.name.startswith("Personality - "):
-                    personality_role = role.name.replace("Personality - ", "").strip()
+        try:
+            member = guild.get_member(user.id)
+            if member:
+                for role in member.roles:
+                    try:
+                        if role.name.startswith("Relationship - "):
+                            relationship_role = role.name.replace("Relationship - ", "").strip()
+                        elif role.name.startswith("Personality - "):
+                            personality_role = role.name.replace("Personality - ", "").strip()
+                    except Exception:
+                        continue
+        except Exception:
+            pass
 
-    # --- Case 2: No guild (DMs) OR no roles found ---
-    if not relationship_role or not personality_role:
-        if user_tracker:
-            # Look up last saved data from user memory
-            user_data = user_tracker.get_user_data(str(user.id))
+    # Case 2: check user tracker
+    try:
+        if (not relationship_role or not personality_role) and user_tracker_ref:
+            user_data = user_tracker_ref.get_user_data(str(user.id))
             if user_data:
                 if not relationship_role:
                     relationship_role = user_data.get("relationship")
                 if not personality_role:
                     personality_role = user_data.get("personality")
+    except Exception:
+        pass
 
-        # As fallback: search all servers bot is in
-        if not relationship_role or not personality_role:
-            for g in bot.guilds:
+    # Fallback: scan guilds for roles
+    if (not relationship_role or not personality_role):
+        for g in bot_ref.guilds:
+            try:
                 member = g.get_member(user.id)
                 if member:
                     for role in member.roles:
@@ -606,12 +655,18 @@ async def detect_server_user_roles(bot, guild, user, user_tracker=None):
                             personality_role = role.name.replace("Personality - ", "").strip()
                     if relationship_role or personality_role:
                         break
+            except Exception:
+                continue
 
     return relationship_role, personality_role
 
-def get_all_outfit():
+# ---------- Outfit enumeration ----------
+def get_all_outfit() -> List[str]:
     outfit_set = set()
-    outfit_set.update(SPRITES.keys())
+    try:
+        outfit_set.update(SPRITES.keys())
+    except Exception:
+        pass
     return sorted(outfit_set)
 
 # Track last idlechat per (guild, channel or DM)
@@ -725,6 +780,7 @@ async def on_ready():
     print(f"just {bot.user.name}")
     print("---------------------------------------------------")
     update_heartbeat()  # refresh on connect
+    await error_detector.send_scan_results(bot)
 
     app_info = await bot.application_info()
     bot_owner = app_info.owner  # the bot’s registered owner (you)
@@ -793,27 +849,23 @@ async def on_ready():
                 user_tracker.set_relationship(member.id, None)
 
     try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} slash commands.")
+        await bot.tree.sync()
+        logger.info("✅ Slash commands synced.")
+
+        await on_startup()
+        logger.info("✅ Memory restored.")
+
+        logger.info(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+        logger.info(f"✅ Connected to {len(bot.guilds)} guilds, {len(bot.users)} users.")
+
+        # Background tasks
+        asyncio.create_task(periodic_rescan())
+        asyncio.create_task(monitor_event_loop())
+        asyncio.create_task(cleanup_memory())
+        asyncio.create_task(background_task())
+
     except Exception as e:
-        print(e)
-
-    log_channel = bot.get_channel(SETTINGS_CHAN)
-    if log_channel:
-        try:
-            await log_channel.send("✅ I have started back up!")
-        except Exception as e:
-            print(f"[Startup Message Error] {e}")
-
-    # Run the wake-up flow first
-    await on_wake_up("Startup complete")
-
-    # ✅ Start idle tasks only AFTER wake-up finishes
-    bot.loop.create_task(idlechat_loop())               # fire-and-forget
-    idlechat_task = asyncio.create_task(monika_idle_conversation_task())  # keep handle
-    asyncio.create_task(periodic_rescan(6))
-    bot.loop.create_task(monitor_event_loop())  # lag monitor
-    bot.loop.create_task(periodic_cleanup())    # memory cleanup
+        logger.exception(f"[on_ready] Failed: {e}")
 
     key_manager.start_idle_rotator()
 
@@ -867,7 +919,7 @@ async def on_command_error(ctx, error):
     err_text = f"[COMMAND ERROR] {ctx.command} by {ctx.author}: {error}"
     status_info["last_error"] = err_text
     status_info["error_count"] += 1
-    await error_detector.report_error(bot, SETTINGS_CHAN, err_text, severity="Command Error")
+    await error_detector.report_error(bot, error_detector.SETTINGS_CHAN, str(error), "Command Error")
     await ctx.send("⚠️ Something went wrong! (error logged)")
 
 @bot.event
@@ -875,7 +927,7 @@ async def on_error(event, *args, **kwargs):
     err_text = f"[EVENT ERROR] {event}: {traceback.format_exc()}"
     status_info["last_error"] = err_text
     status_info["error_count"] += 1
-    await error_detector.report_error(bot, SETTINGS_CHAN, err_text, severity="Event Error")
+    await error_detector.report_error(bot, error_detector.SETTINGS_CHAN, err_text, "Error")
     logging.error(f"⚠️ Error in event {event}:")
     logging.error(traceback.format_exc())
     logging.info("✅ Ignored, continuing...")
@@ -918,25 +970,27 @@ async def on_report(report_entry: dict):
         f"💡 {report_stats['ideas']} | ❗ {report_stats['complaints']} | 📝 {report_stats['other']}"
     )
 
-def get_memory_channel():
+def get_memory_channel() -> Optional[discord.TextChannel]:
+    """Return the memory channel object if configured."""
     return bot.get_channel(MEMORY_CHAN_ID)
 
 async def load_memory_from_channel():
+    """Load memory history from the designated memory channel."""
     channel = get_memory_channel()
     if not channel:
         return
     try:
-        await memory.load_history(bot, channel.id)  # just once
+        await memory.load_history(bot, channel.id)
     except Exception as e:
-        print(f"[Load Error] {e}")
+        print(f"[Memory] Load Error: {e}")
 
 async def save_memory_to_channel(batch_size: int = 10):
-    """Save memory entries to channel in efficient batches."""
+    """Save memory entries to the memory channel in efficient batches."""
     channel = get_memory_channel()
     if not channel:
         return
 
-    buffer = []
+    buffer: list[str] = []
     try:
         for guild_id, guild_data in memory.data.items():
             for channel_id, users in guild_data.items():
@@ -944,37 +998,37 @@ async def save_memory_to_channel(batch_size: int = 10):
                     for entry in entries:
                         emotion = entry.get("emotion", "neutral")
                         log = (
-                            f"[{entry['timestamp']}] | Server: {entry['guild_name']} ({entry['guild_id']}) | "
+                            f"[{entry['timestamp']}] | "
+                            f"Server: {entry['guild_name']} ({entry['guild_id']}) | "
                             f"Channel: {entry['channel_name']} ({entry['channel_id']}) | "
                             f"User: {entry['username']} ({entry['user_id']}) | "
                             f"Role: {entry['role']} | {entry['content']} | {emotion}"
                         )
                         buffer.append(log)
 
-                        # ✅ Send in batches
                         if len(buffer) >= batch_size:
                             await channel.send("\n".join(buffer))
                             buffer.clear()
-                            await asyncio.sleep(0.5)  # safe pacing
+                            await asyncio.sleep(0.5)
 
         if buffer:
             await channel.send("\n".join(buffer))
-    except Exception:
-        logger.exception("[Memory] Failed to save memory")
 
-async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20):
+    except Exception as e:
+        logger.exception(f"[Memory] Failed to save memory: {e}")
+
+async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20) -> list[dict]:
     """
     Fetch recent conversation context for Monika.
-    Improvements:
+
     - Includes Monika’s messages, user messages, friend bots, and mentions.
-    - Detects relationship & personality roles more robustly.
-    - Detects pronouns if available in memory.
-    - Includes "creator" tag if user is the OWNER_ID or has Creator role.
-    - Adds attachments with friendly markers.
-    - Skips system messages, join/leave, and empty chatter.
-    - Returns newest 'limit' entries as a list (oldest → newest).
+    - Detects relationship & personality roles.
+    - Detects pronouns from memory.
+    - Adds Creator tag if applicable.
+    - Includes attachments with friendly markers.
+    - Returns newest 'limit' entries (oldest → newest).
     """
-    context = []
+    context: list[dict] = []
     guild = getattr(channel, "guild", None)
     monika_member = getattr(guild, "me", None) if guild else None
 
@@ -993,8 +1047,6 @@ async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20):
                 "content": message.content or "",
                 "timestamp": message.created_at.isoformat(),
             }
-
-            # Personality + relationship tags
             if guild:
                 for role in monika_member.roles:
                     if role.name.startswith("Personality - "):
@@ -1018,27 +1070,26 @@ async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20):
             if guild:
                 member = guild.get_member(message.author.id)
                 if member:
-                    # Relationship roles with Monika
+                    # Relationship roles
                     rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
                     if rel_roles:
                         relationship_tag = rel_roles[0].name.replace(f"{bot.user.name} - ", "").strip()
 
-                    # Personality role detection (if any)
+                    # Personality roles
                     per_roles = [r for r in member.roles if r.name.startswith("Personality - ")]
                     if per_roles:
                         personality_tag = per_roles[0].name.replace("Personality - ", "").strip()
 
-                    # Creator detection
+                    # Creator role
                     creator_role = discord.utils.get(guild.roles, name=f"Creator of {bot.user.name}")
                     if creator_role and creator_role in member.roles:
                         creator_tag = "Creator"
 
-            # Pronoun awareness (from tracker memory)
+            # Pronouns from tracker
             user_data = user_tracker.get_user_data(str(message.author.id))
             if user_data and user_data.get("pronouns"):
                 pronoun_tag = user_data["pronouns"]
 
-            # Add detected tags
             if relationship_tag:
                 entry["relationship"] = relationship_tag
             if personality_tag:
@@ -1049,9 +1100,9 @@ async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20):
                 entry["creator"] = True
 
         else:
-            continue  # skip irrelevant chatter
+            continue
 
-        # --- Add attachments ---
+        # Attachments
         if message.attachments:
             attachment_lines = []
             for attachment in message.attachments:
@@ -1070,13 +1121,12 @@ async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20):
 
 async def load_memories_from_guilds():
     """
-    Load memories by scanning recent history across all guilds and DMs.
-    - Includes Monika’s own messages.
-    - Includes user messages (with relationship awareness).
-    - Includes “friends” = users with a relationship role (Close Friend, Lover, etc.).
-    - Mirrors server messages into DMs and vice versa, so memory follows the user everywhere.
+    Load memories by scanning history across all guilds and DMs.
+    - Includes Monika’s and users’ messages.
+    - Adds relationship awareness.
+    - Mirrors server messages into DMs and vice versa.
     """
-    # --- Step 1: Scan guild text channels ---
+    # --- Guild channels ---
     for guild in bot.guilds:
         for channel in guild.text_channels:
             try:
@@ -1090,21 +1140,16 @@ async def load_memories_from_guilds():
                     if not msg.content and not msg.attachments:
                         continue
 
-                    # --- Detect role type ---
                     role_type = "user"
                     if msg.author.id == bot.user.id:
                         role_type = "monika"
                     else:
-                        # Check if this user is a “friend” (relationship role with Monika)
                         member = guild.get_member(msg.author.id)
                         if member:
-                            rel_roles = [
-                                r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")
-                            ]
+                            rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
                             if rel_roles:
                                 role_type = "friend"
 
-                    # --- Save memory ---
                     memory.add_entry(
                         guild_id=guild.id,
                         guild_name=guild.name,
@@ -1114,10 +1159,10 @@ async def load_memories_from_guilds():
                         username=msg.author.display_name,
                         role=role_type,
                         content=msg.content,
-                        emotion="neutral"
+                        emotion="neutral",
                     )
 
-                    # --- Mirror into DM memory ---
+                    # Mirror into DM memory
                     if not msg.author.bot and msg.author.dm_channel:
                         memory.add_entry(
                             guild_id="dm",
@@ -1128,13 +1173,13 @@ async def load_memories_from_guilds():
                             username=msg.author.display_name,
                             role=role_type,
                             content=msg.content,
-                            emotion="neutral"
+                            emotion="neutral",
                         )
 
             except Exception as e:
-                print(f"[WARN] Could not load history for {channel} in {guild}: {e}")
+                print(f"[Memory WARN] Could not load history for {channel} in {guild}: {e}")
 
-    # --- Step 2: Scan DMs directly ---
+    # --- DMs directly ---
     for dm_channel in bot.private_channels:
         if not isinstance(dm_channel, discord.DMChannel):
             continue
@@ -1149,13 +1194,10 @@ async def load_memories_from_guilds():
             if msg.author.id == bot.user.id:
                 role_type = "monika"
             else:
-                # Check if this DM user is a “friend” (based on any shared guild relationship)
                 for guild in bot.guilds:
                     member = guild.get_member(msg.author.id)
                     if member:
-                        rel_roles = [
-                            r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")
-                        ]
+                        rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
                         if rel_roles:
                             role_type = "friend"
                             break
@@ -1169,10 +1211,10 @@ async def load_memories_from_guilds():
                 username=msg.author.display_name,
                 role=role_type,
                 content=msg.content,
-                emotion="neutral"
+                emotion="neutral",
             )
 
-            # --- Mirror DM into shared guilds ---
+            # Mirror DM into shared guilds
             for guild in bot.guilds:
                 member = guild.get_member(msg.author.id)
                 if member:
@@ -1185,13 +1227,13 @@ async def load_memories_from_guilds():
                         username=msg.author.display_name,
                         role=role_type,
                         content=msg.content,
-                        emotion="neutral"
+                        emotion="neutral",
                     )
 
 async def on_startup():
+    """Startup memory restoration: channel backup first, else guild scan."""
     print("[Startup] Loading Monika’s memory...")
 
-    # 1. Try restoring from memory channel backup
     channel = get_memory_channel()
     if channel:
         try:
@@ -1201,11 +1243,10 @@ async def on_startup():
                         data = await attachment.read()
                         await memory.import_from_text(data.decode("utf-8"))
                         print(f"[Startup] Restored from {attachment.filename}")
-                        return  # stop here if successful
+                        return
         except Exception as e:
             print(f"[Startup WARN] Failed to load from memory channel: {e}")
 
-    # 2. If no backup found → scan guilds
     print("[Startup] No backup found. Scanning guild histories...")
     await load_memories_from_guilds()
 
@@ -1366,15 +1407,6 @@ async def setup_hook():
     bot.loop.create_task(periodic_cleanup())
     bot.loop.create_task(monitor_event_loop())
     return
-
-def translate_to_english(text: str) -> str:
-    from deep_translator import GoogleTranslator
-    """Translate any text into English before saving logs."""
-    try:
-        return GoogleTranslator(source='auto', target='en').translate(text)
-    except Exception as e:
-        print(f"[Translation] Failed to translate: {e}")
-        return text
 
 @bot.event
 async def on_guild_join(guild):
@@ -1574,26 +1606,57 @@ async def on_wake_up(reason: str = "I'm back online!"):
     idle_chat_enabled = True
     return []
 
+async def report_error_to_channel(error: Exception, context: Optional[str] = None):
+    """
+    Report errors to the designated REPORT_CHANNEL_ID.
+    Includes type, context, and sprite reaction.
+    """
+    channel = bot.get_channel(REPORT_CHANNEL_ID)
+    if not channel:
+        return
+
+    emotion = error_emotion(type(error).__name__)
+    sprite_url = await get_sprite_link(emotion)
+
+    embed = discord.Embed(
+        title="⚠️ Monika Error Report",
+        description=format_error_message(error, context),
+        color=discord.Color.red(),
+        timestamp=datetime.datetime.utcnow(),
+    )
+    if sprite_url:
+        embed.set_thumbnail(url=sprite_url)
+
+    try:
+        await channel.send(embed=embed)
+    except Exception as e:
+        logger.error(f"[Report Error] Could not send to report channel: {e}")
+
 # active_votes = {}
 
 @bot.event
 async def on_message(message: discord.Message):
+    # ==============================
     # 1. Safety checks
-    if message.author.bot:
+    # ==============================
+    if message.author.id == bot.user.id:
         return
-    
+
     global is_broadcasting
-    if is_broadcasting:
+    if "is_broadcasting" in globals() and is_broadcasting:
         return
-    
+
     # Ignore other bots (unless they're "friend bots")
     if message.author.bot and not is_friend_bot(message):
         return
 
+    # Ignore "!" commands outside report/settings channels
     if message.content.startswith("!") and message.channel.id not in (REPORT_CHANNEL_ID, SETTINGS_CHAN):
         return
 
+    # ==============================
     # 2. Report channel handling (staff reply to reports)
+    # ==============================
     if message.channel.id == REPORT_CHANNEL_ID:
         async for prev in message.channel.history(limit=5, before=message):
             if prev.id in report_links and prev.embeds:
@@ -1611,34 +1674,35 @@ async def on_message(message: discord.Message):
                 try:
                     await prev.edit(embed=new_embed)
                 except Exception as e:
-                    print(f"[Report Edit Error] {e}")
+                    logger.warning(f"[Report Edit Error] {e}")
 
-                # DM reporter with reply
+                # DM reporter
                 dm_embed = discord.Embed(
                     title="📩 Reply to Your Report",
                     description=message.content,
                     color=discord.Color.blurple(),
-                    timestamp=discord.utils.utcnow()
+                    timestamp=datetime.datetime.utcnow()
                 )
                 dm_embed.set_footer(text=f"From {message.author}")
+
                 try:
                     await reporter.send(embed=dm_embed)
                 except discord.Forbidden:
                     await message.channel.send("❌ Could not DM reporter.", delete_after=10)
 
                 await message.add_reaction("✅")
-                await message.delete(delay=2)  # keep channel clean
+                await message.delete(delay=2)
                 break
 
-        # Don’t run further Monika responses here, just process commands
         await bot.process_commands(message)
         return
 
-    content = message.content.strip().lower()
-    guild_id = str(message.guild.id) if message.guild else None
-
+    # ==============================
+    # 3. Settings channel commands
+    # ==============================
     if message.channel.id == SETTINGS_CHAN and not message.author.bot:
-        if message.content.strip().lower() == "!status":
+        cmd = message.content.strip().lower()
+        if cmd == "!status":
             embed = discord.Embed(
                 title="📊 Bot Status",
                 color=0x3498db,
@@ -1649,48 +1713,38 @@ async def on_message(message: discord.Message):
             embed.add_field(name="Last Error", value=f"```{status_info['last_error']}```", inline=False)
             await message.channel.send(embed=embed)
 
-        elif message.content.strip().lower() == "!clearerrors":
+        elif cmd == "!clearerrors":
             status_info["error_count"] = 0
             status_info["last_error"] = "None"
             await message.channel.send("✅ Error log reset.")
 
-        elif message.content.strip().lower() == "!reportstats":
-            total = report_stats["total"]
-            bugs = report_stats["bugs"]
-            errors = report_stats["errors"]
-            ideas = report_stats["ideas"]
-            complaints = report_stats["complaints"]
-            other = report_stats["other"]
-            users = len(report_stats["users"])
-
+        elif cmd == "!reportstats":
             embed = discord.Embed(
                 title="📊 Report Statistics",
                 color=0x9b59b6,
                 timestamp=datetime.datetime.utcnow()
             )
-            embed.add_field(name="Total Reports", value=str(total), inline=False)
+            embed.add_field(name="Total Reports", value=str(report_stats["total"]), inline=False)
             embed.add_field(
                 name="Category Breakdown",
                 value=(
-                    f"🐞 Bugs: {bugs}\n"
-                    f"⚠️ Errors: {errors}\n"
-                    f"💡 Ideas: {ideas}\n"
-                    f"❗ Complaints: {complaints}\n"
-                    f"📝 Other: {other}"
+                    f"🐞 Bugs: {report_stats['bugs']}\n"
+                    f"⚠️ Errors: {report_stats['errors']}\n"
+                    f"💡 Ideas: {report_stats['ideas']}\n"
+                    f"❗ Complaints: {report_stats['complaints']}\n"
+                    f"📝 Other: {report_stats['other']}"
                 ),
                 inline=False
             )
-            embed.add_field(name="Unique Reporters", value=str(users), inline=False)
-
+            embed.add_field(name="Unique Reporters", value=str(len(report_stats['users'])), inline=False)
             await message.channel.send(embed=embed)
 
-        elif message.content.strip().lower() == "!time":
+        elif cmd == "!time":
             embed = discord.Embed(
                 title="⏰ Bot Time Status",
                 color=0x2ecc71,
                 timestamp=datetime.datetime.utcnow()
             )
-
             if status_info["is_sleeping"]:
                 embed.add_field(name="Current State", value="😴 Sleeping", inline=False)
                 embed.add_field(name="Since", value=status_info["last_sleep"].strftime("%Y-%m-%d %H:%M:%S UTC"), inline=True)
@@ -1701,8 +1755,9 @@ async def on_message(message: discord.Message):
                 embed.add_field(name="Since", value=status_info["last_wake"].strftime("%Y-%m-%d %H:%M:%S UTC"), inline=True)
                 embed.add_field(name="Uptime", value=str(uptime).split(".")[0], inline=True)
                 embed.add_field(name="Reason", value=status_info["wake_reason"], inline=False)
-
             await message.channel.send(embed=embed)
+
+        return  # stop further handling in settings channel
 
     #     elif content.startswith("!create vote"):
     #         if message.author.id != OWNER_ID:
@@ -1819,39 +1874,36 @@ async def on_message(message: discord.Message):
         return
     
     avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
-
-    # 8. Guild handler
     if isinstance(message.channel, discord.DMChannel):
         guild = None
-        username = message.author.name
         monika_member = None
-        avatar_url = message.author.display_avatar.url
         await handle_dm_message(message, avatar_url)
-        print(f"[Mention] in the DM's: Detected from {message.author.display_name}")
+        logger.info(f"[Mention] in DM: from {message.author.display_name}")
     else:
         guild = message.guild
-        username = message.author.display_name
         monika_member = guild.get_member(bot.user.id)
         await handle_guild_message(message, avatar_url)
-        print(f"[Mention] in the server's: Detected from {message.author.display_name}")
+        logger.info(f"[Mention] in server {guild.name}: from {message.author.display_name}")
 
-    # 🔹 New: update user tracker
+    # ==============================
+    # 8. Update user tracker
+    # ==============================
     relationship_role, personality_role = await detect_server_user_roles(bot, guild, message.author, user_tracker)
-
     changed = user_tracker.register_user(
         message.author,
         relationship=relationship_role,
         personality=personality_role,
-        pronouns=detect_pronouns_from_profile(message.author)
+        pronouns=detect_pronouns_from_profile(message.author),
     )
-
-    if changed:  # ✅ only save if there was an update
+    if changed:
         await user_tracker.save(bot, USER_TRACKER_CHAN)
 
     if getattr(bot, "is_sleeping", False):
-        return  # ignore messages while sleeping
+        return
 
-    # 9. Finally let commands through
+    # ==============================
+    # 9. AI Reply (when mentioned)
+    # ==============================
     await bot.process_commands(message)
 
 sprite_locks = {}
@@ -1927,6 +1979,14 @@ async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
     except Exception as e:
         print(f"[DEBUG] ❌ Failed to create emoji for {user}: {e}")
         return None
+
+def format_error_message(error: Exception, context: Optional[str] = None) -> str:
+    """
+    Format exceptions into a user-friendly error message for logging.
+    """
+    etype = type(error).__name__
+    ctx = f" in {context}" if context else ""
+    return f"[Error{ctx}] {etype}: {error}"
 
 async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     """Handle DM messages safely (no mentions, DM-specific personality/relationship)."""
@@ -4299,6 +4359,7 @@ async def custom_reactions_autocomplete(interaction: discord.Interaction, curren
 @commands.is_owner()
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
 @app_commands.autocomplete(reaction_set=reaction_set_autocomplete, custom_reactions=custom_reactions_autocomplete)
+@bot.tree.command(name="broadcast", description="Send an announcement to all servers.")
 async def broadcast(
     interaction: discord.Interaction,
     title: str,
@@ -4517,7 +4578,7 @@ async def broadcast(
         # Always reset state even on crash
         is_broadcasting = False
         await bot.change_presence(activity=None)
-    
+
 @broadcast.error
 async def broadcast_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.CheckFailure):
@@ -4823,6 +4884,3 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
-
-
-
