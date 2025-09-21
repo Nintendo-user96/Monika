@@ -1498,9 +1498,6 @@ async def on_disconnect():
 
 @bot.event
 async def on_shutdown():
-    await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game("shutting down..."))
-    print(f"I have shutdown at [{timestamp}]")
-    await asyncio.sleep(2)
     print("[Shutdown] Saving memory to channel...")
     asyncio.create_task(save_memory_to_channel())
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
@@ -4914,3 +4911,4 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
