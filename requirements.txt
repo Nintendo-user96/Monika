@@ -9,6 +9,8 @@ requests
 langdetect
 deep_translator
 psutil
+aiohttp
 
 # pip install -r requirements.txt
 # python monika_bot.py
+
