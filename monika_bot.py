@@ -40,6 +40,7 @@ from performance import (
     cache_result,
     get_memory_usage,
     cleanup_memory,
+    async_cleanup_memory,
     monitor_event_loop,
 )
 from vote_tracker import VoteTracker
@@ -860,9 +861,8 @@ async def on_ready():
 
         # Background tasks
         asyncio.create_task(periodic_rescan())
-        asyncio.create_task(monitor_event_loop())
-        asyncio.create_task(cleanup_memory())
-        asyncio.create_task(background_task())
+        monitor_event_loop()
+        asyncio.create_task(async_cleanup_memory())
 
     except Exception as e:
         logger.exception(f"[on_ready] Failed: {e}")
@@ -1405,7 +1405,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
 async def setup_hook():
     bot.loop.create_task(heartbeat_task())  # start heartbeat
     bot.loop.create_task(periodic_cleanup())
-    bot.loop.create_task(monitor_event_loop())
+    monitor_event_loop()
     return
 
 @bot.event
