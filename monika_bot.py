@@ -860,6 +860,7 @@ async def on_ready():
         logger.info(f"✅ Connected to {len(bot.guilds)} guilds, {len(bot.users)} users.")
 
         # Background tasks
+        bot.loop.create_task(periodic_scan(bot, interval=45))
         asyncio.create_task(periodic_rescan())
         monitor_event_loop()
         asyncio.create_task(async_cleanup_memory())
@@ -877,11 +878,40 @@ async def on_ready():
     is_waking_up = False
     print("[Bot] Wake-up mode finished. Back to normal idlechat.")
 
-async def periodic_cleanup():
+async def periodic_scan(bot, interval: int = 45):
+    """Periodically rescan code and report only new issues."""
+    last_errors = None
+
     while True:
-        cleanup_memory()
-        current, peak = get_memory_usage()
-        print(f"[Perf] Memory cleaned. Current: {current} MB | Peak: {peak} MB")
+        try:
+            errors = error_detector.scan_code()
+            if errors != last_errors:  # only report if something changed
+                channel = bot.get_channel(error_detector.SETTINGS_CHAN)
+                if channel:
+                    if errors:
+                        msg = "\n".join(errors)
+                        if len(msg) > 1900:
+                            msg = msg[:1900] + "\n... (truncated)"
+                        await channel.send(f"🚨 Updated scan report:\n```{msg}```")
+                    else:
+                        await channel.send("✅ Code scan: No issues found.")
+                last_errors = errors
+            else:
+                print("[SCAN] No changes since last check, skipping report.")
+        except Exception as e:
+            print(f"[SCAN] Error during periodic scan: {e}")
+
+        await asyncio.sleep(interval)
+
+async def periodic_cleanup():
+    """Periodically clean memory usage (runs every 1 hour)."""
+    while True:
+        try:
+            cleanup_memory()
+            current, peak = get_memory_usage()
+            print(f"[Perf] Memory cleaned. Current: {current} MB | Peak: {peak} MB")
+        except Exception as e:
+            print(f"[Perf] Error during cleanup: {e}")
         await asyncio.sleep(3600)  # run once per hour
 
 def update_heartbeat():
@@ -1464,17 +1494,6 @@ async def on_guild_leave(guild):
 
 @bot.event
 async def on_disconnect():
-    message = message.content
-
-    shutdown_message = bot.get_channel(SETTINGS_CHAN)
-
-    if shutdown_message:
-        try:
-            timestamp = datetime.datetime.utcnow().isoformat()
-            message.channel.send(f"I have shutdown at {timestamp}")
-        
-        except Exception as e:
-            message.channel.send(f"[ERROR]: {e}")
     await on_shutdown()
 
 @bot.event
