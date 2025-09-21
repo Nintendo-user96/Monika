@@ -1464,6 +1464,17 @@ async def on_guild_leave(guild):
 
 @bot.event
 async def on_disconnect():
+    message = message.content
+
+    shutdown_message = bot.get_channel(SETTINGS_CHAN)
+
+    if shutdown_message:
+        try:
+            timestamp = datetime.datetime.utcnow().isoformat()
+            message.channel.send(f"I have shutdown at {timestamp}")
+        
+        except Exception as e:
+            message.channel.send(f"[ERROR]: {e}")
     await on_shutdown()
 
 @bot.event
@@ -4359,7 +4370,6 @@ async def custom_reactions_autocomplete(interaction: discord.Interaction, curren
 @commands.is_owner()
 @discord.app_commands.describe(title="Title of the announcement", message="Body text of the announcement", color_hex="Optional hex color (e.g. 15f500)")
 @app_commands.autocomplete(reaction_set=reaction_set_autocomplete, custom_reactions=custom_reactions_autocomplete)
-@bot.tree.command(name="broadcast", description="Send an announcement to all servers.")
 async def broadcast(
     interaction: discord.Interaction,
     title: str,
