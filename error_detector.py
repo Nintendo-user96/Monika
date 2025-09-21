@@ -12,10 +12,8 @@ import textwrap
 # === CONFIG ===
 BOT_FILE = "monika_bot.py"        # main bot file
 SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))  # channel ID where errors get reported
-ERROR_LOG_FILE = "error_log.txt"
 
 CHECK_INTERVAL = 30
-SPAM_COOLDOWN = 120
 
 IGNORED_ERRORS = [
     "HTTPException: 429 Too Many Requests",
@@ -44,16 +42,6 @@ def should_ignore(error_text: str) -> bool:
     """Check if an error should be ignored based on known noise patterns."""
     return any(ignored.lower() in error_text.lower() for ignored in IGNORED_ERRORS)
 
-# === Append error to log file ===
-def log_error_to_file(error_msg: str):
-    with open(ERROR_LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(
-            f"[{datetime.datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}]\n"
-            f"{error_msg}\n"
-            f"{'-'*60}\n"
-        )
-
-
 def scan_functions_in_file(filepath):
     results = []
     try:
@@ -66,68 +54,54 @@ def scan_functions_in_file(filepath):
                 func_name = node.name
                 func_lineno = node.lineno
 
-                # Try to extract full function source
                 try:
                     func_src = ast.get_source_segment(source, node)
                 except Exception:
-                    # Fallback: just grab the first line
                     func_src = source.splitlines()[func_lineno - 1]
 
                 try:
                     compile(func_src, filepath, "exec")
                 except Exception as e:
                     results.append(
-                        f"❌ Error in {filepath} → function `{func_name}` "
-                        f"(line {func_lineno}): {e}"
+                        f"❌ {filepath} → `{func_name}` (line {func_lineno}): {e}"
                     )
     except Exception as e:
-        results.append(f"⚠️ Could not scan {filepath}: {e}")
+        results.append(f"[SCAN] ⚠️ Could not scan {filepath}: {e}")
     return results
 
 
-def scan_all_functions():
+def scan_code():
+    print("[SCAN] Starting full project scan...")
     errors = []
     for root, _, files in os.walk("."):
         for file in files:
             if file.endswith(".py"):
                 filepath = os.path.join(root, file)
                 errors.extend(scan_functions_in_file(filepath))
+
+    if errors:
+        print("\n".join(errors))
+    else:
+        print("[SCAN] ✅ No issues found.")
+
     return errors
 
-
-# === Notify channel with log file (anti-spam) ===
-async def notify_error(error_msg: str):
-    now = datetime.datetime.utcnow()
-    if (
-        status_info["last_sent_error"] == error_msg
-        and status_info["last_sent_time"]
-        and (now - status_info["last_sent_time"]).total_seconds() < SPAM_COOLDOWN
-    ):
-        print("[Detector] Duplicate error suppressed.")
+async def send_scan_results(bot: discord.Client):
+    errors = scan_code()
+    channel = bot.get_channel(SETTINGS_CHAN)
+    if not channel:
+        print("[SCAN] ⚠️ Could not find SETTINGS_CHAN.")
         return
 
-    log_error_to_file(error_msg)
+    if errors:
+        msg = "\n".join(errors)
+        if len(msg) > 1900:
+            msg = msg[:1900] + "\n... (truncated)"
+        await channel.send(f"🚨 Function-level scan problems:\n```{msg}```")
+    else:
+        await channel.send("✅ Function-level scan complete. No issues found!")
 
-    await client.wait_until_ready()
-    channel = client.get_channel(SETTINGS_CHAN)
-    if channel:
-        embed = discord.Embed(
-            title="🚨 Error Detected",
-            description=error_msg[:1000],
-            color=discord.Color.red(),
-            timestamp=now
-        )
-        await channel.send(embed=embed)
-        if os.path.exists(ERROR_LOG_FILE):
-            await channel.send(file=discord.File(ERROR_LOG_FILE))
-
-    status_info["last_error"] = error_msg
-    status_info["error_count"] += 1
-    status_info["last_sent_error"] = error_msg
-    status_info["last_sent_time"] = now
-
-
-# === Run Monika and monitor ===
+# === Run and monitor the bot process ===
 async def run_bot_and_watch():
     while True:
         try:
@@ -138,30 +112,30 @@ async def run_bot_and_watch():
             )
             status_info["monika_online"] = True
             print("[Detector] Monika process started.")
-            _, stderr = await process.communicate()
+
+            stdout, stderr = await process.communicate()
             status_info["monika_online"] = False
 
             if stderr:
                 err = stderr.decode()
-                if not any(ignored in err for ignored in IGNORED_ERRORS):
-                    await notify_error(f"⚠️ Runtime Error:\n{err}")
+                print(f"[Detector] ⚠️ Runtime Error:\n{err}")
+                status_info["error_count"] += 1
+                status_info["last_error"] = err
 
         except Exception as e:
-            await notify_error(f"❌ Detector failed to start Monika:\n{e}")
+            print(f"[Detector] ❌ Failed to start Monika: {e}")
 
         await asyncio.sleep(5)
 
-
-# === Periodic status check ===
+# === Periodic check ===
 async def check_monika_status():
-    await client.wait_until_ready()
     while True:
         if not status_info["monika_online"]:
-            await notify_error("⚠️ Monika is offline or crashed!")
+            print("[Detector] ⚠️ Monika is offline or crashed!")
         await asyncio.sleep(CHECK_INTERVAL)
 
 async def report_error(bot: discord.Client, channel_id: int, error_text: str, severity: str = "Error"):
-    """Send errors/warnings as an embed to a channel."""
+    """Send errors/warnings as an embed to a channel using the existing bot."""
     if should_ignore(error_text):
         print("⚪ Ignored:", error_text)
         return
@@ -171,11 +145,9 @@ async def report_error(bot: discord.Client, channel_id: int, error_text: str, se
         print("⚠️ Error channel not found.")
         return
 
-    print("❌ Reporting:", error_text)
-
     embed = discord.Embed(
         title=f"❌ {severity} Detected",
-        description=f"```{error_text[:2000]}```",  # truncate to Discord limit
+        description=f"```{error_text[:2000]}```",
         color=0xE74C3C if severity == "Error" else 0xF1C40F,
         timestamp=datetime.datetime.utcnow()
     )
@@ -187,15 +159,8 @@ async def report_error(bot: discord.Client, channel_id: int, error_text: str, se
 async def main():
     print("[Detector] Starting error scanner...")
 
-    # 🔎 Full function-level scan
-    errors = scan_all_functions()
-    if errors:
-        msg = "\n".join(errors)
-        await notify_error(f"❌ Function-level scan found problems:\n{msg}")
-        print("[Detector] Function scan found problems, but Monika will still launch.")
-    else:
-        log_error_to_file("✅ Function-level scan complete. No issues found!")
-        print("[Detector] Function scan passed. Launching Monika...")
+    # 🔎 Full scan before launching Monika
+    scan_code()
 
     # 🚀 Always launch Monika
     await asyncio.gather(
