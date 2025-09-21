@@ -1150,7 +1150,7 @@ async def load_memories_from_guilds():
                             if rel_roles:
                                 role_type = "friend"
 
-                    memory.add_entry(
+                    memory.save(
                         guild_id=guild.id,
                         guild_name=guild.name,
                         channel_id=channel.id,
@@ -1164,7 +1164,7 @@ async def load_memories_from_guilds():
 
                     # Mirror into DM memory
                     if not msg.author.bot and msg.author.dm_channel:
-                        memory.add_entry(
+                        memory.save(
                             guild_id="dm",
                             guild_name="Direct Message",
                             channel_id=msg.author.dm_channel.id,
@@ -1202,7 +1202,7 @@ async def load_memories_from_guilds():
                             role_type = "friend"
                             break
 
-            memory.add_entry(
+            memory.save(
                 guild_id="dm",
                 guild_name="Direct Message",
                 channel_id=dm_channel.id,
@@ -1218,7 +1218,7 @@ async def load_memories_from_guilds():
             for guild in bot.guilds:
                 member = guild.get_member(msg.author.id)
                 if member:
-                    memory.add_entry(
+                    memory.save(
                         guild_id=guild.id,
                         guild_name=guild.name,
                         channel_id="linked_dm",
@@ -4211,6 +4211,7 @@ async def ideas_autocomplete(interaction: discord.Interaction, current: str):
         "Voice replies",
         "Custom personality traits",
         "Integration with other bots",
+        "Add More Easter Eggs",
     ]
     return [
         app_commands.Choice(name=s, value=s)
