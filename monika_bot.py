@@ -78,6 +78,7 @@ async def call_openai_with_retries(user, relationship, personality, conversation
             full_conversation = [{"role": "system", "content": system_prompt}] + conversation
 
             # Call API
+            # Call API
             return await client.chat.completions.create(
                 model=model,
                 messages=full_conversation
@@ -762,17 +763,12 @@ async def idlechat_loop():
 
                 await asyncio.sleep(delay)
 
-async def delayed_task(delay, coro):
-    await asyncio.sleep(delay)
-    await coro
-
 @bot.event
 async def on_ready():
     global idlechat_task, is_waking_up, key_manager
 
     is_waking_up = True
 
-    await bot.change_presence(status=discord.Status.online, activity=discord.Game("Rebooting..."))
     print("---------------------------------------------------")
     key_manager = await init_key_manager()
 
@@ -782,16 +778,17 @@ async def on_ready():
     print("---------------------------------------------------")
     print(f"just {bot.user.name}")
     print("---------------------------------------------------")
+
     update_heartbeat()  # refresh on connect
     await error_detector.send_scan_results(bot)
 
     app_info = await bot.application_info()
-    bot_owner = app_info.owner  # the bot’s registered owner (you)
+    bot_owner = app_info.owner
 
+    # 🔹 Role + memory restoration
     for guild in bot.guilds:
         monika_member = guild.get_member(bot.user.id)
 
-        # 🔹 Detect "Creator of Monika" role (if it exists)
         creator_role_name = f"Creator of {bot.user.name}"
         creator_role = discord.utils.get(guild.roles, name=creator_role_name)
         if creator_role:
@@ -803,7 +800,7 @@ async def on_ready():
         else:
             print(f"[Startup] No '{creator_role_name}' role found in {guild.name}")
 
-        # 🔹 Restore saved Personality Role (only detect, don’t create new)
+        # Restore roles / personality / relationships
         saved_personality = server_tracker.get_personality(guild.id)
         if saved_personality:
             role = discord.utils.get(guild.roles, name=f"Personality - {saved_personality}")
@@ -813,7 +810,6 @@ async def on_ready():
                 except discord.Forbidden:
                     print(f"[Startup Error] Missing permission to add {role.name} in {guild.name}")
 
-        # 🔹 Restore Relationship Role (only detect, don’t create new)
         saved_relationship = server_tracker.get_relationship_type(guild.id)
         saved_relationship_user = server_tracker.get_relationship_with(guild.id)
         if saved_relationship and saved_relationship_user:
@@ -822,12 +818,10 @@ async def on_ready():
                 rel_role_name_user = f"{bot.user.name} - {saved_relationship}"
                 rel_role_name_monika = f"{user_member.display_name} - {saved_relationship}" if user_member else None
 
-                # User role
                 user_role = discord.utils.get(guild.roles, name=rel_role_name_user)
                 if user_member and user_role and user_role not in user_member.roles:
                     await user_member.add_roles(user_role)
 
-                # Bot role
                 if rel_role_name_monika:
                     bot_role = discord.utils.get(guild.roles, name=rel_role_name_monika)
                     if monika_member and bot_role and bot_role not in monika_member.roles:
@@ -835,11 +829,9 @@ async def on_ready():
             except Exception as e:
                 print(f"[Startup Role Restore Error] {e}")
 
-        # 🔹 Track users + detect relationships
         for member in guild.members:
             if member.bot:
                 continue
-
             user_tracker.track_user(member.id, member.display_name, member.bot)
 
             rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
@@ -851,6 +843,7 @@ async def on_ready():
             else:
                 user_tracker.set_relationship(member.id, None)
 
+    # Slash command sync + restore memory
     try:
         await bot.tree.sync()
         logger.info("✅ Slash commands synced.")
@@ -861,7 +854,7 @@ async def on_ready():
         logger.info(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
         logger.info(f"✅ Connected to {len(bot.guilds)} guilds, {len(bot.users)} users.")
 
-        # Background tasks
+        # 🔹 Run background tasks safely
         errors = await asyncio.to_thread(error_detector.scan_code)
         channel = bot.get_channel(error_detector.SETTINGS_CHAN)
         if channel:
@@ -873,11 +866,8 @@ async def on_ready():
             else:
                 await channel.send("✅ Startup scan: No issues found.")
 
-        # Background periodic scan
-        bot.loop.create_task(delayed_task(60, periodic_scan(bot)))
-        bot.loop.create_task(delayed_task(120, periodic_cleanup()))  # staggered by 2 min
-        monitor_event_loop()
-        asyncio.create_task(async_cleanup_memory())
+        asyncio.create_task(periodic_scan(bot))
+        bot.loop.create_task(periodic_cleanup())
 
     except Exception as e:
         logger.exception(f"[on_ready] Failed: {e}")
@@ -886,7 +876,7 @@ async def on_ready():
 
     if idle_chat_enabled or idlechat_loop() or monika_idle_conversation_task():
         return []
-    
+
     await vote_tracker.load(bot, SETTINGS_CHAN)
 
     is_waking_up = False
@@ -930,7 +920,6 @@ async def periodic_scan(bot, interval: int = SCAN_INTERVAL):
             print(f"[SCAN] Error during subprocess scan: {e}")
 
         await asyncio.sleep(interval)
-
 
 async def send_in_chunks(channel, text: str, prefix="```", suffix="```"):
     """Split long scan messages so Render/Discord don't choke."""
@@ -1291,6 +1280,30 @@ async def load_memories_from_guilds():
 
 async def on_startup():
     """Startup memory restoration: channel backup first, else guild scan."""
+    statuses = [
+        ("Rebooting.", 1),
+        ("Rebooting..", 0.5),
+        ("Rebooting...", 0.5),
+        ("Rebooting.", 1),
+        ("Rebooting..", 0.5),
+        ("Rebooting...", 0.5),
+        ("Rebooting.", 1),
+        ("Rebooting..", 0.5),
+        ("Rebooting...", 0.5),
+        ("Rebooting.", 1),
+        ("Rebooting..", 0.5),
+        ("Rebooting...", 0.5),
+        ("Rebooting.", 1),
+        ("Rebooting..", 0.5),
+        ("Rebooting...", 0.5),
+        ("Rebooting.", 1),
+        ("Rebooting..", 0.5),
+        ("Rebooting...", 0.5),
+    ]
+    for text, delay in statuses:
+        await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game(text))
+        if delay > 0:
+            await asyncio.sleep(delay)
     print("[Startup] Loading Monika’s memory...")
 
     channel = get_memory_channel()
@@ -1307,6 +1320,7 @@ async def on_startup():
             print(f"[Startup WARN] Failed to load from memory channel: {e}")
 
     print("[Startup] No backup found. Scanning guild histories...")
+
     await load_memories_from_guilds()
 
 async def load_personality_from_roles(guild: discord.Guild, monika_member: discord.Member) -> list[str]:
@@ -1567,7 +1581,7 @@ async def on_sleeping(reason: str = "Taking a nap..."):
     if channel:
         await channel.send(f"😴 The bot is now sleeping. Reason: **{reason}**")
 
-last_wakeup_date = None  
+last_wakeup_date = None
 
 async def on_wake_up(reason: str = "I'm back online!"):
     global is_waking_up, last_wakeup_date, idle_chat_enabled
@@ -1597,12 +1611,12 @@ async def on_wake_up(reason: str = "I'm back online!"):
         ("Waking up...", 3),
         ("Stretching...", 3),
         ("Getting dressed...", 3),
-        ("Ready to chat! 💚", 0),
-        ("Ready to chat!! 💚", 2),
-        ("Ready to chat!!! 💚", 2)
+        ("Checking on everyone.", 0),
+        ("Checking on everyone..", 1),
+        ("Checking on everyone...", 1),
     ]
     for text, delay in statuses:
-        await bot.change_presence(status=discord.Status.online, activity=discord.Game(text))
+        await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game(text))
         if delay > 0:
             await asyncio.sleep(delay)
 
@@ -1654,11 +1668,21 @@ async def on_wake_up(reason: str = "I'm back online!"):
             except Exception as e:
                 print(f"[Wakeup Error] Could not send to #{target_channel.name} in {guild.name}: {e}")
 
-    await asyncio.sleep(3)
+    statuses = [
+        ("Ready to chat! 💚", 0),
+        ("Ready to chat!! 💚", 0.5),
+        ("Ready to chat!!! 💚", 1)
+    ]
+    for text, delay in statuses:
+        await bot.change_presence(status=discord.Status.online, activity=discord.Game(text))
+        if delay > 0:
+            await asyncio.sleep(delay)
+
+    await asyncio.sleep(1)
     await bot.change_presence(activity=None)
 
     # ✅ Resume idle chat afterwards
-    await asyncio.sleep(3)
+    await asyncio.sleep(2)
     idle_chat_enabled = True
     return []
 
@@ -3720,7 +3744,7 @@ async def set_outfit(interaction: discord.Interaction, outfit: str):
     print(f"Administrator: {user} used a command: `set_outfit`: set `{outfit}`")
 
     today = datetime.date.today()
-    if today.month == 9 and today.day == 21:
+    if today.month == 9 and today.day == 22:
         await interaction.response.send_message(
             "❌ You can’t change my outfit today… it’s a special day.",
             ephemeral=True
@@ -4940,5 +4964,3 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
-
-
