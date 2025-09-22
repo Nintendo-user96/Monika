@@ -9,41 +9,41 @@ class OpenAIKeyManager:
         if not keys:
             raise RuntimeError("No OpenAI API keys were provided.")
 
-        # Active keys pool
-        self.keys = {k: 0 for k in keys}  # key -> cooldown_until
+        # Active key pool
+        self.keys = {k: 0 for k in keys}  # key -> cooldown_until timestamp
         self.current_key = keys[0]
         self.cooldown_seconds = cooldown_seconds
 
-        # Tracking stats
+        # Stats per key
         self.stats = {
-            k: {"uses": 0, "failures": 0, "cooldowns": 0, "last_used": 0, "health": 100}
+            k: {"uses": 0, "failures": 0, "cooldowns": 0,
+                "last_used": 0, "health": 100}
             for k in keys
         }
 
-        # Idle tracking
+        # Idle handling
         self.last_activity = time.time()
         self.idle_rotate_minutes = max(5, idle_rotate_minutes)
         self._idle_task = None
 
-        # Background rescan control
-        self._all_keys = keys
+        # Backup storage
+        self._all_keys = keys.copy()
         self._next_index = len(keys)
 
-        # Optional event hooks
+        # Hooks
         self.on_all_keys_exhausted = None
         self.on_key_recovered = None
 
     # ---------------- Idle rotation ---------------- #
 
     def start_idle_rotator(self):
-        """Start the idle rotation loop once an event loop is running."""
+        """Start background task to rotate keys if idle too long."""
         if self._idle_task is None or self._idle_task.done():
             loop = asyncio.get_event_loop()
             self._idle_task = loop.create_task(self._idle_rotator())
             print("[OpenAI] 🔄 Idle rotator started.")
 
     async def _idle_rotator(self):
-        """Background task that rotates keys when idle for too long."""
         while True:
             try:
                 await asyncio.sleep(self.idle_rotate_minutes * 60)
@@ -60,11 +60,11 @@ class OpenAIKeyManager:
     # ---------------- Key handling ---------------- #
 
     def get_client(self) -> AsyncOpenAI:
-        """Return an AsyncOpenAI client for the current key, enforcing cooldowns and scheduled breaks."""
+        """Return a client for current key, enforcing cooldowns and break time."""
         now = time.time()
         local_hour = time.localtime(now).tm_hour
 
-        # Scheduled break (11PM → 6AM)
+        # Scheduled break (11PM–6AM)
         if local_hour >= 23 or local_hour < 6:
             raise RuntimeError("[OpenAI] ⏸ Scheduled break time (11PM–6AM).")
 
@@ -75,63 +75,100 @@ class OpenAIKeyManager:
         return AsyncOpenAI(api_key=self.current_key)
 
     async def rotate(self):
-        """Pick the least recently used available key (LRU)."""
+        """Pick least-recently-used key with no cooldown."""
         now = time.time()
         available = [(k, until) for k, until in self.keys.items() if now >= until]
 
         if not available:
-            # all cooling down
             soonest_key, soonest_time = min(self.keys.items(), key=lambda kv: kv[1])
             wait_time = max(0, soonest_time - now)
             print(f"[OpenAI] ⏳ All keys cooling. Waiting {wait_time:.1f}s...")
             await asyncio.sleep(wait_time)
             return await self.rotate()
 
-        # Sort by last used time
+        # Prefer least recently used
         available.sort(key=lambda kv: self.stats[kv[0]]["last_used"])
         best_key = available[0][0]
 
         self.current_key = best_key
         self.stats[best_key]["last_used"] = now
         self.stats[best_key]["uses"] += 1
-        print(f"[OpenAI] 🔄 Rotated to least-used key {best_key[:8]}...")
+        print(f"[OpenAI] 🔄 Rotated to {best_key[:8]}...")
 
-    def mark_cooldown(self, key):
+    def mark_success(self, key: str = None):
+        """Mark a key as having a successful call."""
+        key = key or self.current_key
+        if key in self.stats:
+            self.stats[key]["uses"] += 1
+            self.stats[key]["health"] = min(100, self.stats[key]["health"] + 1)
+
+    def mark_failure(self, key: str = None):
+        """Mark a key as having a failed call."""
+        key = key or self.current_key
+        if key in self.stats:
+            self.stats[key]["failures"] += 1
+            self.stats[key]["health"] = max(0, self.stats[key]["health"] - 5)
+
+    def mark_cooldown(self, key: str = None):
         """Put a key on cooldown."""
+        key = key or self.current_key
         self.keys[key] = time.time() + self.cooldown_seconds
         self.stats[key]["cooldowns"] += 1
         print(f"[OpenAI] ⏳ Cooldown {self.cooldown_seconds}s for {key[:8]}...")
 
+    def drop_key(self, key: str, reason: str):
+        """Remove a key from rotation permanently."""
+        if key in self.keys:
+            self.keys.pop(key, None)
+        if key in self.stats:
+            self.stats.pop(key, None)
+        print(f"[OpenAI] 🗑️ Dropped key {key[:8]} ({reason})")
+
+        if not self.keys and self.on_all_keys_exhausted:
+            asyncio.create_task(self.on_all_keys_exhausted())
+
     # ---------------- Reporting ---------------- #
 
     def current_key_index(self) -> int:
-        """Return 1-based index of the current key."""
         keys = list(self.keys.keys())
         return keys.index(self.current_key) + 1
 
     def status(self):
-        """Print status of all keys with cooldowns and usage stats."""
         now = time.time()
         for i, (k, until) in enumerate(self.keys.items(), start=1):
             cooldown_left = max(0, until - now)
             marker = "<-- current" if k == self.current_key else ""
             print(
                 f"{i}. {k[:8]}... cooldown {cooldown_left:.1f}s, "
-                f"uses={self.stats[k]['uses']}, cooldowns={self.stats[k]['cooldowns']} {marker}"
+                f"uses={self.stats[k]['uses']}, failures={self.stats[k]['failures']}, "
+                f"cooldowns={self.stats[k]['cooldowns']}, health={self.stats[k]['health']} {marker}"
             )
 
+    def get_status_report(self) -> str:
+        """Return a text summary (for Discord commands)."""
+        now = time.time()
+        lines = []
+        for i, (k, until) in enumerate(self.keys.items(), start=1):
+            cooldown_left = max(0, until - now)
+            marker = "⬅️ current" if k == self.current_key else ""
+            lines.append(
+                f"{i}. {k[:8]}... ⏳{cooldown_left:.1f}s | "
+                f"uses={self.stats[k]['uses']} | fails={self.stats[k]['failures']} | "
+                f"cd={self.stats[k]['cooldowns']} | health={self.stats[k]['health']} {marker}"
+            )
+        return "\n".join(lines)
+
     def available_keys(self):
-        """Return keys that are not cooling down."""
         now = time.time()
         return [k for k, until in self.keys.items() if now >= until]
 
+    # ---------------- Stats ---------------- #
+
     def remaining_cooldowns(self):
-        """Return cooldown times for keys."""
         now = time.time()
         return {k: max(0, until - now) for k, until in self.keys.items()}
 
     def stats_summary(self):
-        """Return summary of all key usage stats."""
         return {
             k: {
                 "uses": self.stats[k]["uses"],
@@ -144,56 +181,70 @@ class OpenAIKeyManager:
         }
 
 
-# ---------------- Safe call helper ---------------- #
+# ---------------- Safe call wrapper ---------------- #
 
 async def openai_safe_call(manager: OpenAIKeyManager, fn, retries=20, global_cooldown=60):
     last_exc = None
-    delay = 2  # backoff start
+    delay = 2
 
     for attempt in range(retries):
         try:
             client = manager.get_client()
-            return await fn(client)
-
+            result = await fn(client)
+            manager.mark_success(manager.current_key)  # ✅ record success
+            return result
         except Exception as e:
             last_exc = e
             err = str(e).lower()
+            manager.mark_failure(manager.current_key)
 
+            # Scheduled break
             if "scheduled break" in err:
                 now = time.localtime()
-                seconds_since_midnight = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
+                seconds = now.tm_hour * 3600 + now.tm_min * 60 + now.tm_sec
                 if now.tm_hour >= 23:
-                    wait_time = (24 * 3600 - seconds_since_midnight) + (6 * 3600)
+                    wait_time = (24 * 3600 - seconds) + (6 * 3600)
                 else:
-                    wait_time = (6 * 3600) - seconds_since_midnight
-                print(f"[OpenAI] 😴 Scheduled break. Waiting {wait_time/3600:.1f} hours...")
+                    wait_time = (6 * 3600) - seconds
+                print(f"[OpenAI] 😴 Scheduled break. Waiting {wait_time/3600:.1f}h...")
                 await asyncio.sleep(wait_time)
                 continue
 
+            # Quota exceeded
+            if "insufficient_quota" in err:
+                print(f"[OpenAI] 🚫 No quota for {manager.current_key[:8]} — dropping.")
+                manager.drop_key(manager.current_key, "insufficient_quota")
+                if not manager.keys:
+                    raise RuntimeError("[OpenAI] 🚨 All keys out of quota.")
+                await manager.rotate()
+                continue
+
+            # Rate limited
             if "429" in err or "rate limit" in err:
                 manager.mark_cooldown(manager.current_key)
                 await manager.rotate()
                 if not manager.available_keys():
-                    print(f"[OpenAI] ❌ All keys exhausted. Pausing {global_cooldown}s...")
+                    print(f"[OpenAI] ❌ All keys rate-limited. Pausing {global_cooldown}s...")
                     await asyncio.sleep(global_cooldown)
                 else:
-                    print(f"[OpenAI] ⚠️ Rate limit hit. Backoff {delay}s (attempt {attempt+1}/{retries})...")
+                    print(f"[OpenAI] ⚠️ Rate limit. Backoff {delay}s (attempt {attempt+1}/{retries})...")
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 60)
                 continue
 
+            # Invalid keys
             if "401" in err or "invalid api key" in err or "400" in err:
-                manager.mark_cooldown(manager.current_key)
-                await manager.rotate()
-                if not manager.available_keys():
+                manager.drop_key(manager.current_key, "invalid key")
+                if not manager.keys:
                     raise RuntimeError("[OpenAI] 🚨 No valid keys available.")
+                await manager.rotate()
                 continue
 
+            # Billing inactive
             if "billing_not_active" in err:
-                print(f"[OpenAI] 🚫 Key {manager.current_key[:8]} billing inactive. Dropping...")
-                manager.keys.pop(manager.current_key, None)
+                manager.drop_key(manager.current_key, "billing inactive")
                 if not manager.keys:
-                    raise RuntimeError("[OpenAI] 🚨 No active-billing keys left.")
+                    raise RuntimeError("[OpenAI] 🚨 No billing-active keys left.")
                 await manager.rotate()
                 continue
 
@@ -201,11 +252,9 @@ async def openai_safe_call(manager: OpenAIKeyManager, fn, retries=20, global_coo
 
     raise last_exc
 
-
 # ---------------- Key scanning ---------------- #
 
 async def scan_all_keys(batch_size: int = 5, preload: int = 5) -> list[str]:
-    """Scan env keys and return a preload pool of valid keys."""
     print("[OpenAI] 🔄 Scanning all keys...")
     all_keys = [os.getenv(f"OPENAI_KEY_{i}") for i in range(1, 211)]
     all_keys = [k for k in all_keys if k]
@@ -235,7 +284,7 @@ async def scan_all_keys(batch_size: int = 5, preload: int = 5) -> list[str]:
     return valid_keys
 
 
-# ---------------- Manager Init ---------------- #
+# ---------------- Manager init & rescan ---------------- #
 
 key_manager = None
 
@@ -243,14 +292,13 @@ async def init_key_manager():
     global key_manager
     preload_keys = await scan_all_keys(batch_size=5, preload=5)
     key_manager = OpenAIKeyManager(preload_keys, cooldown_seconds=15, idle_rotate_minutes=5)
-    key_manager._all_keys = preload_keys
+    key_manager._all_keys = preload_keys.copy()
     key_manager._next_index = len(preload_keys)
     print(f"[OpenAI] ✅ KeyManager initialized with {len(preload_keys)} keys.")
     return key_manager
 
 
 async def periodic_rescan(interval_hours=6):
-    """Rescan all keys periodically and merge into pool."""
     global key_manager
     while True:
         await asyncio.sleep(interval_hours * 3600)
