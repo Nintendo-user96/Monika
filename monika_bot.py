@@ -762,10 +762,6 @@ async def idlechat_loop():
 
                 await asyncio.sleep(delay)
 
-@bot.event
-async def on_connect():
-    await bot.change_presence(status=discord.Status.online, activity=discord.Game("Rebooting..."))
-
 async def delayed_task(delay, coro):
     await asyncio.sleep(delay)
     await coro
@@ -776,6 +772,7 @@ async def on_ready():
 
     is_waking_up = True
 
+    await bot.change_presence(status=discord.Status.online, activity=discord.Game("Rebooting..."))
     print("---------------------------------------------------")
     key_manager = await init_key_manager()
 
@@ -4943,4 +4940,5 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
