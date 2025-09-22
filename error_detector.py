@@ -55,17 +55,19 @@ def scan_functions_in_file(filepath: str):
         results.append(f"[SCAN] ⚠️ Could not scan {filepath}: {e}")
     return results
 
+EXCLUDED_DIRS = {".venv", "venv", "site-packages", "__pycache__", ".git"}
 
 def scan_code():
-    """Scan every .py file for function-level syntax issues."""
+    """Scan only project .py files, ignore venv and libraries."""
     errors = []
-    for root, _, files in os.walk("."):
+    for root, dirs, files in os.walk("."):
+        # Skip excluded dirs
+        dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
         for file in files:
             if file.endswith(".py"):
                 filepath = os.path.join(root, file)
                 errors.extend(scan_functions_in_file(filepath))
     return errors
-
 
 # === Send scan results into Discord ===
 async def send_scan_results(bot: discord.Client):
