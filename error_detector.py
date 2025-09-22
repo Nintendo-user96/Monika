@@ -2,9 +2,11 @@ import discord
 import os
 import ast
 import datetime
+import argparse
+import json
 
 # === CONFIG ===
-SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))  # channel ID, set via env or hardcode
+SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))
 
 IGNORED_ERRORS = [
     "HTTPException: 429 Too Many Requests",
@@ -30,15 +32,18 @@ def scan_functions_in_file(filepath: str):
         with open(filepath, "r", encoding="utf-8") as f:
             source = f.read()
         tree = ast.parse(source, filename=filepath)
+        lines = source.splitlines()
 
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 func_name = node.name
                 func_lineno = node.lineno
+
+                # Try to get function source; fallback safely
                 try:
                     func_src = ast.get_source_segment(source, node)
                 except Exception:
-                    func_src = source.splitlines()[func_lineno - 1]
+                    func_src = lines[func_lineno - 1] if 0 < func_lineno <= len(lines) else f"def {func_name}(...):"
 
                 try:
                     compile(func_src, filepath, "exec")
@@ -53,29 +58,14 @@ def scan_functions_in_file(filepath: str):
 
 def scan_code():
     """Scan every .py file for function-level syntax issues."""
-    print("[SCAN] Starting full project scan...")
     errors = []
     for root, _, files in os.walk("."):
         for file in files:
             if file.endswith(".py"):
                 filepath = os.path.join(root, file)
                 errors.extend(scan_functions_in_file(filepath))
-
-    if errors:
-        print("\n".join(errors))
-    else:
-        print("[SCAN] ✅ No issues found.")
     return errors
 
-async def safe_send(channel, content=None, embed=None):
-    try:
-        if content:
-            return await channel.send(content)
-        elif embed:
-            return await channel.send(embed=embed)
-    except Exception as e:
-        print(f"[SCAN] ⚠️ Failed to send message: {e}")
-        return None
 
 # === Send scan results into Discord ===
 async def send_scan_results(bot: discord.Client):
@@ -113,3 +103,18 @@ async def report_error(bot: discord.Client, channel_id: int, error_text: str, se
     )
     embed.set_footer(text="Error Monitor Service")
     await channel.send(embed=embed)
+
+
+# === Standalone subprocess mode ===
+def main_cli():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scan-only", action="store_true", help="Run a scan and print JSON errors")
+    args = parser.parse_args()
+
+    if args.scan_only:
+        errors = scan_code()
+        print(json.dumps(errors))  # dump as JSON for subprocess reader
+
+
+if __name__ == "__main__":
+    main_cli()
