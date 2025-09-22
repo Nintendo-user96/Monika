@@ -4464,7 +4464,7 @@ async def broadcast(
     wait_minutes = 3
     update_interval = 30
     is_broadcasting = True
-    await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
+    await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game("📣 Announcement in progress..."))
 
     try:
         # --- Reaction sets ---
@@ -4964,3 +4964,4 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
