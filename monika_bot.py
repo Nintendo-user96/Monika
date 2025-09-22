@@ -767,6 +767,10 @@ async def on_connect():
     await bot.change_presence(status=discord.Status.online, activity=discord.Game("Rebooting..."))
     await on_ready()
 
+async def delayed_task(delay, coro):
+    await asyncio.sleep(delay)
+    await coro
+
 @bot.event
 async def on_ready():
     global idlechat_task, is_waking_up, key_manager
@@ -874,8 +878,8 @@ async def on_ready():
                 await channel.send("✅ Startup scan: No issues found.")
 
         # Background periodic scan
-        bot.loop.create_task(periodic_scan(bot, interval=45))
-        asyncio.create_task(periodic_rescan())
+        bot.loop.create_task(delayed_task(60, periodic_scan(bot)))
+        bot.loop.create_task(delayed_task(120, periodic_cleanup()))  # staggered by 2 min
         monitor_event_loop()
         asyncio.create_task(async_cleanup_memory())
 
@@ -892,10 +896,15 @@ async def on_ready():
     is_waking_up = False
     print("[Bot] Wake-up mode finished. Back to normal idlechat.")
 
-async def periodic_scan(bot, interval: int = 300):  # every 5 min
+SCAN_INTERVAL = 1800  # 30 minutes (Render-safe)
+
+async def periodic_scan(bot, interval: int = SCAN_INTERVAL):
+    """Periodically run subprocess scan and report results in a Render-friendly way."""
     last_errors = None
+
     while True:
         try:
+            # Run scan in subprocess to avoid blocking
             proc = await asyncio.create_subprocess_exec(
                 sys.executable, "error_detector.py", "--scan-only",
                 stdout=asyncio.subprocess.PIPE,
@@ -911,21 +920,31 @@ async def periodic_scan(bot, interval: int = 300):  # every 5 min
             except Exception:
                 errors = ["⚠️ Failed to parse subprocess output"]
 
-            if errors != last_errors:  # only report new results
+            # Only send if results changed
+            if errors != last_errors:
                 channel = bot.get_channel(error_detector.SETTINGS_CHAN)
                 if channel:
-                    if errors:
-                        msg = "\n".join(errors)
-                        if len(msg) > 1900:
-                            msg = msg[:1900] + "\n... (truncated)"
-                        await channel.send(f"🚨 Updated scan report:\n```{msg}```")
-                    else:
-                        await channel.send("✅ Code scan: No issues found.")
+                    msg = "\n".join(errors) if errors else "✅ Code scan: No issues found."
+                    await send_in_chunks(channel, msg)
                 last_errors = errors
+            else:
+                print("[SCAN] No changes, skipping report.")
+
         except Exception as e:
             print(f"[SCAN] Error during subprocess scan: {e}")
 
         await asyncio.sleep(interval)
+
+
+async def send_in_chunks(channel, text: str, prefix="```", suffix="```"):
+    """Split long scan messages so Render/Discord don't choke."""
+    chunk_size = 1800
+    text = text or "✅ No issues found."
+    for i in range(0, len(text), chunk_size):
+        try:
+            await channel.send(f"{prefix}{text[i:i+chunk_size]}{suffix}")
+        except Exception as e:
+            print(f"[SCAN] Failed to send chunk: {e}")
 
 async def periodic_cleanup():
     """Periodically clean memory usage (runs every 1 hour)."""
