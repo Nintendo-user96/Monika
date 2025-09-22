@@ -860,6 +860,18 @@ async def on_ready():
         logger.info(f"✅ Connected to {len(bot.guilds)} guilds, {len(bot.users)} users.")
 
         # Background tasks
+        errors = await asyncio.to_thread(error_detector.scan_code)
+        channel = bot.get_channel(error_detector.SETTINGS_CHAN)
+        if channel:
+            if errors:
+                msg = "\n".join(errors)
+                if len(msg) > 1900:
+                    msg = msg[:1900] + "\n... (truncated)"
+                await channel.send(f"🚨 Startup scan found issues:\n```{msg}```")
+            else:
+                await channel.send("✅ Startup scan: No issues found.")
+
+        # Background periodic scan
         bot.loop.create_task(periodic_scan(bot, interval=45))
         asyncio.create_task(periodic_rescan())
         monitor_event_loop()
@@ -879,13 +891,15 @@ async def on_ready():
     print("[Bot] Wake-up mode finished. Back to normal idlechat.")
 
 async def periodic_scan(bot, interval: int = 45):
-    """Periodically rescan code and report only new issues."""
+    """Periodically rescan code in a background thread and report only new issues."""
     last_errors = None
 
     while True:
         try:
-            errors = error_detector.scan_code()
-            if errors != last_errors:  # only report if something changed
+            # Run scan_code() in a separate thread to avoid blocking
+            errors = await asyncio.to_thread(error_detector.scan_code)
+
+            if errors != last_errors:  # only report if results changed
                 channel = bot.get_channel(error_detector.SETTINGS_CHAN)
                 if channel:
                     if errors:
@@ -4911,4 +4925,3 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
-
