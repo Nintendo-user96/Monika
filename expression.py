@@ -603,7 +603,7 @@ class User_SpritesManager:
         sprites = self.EXPRESSION_SPRITES[outfit]
 
         # 🎂 Override Sep 21: Only one special expression allowed
-        if today.month == 9 and today.day == 21:
+        if today.month == 9 and today.day == 22:
             allowed_expressions = "green dress"   # change to the outfit you want
             if emotion not in allowed_expressions:
                 # fallback: pick the first allowed one
