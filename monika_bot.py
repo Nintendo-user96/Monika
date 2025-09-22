@@ -12,6 +12,7 @@ import threading
 import typing
 import atexit
 import requests
+import json
 
 import discord
 from discord import File, app_commands
@@ -764,6 +765,7 @@ async def idlechat_loop():
 @bot.event
 async def on_connect():
     await bot.change_presence(status=discord.Status.online, activity=discord.Game("Rebooting..."))
+    await on_ready()
 
 @bot.event
 async def on_ready():
@@ -890,16 +892,26 @@ async def on_ready():
     is_waking_up = False
     print("[Bot] Wake-up mode finished. Back to normal idlechat.")
 
-async def periodic_scan(bot, interval: int = 45):
-    """Periodically rescan code in a background thread and report only new issues."""
+async def periodic_scan(bot, interval: int = 300):  # every 5 min
     last_errors = None
-
     while True:
         try:
-            # Run scan_code() in a separate thread to avoid blocking
-            errors = await asyncio.to_thread(error_detector.scan_code)
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, "error_detector.py", "--scan-only",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+            stdout, stderr = await proc.communicate()
 
-            if errors != last_errors:  # only report if results changed
+            if stderr:
+                print("[SCAN] Subprocess error:", stderr.decode())
+
+            try:
+                errors = json.loads(stdout.decode())
+            except Exception:
+                errors = ["⚠️ Failed to parse subprocess output"]
+
+            if errors != last_errors:  # only report new results
                 channel = bot.get_channel(error_detector.SETTINGS_CHAN)
                 if channel:
                     if errors:
@@ -910,10 +922,8 @@ async def periodic_scan(bot, interval: int = 45):
                     else:
                         await channel.send("✅ Code scan: No issues found.")
                 last_errors = errors
-            else:
-                print("[SCAN] No changes since last check, skipping report.")
         except Exception as e:
-            print(f"[SCAN] Error during periodic scan: {e}")
+            print(f"[SCAN] Error during subprocess scan: {e}")
 
         await asyncio.sleep(interval)
 
@@ -947,16 +957,6 @@ status_info = {
     "sleep_reason": "N/A",
     "wake_reason": "Started up"
 }
-
-async def watchdog():
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        await asyncio.sleep(15)
-        now = time.time()
-        if now - status_info["last_seen"] > 15:
-            logging.warning("⚠️ Watchdog: Bot heartbeat stale (>15s). Keeping process alive...")
-        else:
-            logging.info("✅ Watchdog: Bot heartbeat OK")
 
 @bot.event
 async def on_command_error(ctx, error):
