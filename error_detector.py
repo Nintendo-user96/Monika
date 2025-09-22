@@ -67,6 +67,15 @@ def scan_code():
         print("[SCAN] ✅ No issues found.")
     return errors
 
+async def safe_send(channel, content=None, embed=None):
+    try:
+        if content:
+            return await channel.send(content)
+        elif embed:
+            return await channel.send(embed=embed)
+    except Exception as e:
+        print(f"[SCAN] ⚠️ Failed to send message: {e}")
+        return None
 
 # === Send scan results into Discord ===
 async def send_scan_results(bot: discord.Client):
