@@ -152,7 +152,7 @@ MON_CHANNEL_NAMES = [
 ]
 
 OFF_LIMITS_CHANNELS = [
-    "get-roles", "rules", "announcements", "osu", "food", "pets", "teasers", "owo", "tubberbox"
+    "get-roles", "rules", "announcements", "osu", "food", "pets", "teasers", "owo", "tubberbox", "member-help", "welcome"
 ]
 
 NO_CHAT_CHANNELS = [
@@ -764,6 +764,26 @@ async def idlechat_loop():
                 await asyncio.sleep(delay)
 
 @bot.event
+async def on_connect():
+    async def rebooting_animation():
+        statuses = [
+            ("Rebooting.", 0.5),
+            ("Rebooting..", 0.5),
+            ("Rebooting...", 0.5),
+        ]
+        while True:
+            for text, delay in statuses:
+                if getattr(bot, "is_ready_done", False):
+                    return  # stop loop once ready is fully done
+                await bot.change_presence(
+                    status=discord.Status.do_not_disturb,
+                    activity=discord.Game(text)
+                )
+                await asyncio.sleep(delay)
+
+    asyncio.create_task(rebooting_animation())
+
+@bot.event
 async def on_ready():
     global idlechat_task, is_waking_up, key_manager
 
@@ -866,11 +886,38 @@ async def on_ready():
             else:
                 await channel.send("✅ Startup scan: No issues found.")
 
-        asyncio.create_task(periodic_scan(bot))
+        bot.loop.create_task(periodic_scan(bot))
         bot.loop.create_task(periodic_cleanup())
 
     except Exception as e:
         logger.exception(f"[on_ready] Failed: {e}")
+
+    # Run your setup code (memory load, trackers, key manager, etc.)
+    try:
+        # Example placeholder for setup
+        await asyncio.sleep(10)  # simulate long setup tasks
+    except Exception as e:
+        print(f"[Startup] ⚠️ Error during setup: {e}")
+
+    # ✅ Setup finished
+    bot.is_ready_done = True  
+
+    # 🌙 Transition presence before final ready
+    await bot.change_presence(
+        status=discord.Status.idle,
+        activity=discord.Game("Finishing setup…")
+    )
+    await asyncio.sleep(3)  # short grace period
+
+    # 💚 Final status
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Game("Ready to chat! 💚")
+    )
+    print("[Bot] Done and ready to chat.")
+
+    await asyncio.sleep(3)
+    await bot.change_presence(activity=None)
 
     key_manager.start_idle_rotator()
 
@@ -1280,30 +1327,6 @@ async def load_memories_from_guilds():
 
 async def on_startup():
     """Startup memory restoration: channel backup first, else guild scan."""
-    statuses = [
-        ("Rebooting.", 1),
-        ("Rebooting..", 0.5),
-        ("Rebooting...", 0.5),
-        ("Rebooting.", 1),
-        ("Rebooting..", 0.5),
-        ("Rebooting...", 0.5),
-        ("Rebooting.", 1),
-        ("Rebooting..", 0.5),
-        ("Rebooting...", 0.5),
-        ("Rebooting.", 1),
-        ("Rebooting..", 0.5),
-        ("Rebooting...", 0.5),
-        ("Rebooting.", 1),
-        ("Rebooting..", 0.5),
-        ("Rebooting...", 0.5),
-        ("Rebooting.", 1),
-        ("Rebooting..", 0.5),
-        ("Rebooting...", 0.5),
-    ]
-    for text, delay in statuses:
-        await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game(text))
-        if delay > 0:
-            await asyncio.sleep(delay)
     print("[Startup] Loading Monika’s memory...")
 
     channel = get_memory_channel()
@@ -1537,6 +1560,7 @@ async def on_guild_leave(guild):
 
 @bot.event
 async def on_disconnect():
+    bot.is_ready_done = False
     await on_shutdown()
 
 @bot.event
@@ -1668,12 +1692,12 @@ async def on_wake_up(reason: str = "I'm back online!"):
             except Exception as e:
                 print(f"[Wakeup Error] Could not send to #{target_channel.name} in {guild.name}: {e}")
 
-    statuses = [
+    morning = [
         ("Ready to chat! 💚", 0),
         ("Ready to chat!! 💚", 0.5),
         ("Ready to chat!!! 💚", 1)
     ]
-    for text, delay in statuses:
+    for text, delay in morning:
         await bot.change_presence(status=discord.Status.online, activity=discord.Game(text))
         if delay > 0:
             await asyncio.sleep(delay)
@@ -4464,7 +4488,7 @@ async def broadcast(
     wait_minutes = 3
     update_interval = 30
     is_broadcasting = True
-    await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game("📣 Announcement in progress..."))
+    await bot.change_presence(activity=discord.Game("📣 Announcement in progress..."))
 
     try:
         # --- Reaction sets ---
@@ -4964,4 +4988,3 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
-
