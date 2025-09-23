@@ -1490,6 +1490,28 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         role = await guild.create_role(name=role_name, color=discord.Color.teal())
         print(f"[AutoRel] Created new role: {role_name}")
 
+    if str(user_member.id) == str(DOKIGUY) or str(ZERO):
+        boyfriend_role_name = f"{bot_name} - Boyfriend"
+        boyfriend_role = discord.utils.get(guild.roles, name=boyfriend_role_name)
+        if not boyfriend_role:
+            boyfriend_role = await guild.create_role(
+                name=boyfriend_role_name,
+                color=discord.Color.dark_green()
+            )
+            print(f"[AutoRel] Created role: {boyfriend_role_name}")
+        girlfriend_role_name = f"{user_member.display_name} - girlfriend"
+        girlfriend_role = discord.utils.get(guild.roles, name=girlfriend_role_name)
+        if not girlfriend_role:
+            girlfriend_role = await guild.create_role(
+                name=girlfriend_role_name,
+                color=discord.Color.dark_green()
+            )
+            print(f"[AutoRel] Created role: {girlfriend_role_name}")
+        if girlfriend_role not in user_member.roles:
+            await user_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
+        return
+
     if role not in user_member.roles:
         await user_member.add_roles(role, reason=f"Auto relationship: {new_relationship}")
         print(f"[AutoRel] {user_member.display_name} → {role_name}")
@@ -4988,3 +5010,4 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
