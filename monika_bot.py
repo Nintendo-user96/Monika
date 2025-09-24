@@ -121,9 +121,9 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 # Environment Variables
 # ==============================
 TOKEN = os.getenv("DISCORD_TOKEN")
-IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", 0))
-MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHANNEL_ID", 0))
-REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", 0))
+IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", "0"))
+MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHANNEL_ID", "0"))
+REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
 MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
 DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
 ZERO_GUILD_ID = int(os.getenv("ZERO_GUILD_ID", "0"))
@@ -142,6 +142,9 @@ SAYORI = os.getenv("SAYORI_ID", "1375064525396775004")
 NATSUKI = os.getenv("NATSUKI_ID", "1375065750502379631")
 YURI = os.getenv("YURI_ID", "1375066975423955025")
 MC = os.getenv("MC_ID", "1375070168895590430")
+
+DOKIGUY_ID = os.getenv("DOKIGUY_ID", "353609147822112770")
+ZERO_ID = os.getenv("ZERO_ID", "175017564085288961")
 
 FRIENDS = [SAYORI, NATSUKI, YURI, MC]
 
@@ -1490,7 +1493,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         role = await guild.create_role(name=role_name, color=discord.Color.teal())
         print(f"[AutoRel] Created new role: {role_name}")
 
-    if str(user_member.id) == str(DOKIGUY) or str(ZERO):
+    if str(user_member.id) == str(DOKIGUY_ID) or str(ZERO_ID):
         boyfriend_role_name = f"{bot_name} - Boyfriend"
         boyfriend_role = discord.utils.get(guild.roles, name=boyfriend_role_name)
         if not boyfriend_role:
@@ -5010,4 +5013,3 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
-
