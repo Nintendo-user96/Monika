@@ -4427,6 +4427,15 @@ async def report(
     }
     bot.dispatch("report", report_entry)
 
+async def safe_send_announcement(channel, **kwargs):
+    """Send a message with retry + cooldown to avoid rate limits."""
+    try:
+        return await channel.send(**kwargs)
+    except discord.HTTPException as e:
+        print(f"[Broadcast Error] {e}, retrying in 3s...")
+        await asyncio.sleep(3)
+        return await channel.send(**kwargs)
+
 async def safe_add_reaction(msg: discord.Message, emoji: str):
     """Safely add reaction whether Unicode or custom emoji."""
     try:
@@ -4482,6 +4491,70 @@ async def custom_reactions_autocomplete(interaction: discord.Interaction, curren
 
     return choices[:25]
 
+async def send_announcement(
+    guild,
+    gid,
+    channel,
+    embed,
+    reactions,
+    announcement_id,
+    sent_messages,
+    progress_counter,
+    total_servers,
+):
+    """Safely send announcement embed and track progress without crashing."""
+    global success_count, failure_count
+
+    try:
+        # Attempt to send message safely
+        msg = await safe_send_announcement(channel, embed=embed)
+        if not msg:
+            raise RuntimeError("Message failed to send")
+
+        # Add reactions (ignore failures for missing perms or rate limits)
+        for r in reactions:
+            try:
+                await safe_add_reaction(msg, r)
+            except discord.Forbidden:
+                print(f"[Broadcast Warning] Missing reaction permission in {guild.name}")
+            except discord.HTTPException as e:
+                print(f"[Broadcast Reaction Error] {e}")
+
+        # Post a small "progress" message
+        try:
+            progress = await safe_send_announcement(channel, content="⏳ Collecting reactions...")
+            sent_messages.append((msg, progress))
+        except discord.Forbidden:
+            progress = None
+
+        # Record the announcement safely
+        server_tracker.guilds[gid].setdefault("announcements", [])
+        if announcement_id not in server_tracker.guilds[gid]["announcements"]:
+            server_tracker.guilds[gid]["announcements"].append(announcement_id)
+        server_tracker.guilds[gid]["last_broadcast_time"] = datetime.datetime.now(
+            datetime.timezone.utc
+        ).isoformat()
+
+        await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
+
+        success_count += 1
+        progress_counter[0] += 1
+        print(f"[Broadcast] ✅ Sent to {guild.name} in #{channel.name}")
+        print(f"[Broadcast] Progress: {progress_counter[0]} / {total_servers}")
+
+    except discord.Forbidden:
+        print(f"[Broadcast Error] Missing permission in {guild.name}")
+        failure_count += 1
+    except discord.HTTPException as e:
+        print(f"[Broadcast HTTP Error] {e}")
+        failure_count += 1
+    except Exception as e:
+        print(f"[Broadcast Unexpected Error] in {guild.name}: {e}")
+        failure_count += 1
+    finally:
+        progress_counter[0] += 1
+        print(f"[Broadcast] Progress: {progress_counter[0]} / {total_servers} servers (completed step)")
+
 @bot.tree.command(
     name="broadcast", 
     description="Send an announcement to all servers/channels for me to speak in."
@@ -4494,8 +4567,8 @@ async def broadcast(
     title: str,
     message: str,
     color_hex: str = "15f500",
-    reaction_set: str = "default",   # default, poll, maintenance, or custom
-    custom_reactions: str = None     # comma-separated emojis
+    reaction_set: str = "default",  # default, poll, maintenance, or custom
+    custom_reactions: str = None    # comma-separated emojis
 ):
     await interaction.response.defer(ephemeral=True)
 
@@ -4538,25 +4611,23 @@ async def broadcast(
 
         embed = discord.Embed(title=title, description=message, color=color)
 
-        # 🔹 Detect image links and display the first one
+        # 🔹 Detect and display first image link
         image_urls = re.findall(r'(https?://\S+\.(?:png|jpg|jpeg|gif))', message)
         if image_urls:
             embed.set_image(url=image_urls[0])
-            # Also clean up the text version (hide the link)
             clean_desc = re.sub(r'https?://\S+\.(?:png|jpg|jpeg|gif)', '', message).strip()
             if clean_desc:
                 embed.description = clean_desc
 
         embed.set_footer(
-            text="Pick your reaction to vote. Use /report for any bugs, errors, ideas, or complaints for feedback. "
-                 "Please wait until I finish sharing the announcement so we can speak again."
+            text="Pick your reaction to vote. Use /report for bugs, ideas, or feedback."
         )
 
-        success_count, failure_count, skip_count = 0, 0, 0
+        success_count = failure_count = skip_count = 0
         sent_messages = []
         announcement_id = f"{title}:{message}"
 
-        # --- Step 1: Find servers to announce ---
+        # --- Step 1: Locate servers ---
         servers_to_announce = []
         for guild in bot.guilds:
             gid = str(guild.id)
@@ -4566,24 +4637,20 @@ async def broadcast(
             if last_time:
                 last_dt = datetime.datetime.fromisoformat(last_time)
                 if (datetime.datetime.now(datetime.timezone.utc) - last_dt).total_seconds() < 86400:
-                    print(f"[Broadcast] ⏭ Skipping {guild.name}, announced in last 24h")
+                    print(f"[Broadcast] ⏭ Skipping {guild.name}, already announced recently")
                     skip_count += 1
                     continue
 
             if announcement_id in server_tracker.guilds[gid].get("announcements", []):
-                print(f"[Broadcast] ⏭ Skipping {guild.name}, already logged")
                 skip_count += 1
                 continue
 
-            channel = None
-            for c in guild.text_channels:
-                if c.permissions_for(guild.me).send_messages:
-                    if c.name not in OFF_LIMITS_CHANNELS:
-                        channel = c
-                        break
-
+            channel = next(
+                (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.name not in OFF_LIMITS_CHANNELS),
+                None
+            )
             if not channel:
-                print(f"[Broadcast] ❌ No available channel in {guild.name} ({guild.id})")
+                print(f"[Broadcast] ❌ No available channel in {guild.name}")
                 failure_count += 1
                 continue
 
@@ -4592,56 +4659,51 @@ async def broadcast(
         if not servers_to_announce:
             await interaction.followup.send(
                 f"⚠️ No servers need this announcement.\n"
-                f"⏭ Skipped **{skip_count}** servers (already had it).\n"
-                f"❌ Failed in **{failure_count}** servers.",
+                f"⏭ Skipped: **{skip_count}**, ❌ Failed: **{failure_count}**",
                 ephemeral=True
             )
             return
 
-        # --- Step 2: Send warning messages ---
+        # --- Step 2: Send warnings ---
         confirmed_servers = []
         for guild, gid, channel in servers_to_announce:
             try:
-                await safe_send_announcement(channel, content="⚠️ **Attention everyone!** An announcement will begin shortly. Please stand by...")
+                await safe_send_announcement(channel, content="⚠️ **Attention everyone!** A broadcast will begin shortly...")
                 confirmed_servers.append((guild, gid, channel))
             except Exception as e:
                 print(f"[Broadcast Warning Error] in {guild.name}: {e}")
                 failure_count += 1
 
-        await asyncio.sleep(10)
+        await asyncio.sleep(8)
 
-        # --- Step 3: Send the actual announcement ---
+        # --- Step 3: Dispatch actual broadcast ---
         progress_counter = [0]
         total_servers = len(confirmed_servers)
-        batch_size = 5
 
-        for i in range(0, len(confirmed_servers), batch_size):
-            batch = confirmed_servers[i:i + batch_size]
-            tasks = [
-                send_announcement(guild, gid, channel, embed, reactions, announcement_id, sent_messages, progress_counter, total_servers)
+        for i in range(0, total_servers, 5):
+            batch = confirmed_servers[i:i + 5]
+            await asyncio.gather(*[
+                send_announcement(guild, gid, channel, embed, reactions, announcement_id,
+                                  sent_messages, progress_counter, total_servers)
                 for guild, gid, channel in batch
-            ]
-            await asyncio.gather(*tasks)
-            await asyncio.sleep(2)
+            ])
+            await asyncio.sleep(1.5)
 
-        # --- Step 4: Collect votes (single pass after wait) ---
+        # --- Step 4: Wait for reactions ---
         await asyncio.sleep(wait_minutes * 60)
 
-        # --- Step 5: Final pass ---
-        like_total, dislike_total, maybe_total = 0, 0, 0
+        # --- Step 5: Count votes and finalize ---
+        like_total = dislike_total = maybe_total = 0
         custom_totals = {}
 
         for orig, progress in sent_messages:
             try:
                 refreshed = await orig.channel.fetch_message(orig.id)
-                counts = {}
-                for reaction in refreshed.reactions:
-                    emoji = str(reaction.emoji)
-                    users = [u async for u in reaction.users() if u.id != bot.user.id]
-                    counts[emoji] = len(users)
+                counts = {str(r.emoji): len([u async for u in r.users() if u.id != bot.user.id]) for r in refreshed.reactions}
 
-                result_line = " | ".join([f"{emoji} {count}" for emoji, count in counts.items()])
-                await progress.edit(content=f"{result_line} (final)")
+                result_line = " | ".join(f"{e} {c}" for e, c in counts.items())
+                if progress:
+                    await progress.edit(content=f"{result_line} (final)")
 
                 if reaction_set == "default":
                     like_total += counts.get("✅", 0)
@@ -4653,33 +4715,23 @@ async def broadcast(
                 elif reaction_set == "custom":
                     for emoji in reactions:
                         custom_totals[emoji] = custom_totals.get(emoji, 0) + counts.get(emoji, 0)
-                elif reaction_set == "maintenance":
-                    continue
-            except discord.errors.NotFound:
-                print("[Broadcast Fetch Error] Original or progress message deleted.")
             except Exception as e:
                 print(f"[Broadcast Fetch Error] {e}")
 
-        # --- Step 6: Build summary ---
-        if reaction_set == "default":
-            summary_lines = [f"✅ Likes: **{like_total}**", f"❌ Dislikes: **{dislike_total}**"]
+        # --- Step 6: Owner summary ---
+        if reaction_set == "maintenance":
+            summary_lines = ["🛠️ Maintenance mode: Reactions were not tracked."]
+        elif reaction_set == "default":
+            summary_lines = [f"✅ Likes: {like_total}", f"❌ Dislikes: {dislike_total}"]
         elif reaction_set == "poll":
-            summary_lines = [
-                f"👍 Likes: **{like_total}**",
-                f"👎 Dislikes: **{dislike_total}**",
-                f"🤔 Maybe: **{maybe_total}**"
-            ]
-        elif reaction_set == "custom":
-            summary_lines = [f"{emoji}: **{total}**" for emoji, total in custom_totals.items()]
+            summary_lines = [f"👍 Likes: {like_total}", f"👎 Dislikes: {dislike_total}", f"🤔 Maybe: {maybe_total}"]
         else:
-            summary_lines = ["🛠️ Maintenance Mode — reactions not counted."]
+            summary_lines = [f"{emoji}: {total}" for emoji, total in custom_totals.items()]
 
-        # --- Step 7: Final owner summary ---
         await interaction.followup.send(
             f"✅ Broadcast finished.\n"
-            f"Sent successfully to **{success_count}** servers.\n"
-            f"⚠️ Failed in **{failure_count}** servers.\n"
-            f"⏭ Skipped **{skip_count}** servers (already had this announcement).\n\n"
+            f"Sent to **{success_count}** servers.\n"
+            f"⚠️ Failed: **{failure_count}**, Skipped: **{skip_count}**.\n\n"
             + "\n".join(summary_lines),
             ephemeral=True
         )
@@ -4993,5 +5045,6 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
