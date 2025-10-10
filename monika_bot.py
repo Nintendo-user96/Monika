@@ -796,34 +796,32 @@ async def on_connect():
 
 @bot.event
 async def on_ready():
-    global is_waking_up, key_manager, image_key_manager
+    global is_waking_up, key_manager
+
+    if getattr(bot, "already_ready", False):
+        print("[Startup] Skipping duplicate on_ready (reconnect).")
+        return
+    bot.already_ready = True
 
     is_waking_up = True
     print("---------------------------------------------------")
-
-    # Initialize keys quickly
     if key_manager is None:
         key_manager = await init_key_manager()
-
-    print(f"✅ Logged in as {bot.user.name}")
+    print(f"✅ Logged in as {bot.user.name} ({bot.user.id})")
     print("---------------------------------------------------")
 
     update_heartbeat()
     await error_detector.send_scan_results(bot)
 
-    # ✅ Kick off heavy tasks safely
+    # Light presence only once
+    await bot.change_presence(status=discord.Status.idle, activity=discord.Game("Waking up…"))
+
+    # Start background startup sequence
     asyncio.create_task(startup_full_init())
 
-    # Lightweight presence setup
-    try:
-        await bot.change_presence(status=discord.Status.idle, activity=discord.Game("Finishing setup…"))
-        await asyncio.sleep(2)
-        await bot.change_presence(status=discord.Status.online, activity=discord.Game("Ready to chat! 💚"))
-    except Exception as e:
-        print(f"[Startup] ⚠️ Presence setup failed: {e}")
-
+    print(f"[Startup] ✅ Connected to {len(bot.guilds)} guilds, running background initialization…")
     is_waking_up = False
-    print("[Bot] Wake-up mode finished. Back to normal idlechat.")
+    print("[Bot] Wake-up mode finished.")
 
 async def startup_full_init():
     """Run heavy startup routines safely in background."""
@@ -888,7 +886,8 @@ async def startup_full_init():
         bot.loop.create_task(periodic_cleanup())
         asyncio.create_task(daily_cycle_task())
 
-        print("✅ Full startup complete.")
+        await bot.change_presence(status=discord.Status.online, activity=discord.Game("Ready to chat! 💚"))
+        print("✅ Initialization complete.")
 
     except Exception as e:
         print(f"[Startup Error] {e}")
@@ -5015,6 +5014,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
