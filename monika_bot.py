@@ -789,7 +789,7 @@ async def safe_change_presence(status=None, activity=None, delay: float = 2.0):
 
 @bot.event
 async def on_ready():
-    global is_waking_up, key_manager, image_key_manager
+    global is_waking_up, key_manager
 
     if getattr(bot, "already_ready", False):
         print("[Startup] Skipping duplicate on_ready (reconnect).")
@@ -805,8 +805,6 @@ async def on_ready():
     # Initialize key managers once
     if key_manager is None:
         key_manager = await init_key_manager()
-    if image_key_manager is None:
-        image_key_manager = await init_image_key_manager()
 
     await safe_change_presence(status=discord.Status.idle, activity=discord.Game("Rebooting..."))
     asyncio.create_task(startup_full_init())
@@ -887,7 +885,6 @@ async def startup_full_init():
         bot.loop.create_task(periodic_scan(bot))
         bot.loop.create_task(periodic_cleanup())
         asyncio.create_task(daily_cycle_task())
-        asyncio.create_task(background_memory_sync())
 
         # Final presence (safe)
         await safe_change_presence(status=discord.Status.online, activity=discord.Game("Ready to chat! 💚"))
@@ -5020,6 +5017,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
