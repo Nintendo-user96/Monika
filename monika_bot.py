@@ -770,133 +770,100 @@ async def idlechat_loop():
 
                 await asyncio.sleep(delay)
 
-_last_presence_time = 0
-_presence_lock = asyncio.Lock()
-
-async def safe_change_presence(status=None, activity=None, delay: float = 2.0):
-    """Safely change bot presence, throttled to prevent Discord rate limits."""
-    global _last_presence_time
-    async with _presence_lock:
-        now = time.time()
-        since = now - _last_presence_time
-        if since < delay:
-            await asyncio.sleep(delay - since)
-        try:
-            await bot.change_presence(status=status, activity=activity)
-            _last_presence_time = time.time()
-        except Exception as e:
-            print(f"[Presence] ⚠️ Failed: {e}")
-
-
 @bot.event
 async def on_ready():
     global idlechat_task, is_waking_up, key_manager
 
-    if getattr(bot, "already_ready", False):
-        print("[Startup] Skipping duplicate on_ready (reconnect).")
-        return
-    bot.already_ready = True
-
     is_waking_up = True
+
     print("---------------------------------------------------")
     key_manager = await init_key_manager()
+
+    # Attach Monika’s hooks
     key_manager.on_all_keys_exhausted = lambda: on_sleeping("All OpenAI keys exhausted")
     key_manager.on_key_recovered = lambda key: on_wake_up(f"Key {key[:8]} recovered")
-
-    print(f"✅ Logged in as {bot.user.name} (ID: {bot.user.id})")
+    print("---------------------------------------------------")
+    print(f"just {bot.user.name}")
     print("---------------------------------------------------")
 
-    update_heartbeat()
+    update_heartbeat()  # refresh on connect
     await error_detector.send_scan_results(bot)
 
-    # Temporary “booting up” presence
     await safe_change_presence(status=discord.Status.idle, activity=discord.Game("Rebooting..."))
 
-    # Run initialization in background
-    asyncio.create_task(startup_full_init())
+    app_info = await bot.application_info()
+    bot_owner = app_info.owner
 
-    print("[Startup] Background initialization started.")
+    # 🔹 Role + memory restoration
+    for guild in bot.guilds:
+        monika_member = guild.get_member(bot.user.id)
 
-
-async def startup_full_init():
-    """Run heavy startup routines safely in background."""
-    try:
-        app_info = await bot.application_info()
-        bot_owner = app_info.owner
-
-        # --- Role and memory restoration ---
-        for guild in bot.guilds:
-            await asyncio.sleep(0.2)
-            monika_member = guild.get_member(bot.user.id)
-            if not monika_member:
-                continue
-
-            creator_role_name = f"Creator of {bot.user.name}"
-            creator_role = discord.utils.get(guild.roles, name=creator_role_name)
-            if creator_role:
-                owner_member = guild.get_member(bot_owner.id or OWNER_ID)
-                if owner_member and creator_role in owner_member.roles:
-                    print(f"[Startup] {owner_member.display_name} is the Creator of {bot.user.name} in {guild.name}")
-                else:
-                    print(f"[Startup] Creator role exists in {guild.name} but the owner does not have it.")
+        creator_role_name = f"Creator of {bot.user.name}"
+        creator_role = discord.utils.get(guild.roles, name=creator_role_name)
+        if creator_role:
+            owner_member = guild.get_member(bot_owner.id or OWNER_ID)
+            if owner_member and creator_role in owner_member.roles:
+                print(f"[Startup] {owner_member.display_name} is the Creator of {bot.user.name} in {guild.name}")
             else:
-                print(f"[Startup] No '{creator_role_name}' role found in {guild.name}")
+                print(f"[Startup] Creator role exists in {guild.name} but the owner does not have it.")
+        else:
+            print(f"[Startup] No '{creator_role_name}' role found in {guild.name}")
 
-            # Restore Personality Role
-            saved_personality = server_tracker.get_personality(guild.id)
-            if saved_personality:
-                role = discord.utils.get(guild.roles, name=f"Personality - {saved_personality}")
-                if role and role not in monika_member.roles:
-                    try:
-                        await monika_member.add_roles(role)
-                    except discord.Forbidden:
-                        print(f"[Startup Error] Missing permission to add {role.name} in {guild.name}")
-
-            # Restore Relationship Role
-            saved_relationship = server_tracker.get_relationship_type(guild.id)
-            saved_relationship_user = server_tracker.get_relationship_with(guild.id)
-            if saved_relationship and saved_relationship_user:
+        # Restore roles / personality / relationships
+        saved_personality = server_tracker.get_personality(guild.id)
+        if saved_personality:
+            role = discord.utils.get(guild.roles, name=f"Personality - {saved_personality}")
+            if role and monika_member and role not in monika_member.roles:
                 try:
-                    user_member = guild.get_member(int(saved_relationship_user))
-                    rel_role_name_user = f"{bot.user.name} - {saved_relationship}" or f"{bot.user.name} {saved_relationship}"
-                    rel_role_name_monika = (
-                        f"{user_member.display_name} - {saved_relationship}" or f"{user_member.display_name} {saved_relationship}" if user_member else None
-                    )
-                
-                    user_role = discord.utils.get(guild.roles, name=rel_role_name_user)
-                    if user_member and user_role and user_role not in user_member.roles:
-                        await user_member.add_roles(user_role)
+                    await monika_member.add_roles(role)
+                except discord.Forbidden:
+                    print(f"[Startup Error] Missing permission to add {role.name} in {guild.name}")
 
-                    if rel_role_name_monika:
-                        bot_role = discord.utils.get(guild.roles, name=rel_role_name_monika)
-                        if bot_role and bot_role not in monika_member.roles:
-                            await monika_member.add_roles(bot_role)
-                except Exception as e:
-                    print(f"[Startup Relationship Restore Error] {e}")
+        saved_relationship = server_tracker.get_relationship_type(guild.id)
+        saved_relationship_user = server_tracker.get_relationship_with(guild.id)
+        if saved_relationship and saved_relationship_user:
+            try:
+                user_member = guild.get_member(int(saved_relationship_user))
+                rel_role_name_user = f"{bot.user.name} - {saved_relationship}" or f"{bot.user.name} {saved_relationship}"
+                rel_role_name_monika = f"{user_member.display_name} - {saved_relationship}" or f"{user_member.display_name} {saved_relationship}" if user_member else None
 
-            # Track users
-            for member in guild.members:
-                if member.bot:
-                    continue
-                user_tracker.track_user(member.id, member.display_name, member.bot)
-                rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
-                if rel_roles:
-                    for rel_role in rel_roles:
-                        relationship_type = rel_role.name.replace(f"{bot.user.name} - ", "").strip()
-                        user_tracker.set_relationship(member.id, relationship_type)
-                        print(f"[Startup] {member.display_name} is marked as '{relationship_type}' with Monika.")
-                else:
-                    user_tracker.set_relationship(member.id, None)
+                user_role = discord.utils.get(guild.roles, name=rel_role_name_user)
+                if user_member and user_role and user_role not in user_member.roles:
+                    await user_member.add_roles(user_role)
 
-        # --- Slash commands + memory restore ---
+                if rel_role_name_monika:
+                    bot_role = discord.utils.get(guild.roles, name=rel_role_name_monika)
+                    if monika_member and bot_role and bot_role not in monika_member.roles:
+                        await monika_member.add_roles(bot_role)
+            except Exception as e:
+                print(f"[Startup Role Restore Error] {e}")
+
+        for member in guild.members:
+            if member.bot:
+                continue
+            user_tracker.track_user(member.id, member.display_name, member.bot)
+
+            rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
+            if rel_roles:
+                for rel_role in rel_roles:
+                    relationship_type = rel_role.name.replace(f"{bot.user.name} - ", "").strip()
+                    user_tracker.set_relationship(member.id, relationship_type)
+                    print(f"[Startup] {member.display_name} is marked as '{relationship_type}' with Monika.")
+            else:
+                user_tracker.set_relationship(member.id, None)
+
+    # Slash command sync + restore memory
+    try:
         await bot.tree.sync()
         logger.info("✅ Slash commands synced.")
+
         await on_startup()
         logger.info("✅ Memory restored.")
 
-        logger.info(f"✅ Connected to {len(bot.guilds)} guilds and {len(bot.users)} users.")
+        logger.info(f"✅ Logged in as {bot.user} (ID: {bot.user.id})")
+        logger.info(f"✅ Connected to {len(bot.guilds)} guilds, {len(bot.users)} users.")
 
-        # --- Run background tasks safely ---
+        # 🔹 Run background tasks safely
         errors = await asyncio.to_thread(error_detector.scan_code)
         channel = bot.get_channel(error_detector.SETTINGS_CHAN)
         if channel:
@@ -910,32 +877,44 @@ async def startup_full_init():
 
         bot.loop.create_task(periodic_scan(bot))
         bot.loop.create_task(periodic_cleanup())
-        asyncio.create_task(daily_cycle_task())
-
-        # --- Final presence ---
-        await safe_change_presence(status=discord.Status.idle, activity=discord.Game("Finishing setup…"))
-        await asyncio.sleep(3)
-        await safe_change_presence(status=discord.Status.online, activity=discord.Game("Ready to chat! 💚"))
-
-        print("[Bot] ✅ Setup finished. Ready to chat.")
-
-        await asyncio.sleep(3)
-        await safe_change_presence(activity=None)
-        await vote_tracker.load(bot, SETTINGS_CHAN)
-
-        print("[Bot] Wake-up mode finished. Back to normal idlechat.")
 
     except Exception as e:
-        logger.exception(f"[Startup Error] {e}")
+        logger.exception(f"[on_ready] Failed: {e}")
 
-async def background_startup_tasks():
+    # Run your setup code (memory load, trackers, key manager, etc.)
     try:
-        await vote_tracker.load(bot, SETTINGS_CHAN)
-        await load_trackers()
-        await asyncio.sleep(1)
-        print("✅ All trackers loaded.")
+        # Example placeholder for setup
+        await asyncio.sleep(10)  # simulate long setup tasks
     except Exception as e:
-        print(f"[Startup Error] {e}")
+        print(f"[Startup] ⚠️ Error during setup: {e}")
+
+    # ✅ Setup finished
+    bot.is_ready_done = True  
+
+    # 🌙 Transition presence before final ready
+    await bot.change_presence(
+        status=discord.Status.idle,
+        activity=discord.Game("Finishing setup…")
+    )
+    await asyncio.sleep(3)  # short grace period
+
+    # 💚 Final status
+    await bot.change_presence(
+        status=discord.Status.online,
+        activity=discord.Game("Ready to chat! 💚")
+    )
+    print("[Bot] Done and ready to chat.")
+
+    await asyncio.sleep(3)
+    await bot.change_presence(activity=None)
+
+    if idle_chat_enabled or idlechat_loop() or monika_idle_conversation_task():
+        return []
+
+    await vote_tracker.load(bot, SETTINGS_CHAN)
+
+    is_waking_up = False
+    print("[Bot] Wake-up mode finished. Back to normal idlechat.")
         
 SCAN_INTERVAL = 1800  # 30 minutes (Render-safe)
 
@@ -5050,6 +5029,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
