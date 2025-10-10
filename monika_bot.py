@@ -814,7 +814,7 @@ async def on_ready():
      - Minimal presence updates to avoid gateway spam.
      - Starts background periodic tasks via safe_task wrapper.
     """
-    global is_waking_up, key_manager, image_key_manager
+    global is_waking_up, key_manager
 
     # avoid re-running heavy init on reconnects
     if getattr(bot, "already_ready", False):
@@ -831,8 +831,6 @@ async def on_ready():
     try:
         if key_manager is None:
             key_manager = await init_key_manager()
-        if image_key_manager is None:
-            image_key_manager = await init_image_key_manager()
         # Attach hooks (use callables that schedule the wake/sleep coros)
         key_manager.on_all_keys_exhausted = lambda: safe_create_task(on_sleeping("All OpenAI keys exhausted"), name="on_sleeping")
         key_manager.on_key_recovered = lambda key: safe_create_task(on_wake_up(f"Key {str(key)[:8]} recovered"), name="on_wake_up")
@@ -938,7 +936,6 @@ async def on_ready():
             bot.loop.create_task(safe_task("periodic_scan", periodic_scan, bot))
             bot.loop.create_task(safe_task("periodic_cleanup", periodic_cleanup))
             bot.loop.create_task(safe_task("daily_cycle", daily_cycle_task))
-            bot.loop.create_task(safe_task("background_memory_sync", background_memory_sync))
 
             # Load vote tracker (best-effort)
             try:
@@ -5086,6 +5083,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
