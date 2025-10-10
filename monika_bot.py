@@ -173,6 +173,10 @@ async def save_trackers():
     await user_tracker.save(bot, channel_id=USER_TRACKER_CHAN)
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
+async def load_trackers():
+    await user_tracker.load(bot, channel_id=USER_TRACKER_CHAN)
+    await server_tracker.load(bot, channel_id=SERVER_TRACKER_CHAN)
+    
 memory = MemoryManager()
 
 user_sprites = User_SpritesManager()
@@ -927,11 +931,20 @@ async def on_ready():
     if idle_chat_enabled or idlechat_loop() or monika_idle_conversation_task():
         return []
 
-    await vote_tracker.load(bot, SETTINGS_CHAN)
+    asyncio.create_task(background_startup_tasks())
 
     is_waking_up = False
     print("[Bot] Wake-up mode finished. Back to normal idlechat.")
 
+async def background_startup_tasks():
+    try:
+        await vote_tracker.load(bot, SETTINGS_CHAN)
+        await load_trackers()
+        await asyncio.sleep(1)
+        print("✅ All trackers loaded.")
+    except Exception as e:
+        print(f"[Startup Error] {e}")
+        
 SCAN_INTERVAL = 1800  # 30 minutes (Render-safe)
 
 async def periodic_scan(bot, interval: int = SCAN_INTERVAL):
@@ -5045,6 +5058,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
