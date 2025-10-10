@@ -789,7 +789,7 @@ async def on_ready():
     update_heartbeat()  # refresh on connect
     await error_detector.send_scan_results(bot)
 
-    await safe_change_presence(status=discord.Status.idle, activity=discord.Game("Rebooting..."))
+    await bot.change_presence(status=discord.Status.idle, activity=discord.Game("Rebooting..."))
 
     app_info = await bot.application_info()
     bot_owner = app_info.owner
@@ -5029,6 +5029,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
