@@ -4494,7 +4494,7 @@ async def broadcast(
     title: str,
     message: str,
     color_hex: str = "15f500",
-    reaction_set: str = "default",   # default, poll, or custom
+    reaction_set: str = "default",   # default, poll, maintenance, or custom
     custom_reactions: str = None     # comma-separated emojis
 ):
     await interaction.response.defer(ephemeral=True)
@@ -4537,6 +4537,16 @@ async def broadcast(
             color = discord.Color.pink()
 
         embed = discord.Embed(title=title, description=message, color=color)
+
+        # 🔹 Detect image links and display the first one
+        image_urls = re.findall(r'(https?://\S+\.(?:png|jpg|jpeg|gif))', message)
+        if image_urls:
+            embed.set_image(url=image_urls[0])
+            # Also clean up the text version (hide the link)
+            clean_desc = re.sub(r'https?://\S+\.(?:png|jpg|jpeg|gif)', '', message).strip()
+            if clean_desc:
+                embed.description = clean_desc
+
         embed.set_footer(
             text="Pick your reaction to vote. Use /report for any bugs, errors, ideas, or complaints for feedback. "
                  "Please wait until I finish sharing the announcement so we can speak again."
@@ -4644,7 +4654,7 @@ async def broadcast(
                     for emoji in reactions:
                         custom_totals[emoji] = custom_totals.get(emoji, 0) + counts.get(emoji, 0)
                 elif reaction_set == "maintenance":
-                    return
+                    continue
             except discord.errors.NotFound:
                 print("[Broadcast Fetch Error] Original or progress message deleted.")
             except Exception as e:
@@ -4662,7 +4672,8 @@ async def broadcast(
         elif reaction_set == "custom":
             summary_lines = [f"{emoji}: **{total}**" for emoji, total in custom_totals.items()]
         else:
-            summary_lines = ["maintenance"]
+            summary_lines = ["🛠️ Maintenance Mode — reactions not counted."]
+
         # --- Step 7: Final owner summary ---
         await interaction.followup.send(
             f"✅ Broadcast finished.\n"
@@ -4982,4 +4993,5 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
