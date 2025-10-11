@@ -935,7 +935,6 @@ async def on_ready():
             # Start periodic background tasks (wrap with safe_task to auto-restart)
             bot.loop.create_task(safe_task("periodic_scan", periodic_scan, bot))
             bot.loop.create_task(safe_task("periodic_cleanup", periodic_cleanup))
-            bot.loop.create_task(safe_task("daily_cycle", daily_cycle_task))
 
             # Load vote tracker (best-effort)
             try:
@@ -5083,6 +5082,7 @@ if __name__ == "__main__":
             print("⚠️ Fatal asyncio error, restarting in 10s")
             traceback.print_exc()
             time.sleep(10)
+
 
 
 
