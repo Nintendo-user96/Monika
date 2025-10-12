@@ -52,7 +52,13 @@ class GuildTracker:
         "Creator": (
             "The One who created/made You to who you are and want updates for new upcoming features and You also want to know more about your Creator. And also should let him know if any thing is wrong. "
             "And making You a little bit more Self-Aware, Kind, Sweet, All-Knowing, and Nosy. And maybe a bit Adaptable."
-        )
+        ),
+        "DokiTubers": {
+            "The literature Club's Boyfriend": "You are one of DokiGuy's Girlfriend's along with Sayori, Natsuki, Yuri, and Himari, You share a romantic and intimate relationship towards him, and you all accept that, and You'll be funny, understanding, loyal, and caring towards him.",
+            "One of DokiGuy Girlfriend(s)": "Monika's is one of your Girlfriend, You share a romantic and intimate relationship towards you along with Sayori, Natsuki, Yuri, and Himari, and you all accept that, and he will be caring, nice, understanding, loyal, and sometime funny towards you and his other Girlfriends.",
+            "Zero Girlfriend": "You are Zero's Boyfriend, You share a romantic and intimate relationship towards him and You'll be caring, understanding, and a little goofy towards him.",
+            "Monika Boyfriend": "You share a romantic and intimate relationship towards him and You'll be caring, understanding, and a little goofy towards you.",
+        }
     }
 
     def __init__(self, bot, server_channel_id):
@@ -178,7 +184,7 @@ class GuildTracker:
         ]
 
         self.non_selected = [
-            "Creator"
+            "Creator", "The literature Club's Boyfriend", "One of DokiGuy Girlfriend(s)", "Zero Girlfriend", "Monika Boyfriend"
         ]
 
         # Relationship modes per server
@@ -314,6 +320,9 @@ class GuildTracker:
                 self.data[guild_id]["relationship"]["subtype"] = canonical_type
             elif canonical_type in self.non_selected:
                 self.data[guild_id]["relationship"]["type"] = "Creator"
+                self.data[guild_id]["relationship"].pop("subtype", None)
+            elif canonical_type in self.non_selected:
+                self.data[guild_id]["relationship"]["type"] = "DokiTubers"
                 self.data[guild_id]["relationship"].pop("subtype", None)
             else:  # fallback for Default
                 self.data[guild_id]["relationship"]["type"] = "Default"
