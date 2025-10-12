@@ -1,6 +1,7 @@
 # performance.py
-import asyncio, functools, tracemalloc, gc, psutil, os, time
-from typing import Callable, Coroutine, Optional, Any
+import asyncio, functools, tracemalloc, gc, psutil, os, time, base64, hashlib, json
+from collections import OrderedDict
+from typing import Callable, Coroutine, Any, Optional
 
 # Start memory tracking
 tracemalloc.start()
@@ -63,22 +64,105 @@ def background_task(
         raise TypeError("background_task expects a coroutine function or coroutine instance.")
 
 # ✅ Async cache (TTL-based)
-def cache_result(ttl: int = 300):
-    """Cache results of a coroutine for `ttl` seconds."""
+def _to_primitive(obj):
+    """Convert object to JSON-serializable primitives for stable key generation."""
+    # Primitives
+    if obj is None or isinstance(obj, (bool, int, float, str)):
+        return obj
+
+    # Bytes -> base64 string
+    if isinstance(obj, (bytes, bytearray)):
+        return {"__bytes__": base64.b64encode(bytes(obj)).decode()}
+
+    # Iterable containers
+    if isinstance(obj, (list, tuple, set)):
+        return [_to_primitive(x) for x in obj]
+
+    if isinstance(obj, dict):
+        return {str(k): _to_primitive(v) for k, v in sorted(obj.items(), key=lambda kv: str(kv[0]))}
+
+    # Try common serializable helpers
+    try:
+        if hasattr(obj, "to_dict") and callable(obj.to_dict):
+            return _to_primitive(obj.to_dict())
+    except Exception:
+        pass
+
+    try:
+        if hasattr(obj, "dict") and callable(obj.dict):
+            return _to_primitive(obj.dict())
+    except Exception:
+        pass
+
+    # If object has an 'id' attribute (like many SDK objects), use class:name:id
+    try:
+        if hasattr(obj, "id"):
+            return {"__obj__": f"{obj.__class__.__name__}:{str(getattr(obj, 'id'))}"}
+    except Exception:
+        pass
+
+    # Last resort: repr string (safe fallback)
+    return {"__repr__": repr(obj)}
+
+
+def _make_cache_key(args, kwargs) -> str:
+    """Make a deterministic string key for (args, kwargs)."""
+    payload = {
+        "args": _to_primitive(args),
+        "kwargs": _to_primitive(kwargs)
+    }
+    # stable JSON string
+    s = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def cache_result(ttl: int = 300, max_size: Optional[int] = None):
+    """
+    Cache results of a coroutine for `ttl` seconds.
+    Optional max_size enforces LRU eviction when cache grows bigger than max_size.
+    Usage: @cache_result(ttl=60, max_size=200)
+    """
     def decorator(func: Callable[..., Coroutine[Any, Any, Any]]):
-        cache = {}
+        cache = OrderedDict()  # key -> (result, timestamp)
+
         @functools.wraps(func)
         async def wrapper(*args, **kwargs):
-            key = (args, frozenset(kwargs.items()))
+            key = _make_cache_key(args, kwargs)
             now = time.time()
+
+            # hit & fresh
             if key in cache:
-                result, timestamp = cache[key]
-                if now - timestamp < ttl:
+                result, ts = cache[key]
+                if now - ts < ttl:
+                    # move to end for LRU behavior
+                    try:
+                        cache.move_to_end(key)
+                    except Exception:
+                        pass
                     return result
+                else:
+                    # expired
+                    try:
+                        del cache[key]
+                    except Exception:
+                        pass
+
+            # call and store
             result = await func(*args, **kwargs)
             cache[key] = (result, now)
+
+            # enforce size limit
+            if max_size is not None:
+                while len(cache) > max_size:
+                    cache.popitem(last=False)  # pop oldest
+
             return result
+
+        # expose internals for debugging if needed
+        wrapper._cache = cache
+        wrapper._cache_ttl = ttl
         return wrapper
+
     return decorator
 
 # ✅ Memory usage
