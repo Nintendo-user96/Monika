@@ -24,7 +24,7 @@ from discord.ui import View, Button
 
 # Local modules
 import error_detector
-#import keepalive
+import keepalive
 from OpenAIKeys import (
     OpenAIKeyManager,
     openai_safe_call,
@@ -6043,37 +6043,55 @@ async def broadcast(
             ])
             await asyncio.sleep(1.5)
 
-        # --- Step 4: Wait for reactions ---
-        await asyncio.sleep(wait_minutes * 60)
+        # --- Step 4: Continuous live updates ---
+        print("[Broadcast] 🔄 Starting continuous reaction updates.")
+        update_interval = 2  # how often to refresh (seconds)
 
-        # --- Step 5: Count votes and finalize ---
-        like_total = dislike_total = maybe_total = 0
-        custom_totals = {}
+        try:
+            while True:
+                like_total, dislike_total, maybe_total = 0, 0, 0
+                custom_totals = {}
 
-        for orig, progress in sent_messages:
-            try:
-                refreshed = await orig.channel.fetch_message(orig.id)
-                counts = {}
-                for reaction in refreshed.reactions:
-                    emoji = str(reaction.emoji)
-                    users = [u async for u in reaction.users() if u.id != bot.user.id]
-                    counts[emoji] = len(users)
+                for orig, progress in sent_messages:
+                    try:
+                        refreshed = await orig.channel.fetch_message(orig.id)
+                        counts = {}
+                        for reaction in refreshed.reactions:
+                            emoji = str(reaction.emoji)
+                            users = [u async for u in reaction.users() if u.id != bot.user.id]
+                            counts[emoji] = len(users)
 
-                result_line = " | ".join([f"{emoji} {count}" for emoji, count in counts.items()])
-                await progress.edit(content=f"{result_line} (final)")
+                        result_line = " | ".join([f"{emoji} {count}" for emoji, count in counts.items()])
+                        await progress.edit(content=f"{result_line} (live)")
 
-                if reaction_set == "default":
-                    like_total += counts.get("✅", 0)
-                    dislike_total += counts.get("❌", 0)
-                elif reaction_set == "poll":
-                    like_total += counts.get("👍", 0)
-                    dislike_total += counts.get("👎", 0)
-                    maybe_total += counts.get("🤔", 0)
-                elif reaction_set == "custom":
-                    for emoji in reactions:
-                        custom_totals[emoji] = custom_totals.get(emoji, 0) + counts.get(emoji, 0)
-            except Exception as e:
-                print(f"[Broadcast Fetch Error] {e}")
+                        if reaction_set == "default":
+                            like_total += counts.get("✅", 0)
+                            dislike_total += counts.get("❌", 0)
+                        elif reaction_set == "poll":
+                            like_total += counts.get("👍", 0)
+                            dislike_total += counts.get("👎", 0)
+                            maybe_total += counts.get("🤔", 0)
+                        elif reaction_set == "custom":
+                            for emoji in reactions:
+                                custom_totals[emoji] = custom_totals.get(emoji, 0) + counts.get(emoji, 0)
+
+                    except discord.errors.NotFound:
+                        print("[Broadcast Fetch Error] Message deleted.")
+                    except Exception as e:
+                        print(f"[Broadcast Fetch Error] {e}")
+
+                summary = (
+                    f"✅ Likes: {like_total} | ❌ Dislikes: {dislike_total}"
+                    if reaction_set == "default"
+                    else f"👍 {like_total} | 👎 {dislike_total} | 🤔 {maybe_total}"
+                    if reaction_set == "poll"
+                    else " | ".join([f"{emoji}: {count}" for emoji, count in custom_totals.items()])
+                )
+                print(f"[Broadcast Live Totals] {summary}")
+
+                await asyncio.sleep(update_interval)
+        except asyncio.CancelledError:
+            print("[Broadcast] Live update loop stopped manually.")
 
         # --- Step 6: Owner summary ---
         if reaction_set == "maintenance":
@@ -6509,7 +6527,7 @@ async def main():
 if __name__ == "__main__":
     while True:
         try:
-            #keepalive.keep_alive()  # start keepalive Flask
+            keepalive.keep_alive()  # start keepalive Flask
             while True:
                 try:
                     asyncio.run(main())
