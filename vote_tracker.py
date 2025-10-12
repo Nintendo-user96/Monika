@@ -1,57 +1,112 @@
 import json
 import discord
+import asyncio
+import uuid
 
+# vote_tracker.py
 class VoteTracker:
     def __init__(self):
-        self.votes = {}  # {guild_id: {"options": [...], "votes": {user_id: choice}}}
+        self.global_vote = {
+            "title": None,
+            "options": [],
+            "votes": {},  # user_id -> choice index
+        }
+        self.votes = {}
 
-    def ensure_vote(self, guild_id):
-        if guild_id not in self.votes:
-            self.votes[guild_id] = {"options": [], "votes": {}}
+    def set_vote(self, title, options):
+        self.global_vote = {
+            "title": title,
+            "options": options,
+            "votes": {},
+        }
 
-    def set_vote(self, guild_id, options):
-        self.votes[guild_id] = {"options": options, "votes": {}}
+    def add_vote(self, user_id, choice_index):
+        self.global_vote["votes"][str(user_id)] = choice_index
 
-    def get_vote(self, guild_id):
-        return self.votes.get(guild_id, None)
+    def get_vote(self):
+        return self.global_vote
 
-    def clear_vote(self, guild_id):
-        if guild_id in self.votes:
-            del self.votes[guild_id]
+    def clear_vote(self):
+        self.global_vote = {"title": None, "options": [], "votes": {}}
+
+    def get_results(self, guild_id):
+        """Count votes per option."""
+        vote = self.votes.get(guild_id)
+        if not vote:
+            return []
+        counts = {i: 0 for i in range(1, len(vote["options"]) + 1)}
+        for choice in vote["votes"].values():
+            counts[choice] += 1
+        return counts
 
     async def save(self, bot, channel_id: int):
-        """Save votes to the tracker channel as embeds without deleting old messages."""
-        channel = bot.get_channel(channel_id)
-        if not channel:
-            return
-
-        # Instead of deleting old messages, just append new embeds
-        for guild_id, data in self.votes.items():
-            embed = discord.Embed(
-                title=f"🗳️ Vote Data for Guild {guild_id}",
-                color=discord.Color.orange()
-            )
-            embed.add_field(name="Options", value="\n".join(data["options"]), inline=False)
-
-            votes_summary = []
-            for user_id, choice in data["votes"].items():
-                votes_summary.append(f"<@{user_id}> → Option {choice}")
-            if not votes_summary:
-                votes_summary = ["No votes yet"]
-
-            embed.add_field(name="Votes", value="\n".join(votes_summary), inline=False)
-            embed.set_footer(text=f"Menu ID: {data.get('menu_id', 'N/A')}")
-
-            await channel.send(embed=embed)
-
-    async def load(self, bot, channel_id: int):
-        channel = bot.get_channel(channel_id)
-        if not channel:
-            return
+        """Safely save all votes (keyed by menu_id) without deleting anything."""
         try:
-            async for msg in channel.history(limit=1, oldest_first=False):
-                if msg.author == bot.user and msg.content.startswith("```json"):
-                    data = msg.content.strip("```json\n").strip("```")
-                    self.votes = json.loads(data)
+            channel = bot.get_channel(channel_id)
+            if not channel:
+                print(f"[VoteTracker] ⚠️ Save failed: Channel {channel_id} not found.")
+                return
+
+            serialized = json.dumps(self.votes, indent=2)
+            chunks = [serialized[i:i+1900] for i in range(0, len(serialized), 1900)]
+
+            # Use or create pinned save message
+            existing = None
+            async for msg in channel.history(limit=25):
+                if msg.author == bot.user and msg.content.startswith("VOTE_TRACKER_SAVE:"):
+                    existing = msg
+                    break
+
+            content = f"VOTE_TRACKER_SAVE:\n```json\n{chunks[0]}\n```"
+            if existing:
+                await existing.edit(content=content)
+            else:
+                await channel.send(content)
+
+            print("[VoteTracker] ✅ Votes saved safely (no purge).")
+
+        except discord.Forbidden:
+            print("[VoteTracker] ⚠️ Missing permission to edit messages or pins.")
+        except Exception as e:
+            print(f"[VoteTracker Save Error] {e}")
+
+    async def load(self, bot, channel_id: int, menu_id: str | None = None):
+        """Load votes safely from storage channel without touching user messages."""
+        try:
+            channel = bot.get_channel(channel_id)
+            if not channel:
+                print(f"[VoteTracker] ⚠️ Load failed: Channel {channel_id} not found.")
+                return
+
+            async for msg in channel.history(limit=50):
+                if msg.author == bot.user and msg.content.startswith("VOTE_TRACKER_SAVE:"):
+                    try:
+                        json_data = msg.content.split("```json\n")[1].split("\n```")[0]
+                        loaded_data = json.loads(json_data)
+
+                        # Detect if it's a global dict or multiple menu IDs
+                        if isinstance(loaded_data, dict):
+                            self.votes = loaded_data
+
+                            # If menu_id provided, load that one only
+                            if menu_id and menu_id in self.votes:
+                                self.votes["global"] = self.votes[menu_id]
+                                print(f"[VoteTracker] ✅ Loaded vote with ID {menu_id}")
+                            else:
+                                # Otherwise pick the most recent or fallback
+                                if "global" not in self.votes:
+                                    if len(self.votes) == 1:
+                                        self.votes["global"] = next(iter(self.votes.values()))
+                                    else:
+                                        latest_key = sorted(self.votes.keys())[-1]
+                                        self.votes["global"] = self.votes[latest_key]
+                                print(f"[VoteTracker] ✅ Loaded latest/global vote.")
+                            return
+
+                    except Exception as e:
+                        print(f"[VoteTracker Load Parse Error] {e}")
+                        return
+
+            print("[VoteTracker] ⚠️ No saved vote data found.")
         except Exception as e:
             print(f"[VoteTracker Load Error] {e}")
