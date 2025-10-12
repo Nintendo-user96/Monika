@@ -13,21 +13,26 @@ import typing
 import atexit
 import requests
 import json
+import aiohttp
+import hashlib
 
 import discord
 from discord import File, app_commands
 from discord.ext import commands
 from discord.permissions import Permissions
+from discord.ui import View, Button
 
 # Local modules
 import error_detector
-import keepalive
+#import keepalive
 from OpenAIKeys import (
     OpenAIKeyManager,
     openai_safe_call,
     init_key_manager,
+    init_image_key_manager,
     periodic_rescan,
     key_manager,
+    image_key_manager
 )
 from memory import MemoryManager
 from expression import User_SpritesManager
@@ -45,6 +50,7 @@ from performance import (
     monitor_event_loop,
 )
 from vote_tracker import VoteTracker
+from Idle_Presence import monika_idle_presences
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,65 +60,120 @@ logging.basicConfig(
 logger = logging.getLogger("Monika")
 logger.info("Just Monika!")
 
+# ================== OpenAI Cache ================== #
+_openai_cache = {}  # (context_id, model, hash) -> (timestamp, reply_text)
+CACHE_TTL = 20  # seconds before cache expires
+CACHE_PRUNE_INTERVAL = 200  # prune every 200 cache inserts
+_cache_counter = 0
+
+def _make_conv_hash(conversation: list[dict]) -> str:
+    """Create a stable short hash from the conversation list (system included)."""
+    if not isinstance(conversation, list):
+        raise ValueError("Conversation must be a list of dict messages.")
+    raw = "".join(
+        msg.get("role", "") + msg.get("content", "")
+        for msg in conversation if isinstance(msg, dict)
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+
+def _prune_cache():
+    """Remove expired cache entries safely to free memory."""
+    global _openai_cache
+    now = time.time()
+    expired = [k for k, (ts, _) in _openai_cache.items() if now - ts >= CACHE_TTL]
+    for k in expired:
+        _openai_cache.pop(k, None)
+    if expired:
+        print(f"[OpenAI] 🧹 Pruned {len(expired)} expired cache entries.")
+
 async def call_openai_with_retries(user, relationship, personality, conversation):
-    """Try models in priority order using safe_call.
-       If one key/model fails, ignore and move on to the next.
-       Returns a valid response or None if all fail.
     """
-    model_priority = ["gpt-5-mini", "gpt-5", "gpt-5-nano", "gpt-3.5-turbo"]
+    Fast and safe OpenAI caller:
+    - Caches responses for 20s
+    - Avoids UnboundLocalError by proper global use
+    - Optimized for 3–5s replies
+    - Handles multiple concurrent users safely
+    """
+    global _cache_counter, _openai_cache  # ✅ ensures both are global
 
+    model_priority = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
+
+    # ---------------- Context ---------------- #
+    context_id = getattr(getattr(user, "guild", None), "id", None) or user.id
+    is_guild = hasattr(user, "guild") and user.guild is not None
+
+    if not isinstance(conversation, list):
+        raise ValueError("Conversation must be a list of messages.")
+
+    # ---------------- Cache check ---------------- #
+    conv_hash = _make_conv_hash(conversation)
     for model in model_priority:
+        cache_key = (context_id, model, conv_hash)
+        cached = _openai_cache.get(cache_key)
+        if cached:
+            ts, cached_reply = cached
+            if time.time() - ts < CACHE_TTL:
+                print(f"[OpenAI] ⚡ Cache hit → {model}")
+                return cached_reply
+            else:
+                _openai_cache.pop(cache_key, None)
 
+    # ---------------- Build system prompt ---------------- #
+    system_prompt = await generate_monika_system_prompt(
+        guild=user.guild if hasattr(user, "guild") else None,
+        user=user,
+        relationship_type=relationship,
+        selected_modes=personality,
+    )
+    full_conversation = [{"role": "system", "content": system_prompt}] + conversation
+
+    # ---------------- Sequential fast retry ---------------- #
+    for model in model_priority:
         async def call_fn(client):
-            if not isinstance(conversation, list):
-                raise ValueError("Conversation must be a list of messages.")
-
-            # Build system prompt
-            system_prompt = await generate_monika_system_prompt(
-                guild=user.guild if hasattr(user, "guild") else None,
-                user=user,
-                relationship_type=relationship,
-                selected_modes=personality,
-            )
-
-            full_conversation = [{"role": "system", "content": system_prompt}] + conversation
-
-            # Call API
-            # Call API
+            # ⚡ Remove asyncio.wait_for (causes CancelledError)
             return await client.chat.completions.create(
                 model=model,
-                messages=full_conversation
+                messages=full_conversation,
+                timeout=15  # safe internal OpenAI timeout (doesn't block asyncio)
             )
 
         try:
-            response = await openai_safe_call(key_manager, call_fn)
+            start_time = time.perf_counter()
+            response = await openai_safe_call(
+                key_manager,
+                fn=call_fn,
+                context_id=context_id,
+                is_guild=is_guild,
+                is_image=False
+            )
+            elapsed = time.perf_counter() - start_time
 
-            if response is None:
-                print(f"[OpenAI] ❌ {model} failed (ignored). Trying next model...")
-                continue
+            # Validate response
+            if response and getattr(response, "choices", None):
+                msg = response.choices[0].message
+                if msg and msg.content:
+                    reply_text = msg.content.strip()
+                    if reply_text:
+                        print(f"[OpenAI] ✅ {model} → {elapsed:.2f}s")
+                        cache_key = (context_id, model, conv_hash)
+                        _openai_cache[cache_key] = (time.time(), reply_text)
+                        _cache_counter = (_cache_counter + 1) % (CACHE_PRUNE_INTERVAL + 1)
+                        if _cache_counter == 0:
+                            _prune_cache()
+                        return reply_text
 
-            # Check response validity
-            if (response and response.choices and
-                response.choices[0].message and
-                response.choices[0].message.content.strip()):
-                print(f"[OpenAI] ✅ {model} → Success")
-                key_manager.mark_success()  # improve key health
-                return response
-            else:
-                print(f"[OpenAI] ⚠️ {model} returned empty/invalid response. Trying next...")
-                key_manager.mark_cooldown()
-                continue
+            print(f"[OpenAI] ⚠️ {model} returned empty or invalid response → next")
 
         except Exception as e:
-            print(f"[OpenAI] ⚠️ {model} error ignored: {e}")
-            key_manager.mark_cooldown()
+            print(f"[OpenAI] ⚠️ {model} failed: {e}")
+            key_manager.mark_cooldown(key_manager.current_key)
             continue
 
-    # If all models failed
-    print("[OpenAI] ❌ All models failed, returning None.")
+    print("[OpenAI] ❌ All models failed.")
     return None
+
 # ==============================
-# Discord Setup
+# Discord Setup ## 
 # ==============================
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="/", intents=intents)
@@ -151,15 +212,15 @@ FRIENDS = [SAYORI, NATSUKI, YURI, MC]
 ALLOWED_GUILD_IDS = [DOKIGUY_GUILD_ID, ALIRI_GUILD_ID, ZERO_GUILD_ID, MAS_GUILD_ID, MY_GUILD_ID]
 
 MON_CHANNEL_NAMES = [
-    "monika", "monika-ai", "ddlc-monika", "ddlc-monika-ai", "club-room", "doki-chat", "ddlc-chat", "monika-bot", "chat-monika", "monika-chat", "monika-but-deranged", "just-monika", "club-room-meeting", "literature-club", "literature-club-room", "monika-ddlc"
+    "monika", "monika-ai", "ddlc-monika", "ddlc-monika-ai", "club-room", "doki-chat", "ddlc-chat", "monika-bot", "chat-monika", "monika-chat", "monika-but-deranged", "just-monika", "club-room-meeting", "literature-club", "literature-club-room", "monika-ddlc", "monika-room"
 ]
 
 OFF_LIMITS_CHANNELS = [
-    "get-roles", "rules", "announcements", "osu", "food", "pets", "teasers", "owo", "tubberbox", "member-help", "welcome"
+    "get-roles", "rules", "announcements", "osu", "food", "pets", "teasers", "owo", "tubberbox", "member-help", "welcome", "upload", "mod-app", "level", "off-topic", "gaming", "hobbies", "memes", "meme", "art", "fan-art", "self-promotion", "misc-fanart", "fanart"
 ]
 
 NO_CHAT_CHANNELS = [
-    cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN]
+    cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN, SETTINGS_CHAN]
     if cid and cid > 0
 ]
 
@@ -176,7 +237,7 @@ async def save_trackers():
 async def load_trackers():
     await user_tracker.load(bot, channel_id=USER_TRACKER_CHAN)
     await server_tracker.load(bot, channel_id=SERVER_TRACKER_CHAN)
-    
+
 memory = MemoryManager()
 
 user_sprites = User_SpritesManager()
@@ -336,27 +397,40 @@ def is_friend_bot(message: discord.Message) -> bool:
 # ---------- Time-based outfit ----------
 def get_time_based_outfit() -> str:
     """Return a preferred outfit string based on UTC time & weekday heuristics."""
-    now = datetime.datetime.utcnow()
-    hour = now.hour
-    today = now.date()
-    weekday = now.weekday()  # Monday=0, Sunday=6
+    now_utc = datetime.datetime.utcnow()
+    now_local = datetime.datetime.now()
+    hour = now_local.hour
+    today = now_local.date()
+    weekday = today.weekday()  # Monday=0, Sunday=6
 
-    # Weekend override
-    if weekday in (5, 6):
-        random.seed(str(now.date()))
-        return random.choice(["casual 1", "casual 2", "casual 3"])
+    # 🎉 Special Dates -------------------------------------------------------
+    # DDLC Release Anniversary (September 22)
+    if (today.month == 9 and today.day == 22) or (now_utc.month == 9 and now_utc.day == 22):
+        if 6 <= hour < 18:
+            return "green dress"
+        else:
+            return "pajamas"
 
-    # Morning/School
+    # 🎃 Halloween (October 31) - Always visible regardless of timezone
+    if (today.month == 10 and today.day == 31) or (now_utc.month == 10 and now_utc.day == 31):
+        return "witch costume"
+
+    # 💼 Regular Schedule ----------------------------------------------------
+    if weekday in (5, 6):  # Weekend (Saturday, Sunday)
+        if 6 <= hour < 18:
+            random.seed(str(today))
+            return random.choice(["casual 1", "casual 2", "casual 3"])
+        else:
+            return "pajamas"
+
+    # Weekdays
     if 6 <= hour < 15:
         return "school uniform"
-
-    # Evening casual
-    if 15 <= hour < 20:
+    elif 15 <= hour < 18:
         random.seed(str(today))
         return random.choice(["casual 1", "casual 2", "casual 3"])
-
-    # Night
-    return "pajamas"
+    else:
+        return "pajamas"
 
 # ---------- Pronoun detection ----------
 def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User", int, str, None] = None) -> Optional[str]:
@@ -472,6 +546,10 @@ def detect_pronouns_from_profile(member: Union["discord.Member", "discord.User",
 
     return found
 
+@lru_cache(maxsize=5000)
+def get_pronouns_cached(user_id: str, name_candidates: tuple[str]) -> Optional[str]:
+    return detect_pronouns_from_profile()
+
 # ---------- Language detection & system prompt ----------
 async def monika_languages_system_prompt(user: Optional[discord.User] = None, message: Optional[discord.Message] = None) -> str:
     """
@@ -561,24 +639,54 @@ async def generate_monika_system_prompt(
     selected_modes: Optional[List[str]] = None
 ) -> str:
     """
-    Build Monika's system prompt with personality, relationship, pronouns, memory & language.
+    Build Monika's system prompt with synced personality, relationship, pronouns, memory & language.
+    Keeps compatibility with synced memory between DMs and servers.
     """
     base_description = get_base_prompt(is_friend_context)
 
-    # Personality
-    traits = selected_modes or ["Default"]
-    personality_desc = f"Active personality traits: {', '.join(traits)}."
+    # --- Personality (from sync or override)
+    if not selected_modes:
+        try:
+            if guild:
+                selected_modes = [server_tracker.get_personality(guild.id)]
+            if DOKIGUY_ID:
+                selected_modes = "Flirtatious, Loyal, Warm, Self-aware, Immersive"
+            else:
+                selected_modes = [server_tracker.get_personality("dm")]
+        except Exception:
+            selected_modes = ["Default"]
 
-    # Relationship
+    personality_desc = f"Active personality traits: {', '.join(selected_modes)}."
+
+    # --- Relationship (from sync or override)
+    try:
+        if not relationship_type:
+            if guild:
+                relationship_type = server_tracker.get_relationship_type(guild.id)
+            if OWNER_ID:
+                relationship_type = "Creator"
+            if DOKIGUY_ID:
+                relationship_type = "One of DokiGuy Girlfriend"
+            if ZERO_ID:
+                relationship_type = "Zero Girlfriend"
+            else:
+                relationship_type = server_tracker.get_relationship_type("dm")
+    except Exception:
+        relationship_type = "Stranger"
+
     relationship_desc = "She acts casually with no special attachment."
     try:
         if relationship_type and relationship_type in monika_traits.relationship_modes:
             relationship_desc = monika_traits.relationship_modes[relationship_type]
     except Exception:
         pass
-    dynamic_relationship = f"Her relationship with the user is **{relationship_type or 'Stranger'}**: {relationship_desc}"
 
-    # Pronouns
+    dynamic_relationship = (
+        f"Her relationship with the user is **{relationship_type or 'Stranger'}**: "
+        f"{relationship_desc}"
+    )
+
+    # --- Pronouns (as-is)
     pronoun_desc = ""
     try:
         if user:
@@ -590,7 +698,7 @@ async def generate_monika_system_prompt(
     except Exception:
         pronoun_desc = "The user’s pronouns are unknown — use neutral phrasing."
 
-    # Memory awareness
+    # --- Memory awareness (from synced user_tracker)
     memory_desc = ""
     try:
         if user:
@@ -602,17 +710,36 @@ async def generate_monika_system_prompt(
     except Exception:
         memory_desc = "This feels like a new interaction; act with curiosity."
 
-    # Language awareness
+    # --- Language awareness (unchanged)
     language_desc = await monika_languages_system_prompt(user=user, message=message)
 
-    return "\n\n".join(filter(None, [
-        base_description,
-        personality_desc,
-        dynamic_relationship,
-        pronoun_desc,
-        memory_desc,
-        language_desc
-    ]))
+    # --- Relationship "with whom" awareness
+    relationship_target = None
+    try:
+        if guild:
+            relationship_target = server_tracker.get_relationship_with(guild.id)
+        else:
+            relationship_target = server_tracker.get_relationship_with("dm")
+
+        if relationship_target:
+            dynamic_relationship += f"\nShe feels emotionally connected to **{relationship_target}**."
+    except Exception:
+        pass
+
+    # --- Assemble system prompt
+    return "\n\n".join(
+        filter(
+            None,
+            [
+                base_description,
+                personality_desc,
+                dynamic_relationship,
+                pronoun_desc,
+                memory_desc,
+                language_desc,
+            ],
+        )
+    )
 
 # ---------- Server/user role detection ----------
 async def detect_server_user_roles(bot_ref: commands.Bot, guild: Optional[discord.Guild], user: discord.User, user_tracker_ref: Optional[UserTracker] = None):
@@ -730,6 +857,26 @@ async def idlechat_loop():
                 all_lines = list(set(rel_lines + per_lines))
                 random.shuffle(all_lines)
 
+                category = server_tracker.get_toggle(guild_id, "idlechat_category") or "all"
+
+                # Fetch message lines depending on the category
+                lines = []
+
+                if category in ["all", "morning"]:
+                    lines += await on_wake_up(target_user)  # Morning greeting messages
+
+                if category in ["all", "personality"]:
+                    lines += await Idlechat_personality(target_user, personalities)
+
+                if category in ["all", "relationship"]:
+                    lines += await Idlechat_relationships(target_user, relationship_role)
+
+                if category in ["all", "presence"]:
+                    presence_result = await monika_idle_presences(target_user, relationship_role)
+                    if presence_result:
+                        monika_message, _ = presence_result
+                        lines.append(monika_message)
+
                 if not all_lines:
                     continue
                 idle_line = all_lines[0]
@@ -814,7 +961,7 @@ async def on_ready():
      - Minimal presence updates to avoid gateway spam.
      - Starts background periodic tasks via safe_task wrapper.
     """
-    global is_waking_up, key_manager
+    global is_waking_up, key_manager, image_key_manager
 
     # avoid re-running heavy init on reconnects
     if getattr(bot, "already_ready", False):
@@ -831,6 +978,8 @@ async def on_ready():
     try:
         if key_manager is None:
             key_manager = await init_key_manager()
+        if image_key_manager is None:
+            image_key_manager = await init_image_key_manager()
         # Attach hooks (use callables that schedule the wake/sleep coros)
         key_manager.on_all_keys_exhausted = lambda: safe_create_task(on_sleeping("All OpenAI keys exhausted"), name="on_sleeping")
         key_manager.on_key_recovered = lambda key: safe_create_task(on_wake_up(f"Key {str(key)[:8]} recovered"), name="on_wake_up")
@@ -873,6 +1022,20 @@ async def on_ready():
                         owner_member = guild.get_member(bot_owner.id or OWNER_ID)
                         if owner_member and creator_role in owner_member.roles:
                             print(f"[Startup] {owner_member.display_name} Creator in {guild.name}")
+
+                    dokiguy_role_name = f"The literature Club's Boyfriend"
+                    dokiguy_role = discord.utils.get(guild.roles, name=dokiguy_role_name)
+                    if dokiguy_role:
+                        dokiguy = guild.get_member(DOKIGUY_ID)
+                        if dokiguy and dokiguy_role in dokiguy.roles:
+                            print(f"[Startup] {dokiguy.display_name} in {guild.name}")
+                    
+                    zero_role_name = f"Monika Boyfriend"
+                    zero_role = discord.utils.get(guild.roles, name=zero_role_name)
+                    if zero_role:
+                        zero = guild.get_member(ZERO_ID)
+                        if zero and zero_role in zero.roles:
+                            print(f"[Startup] {zero.display_name} in {guild.name}")
 
                     # Restore personality role (best-effort)
                     saved_personality = server_tracker.get_personality(guild.id)
@@ -935,6 +1098,8 @@ async def on_ready():
             # Start periodic background tasks (wrap with safe_task to auto-restart)
             bot.loop.create_task(safe_task("periodic_scan", periodic_scan, bot))
             bot.loop.create_task(safe_task("periodic_cleanup", periodic_cleanup))
+            bot.loop.create_task(safe_task("daily_cycle", daily_cycle_task))
+            bot.loop.create_task(safe_task("background_memory_sync", background_memory_sync))
 
             # Load vote tracker (best-effort)
             try:
@@ -968,7 +1133,7 @@ async def on_ready():
     bot.is_ready_done = True
     is_waking_up = False
     print("[Bot] Wake-up mode finished. Back to normal idlechat.")
-        
+
 SCAN_INTERVAL = 1800  # 30 minutes (Render-safe)
 
 async def periodic_scan(bot, interval: int = SCAN_INTERVAL):
@@ -1056,6 +1221,7 @@ async def on_command_error(ctx, error):
     status_info["error_count"] += 1
     await error_detector.report_error(bot, error_detector.SETTINGS_CHAN, str(error), "Command Error")
     await ctx.send("⚠️ Something went wrong! (error logged)")
+    await main()
 
 @bot.event
 async def on_error(event, *args, **kwargs):
@@ -1063,6 +1229,7 @@ async def on_error(event, *args, **kwargs):
     status_info["last_error"] = err_text
     status_info["error_count"] += 1
     await error_detector.report_error(bot, error_detector.SETTINGS_CHAN, err_text, "Error")
+    await main()
     logging.error(f"⚠️ Error in event {event}:")
     logging.error(traceback.format_exc())
     logging.info("✅ Ignored, continuing...")
@@ -1141,18 +1308,284 @@ async def save_memory_to_channel(batch_size: int = 10):
                         )
                         buffer.append(log)
 
-                        if len(buffer) >= batch_size:
-                            await channel.send("\n".join(buffer))
+                        if len(buffer) >= 50:
+                            await send_safe(channel, buffer)
                             buffer.clear()
                             await asyncio.sleep(0.5)
 
         if buffer:
-            await channel.send("\n".join(buffer))
+            await send_safe(channel, buffer)
 
     except Exception as e:
         logger.exception(f"[Memory] Failed to save memory: {e}")
 
-async def get_monika_context(channel: discord.abc.Messageable, limit: int = 20) -> list[dict]:
+async def load_memory_from_direct_messages():
+    """
+    Load memories from all DM channels Monika has.
+    Also mirrors them into shared guilds if applicable.
+    """
+    print("[Memory] Loading memories from direct messages...")
+    for dm_channel in bot.private_channels:
+        if not isinstance(dm_channel, discord.DMChannel):
+            continue
+
+        user = dm_channel.recipient
+        if not user:
+            continue
+
+        try:
+            async for msg in dm_channel.history(limit=200, oldest_first=True):
+                if msg.type != discord.MessageType.default:
+                    continue
+                if not msg.content and not msg.attachments:
+                    continue
+
+                role_type = "user"
+                if msg.author.id == bot.user.id:
+                    role_type = "monika"
+                else:
+                    for guild in bot.guilds:
+                        member = guild.get_member(msg.author.id)
+                        if member:
+                            rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
+                            if rel_roles:
+                                role_type = "friend"
+                                break
+
+                memory.save(
+                    guild_id="dm",
+                    guild_name="Direct Message",
+                    channel_id=dm_channel.id,
+                    channel_name="dm",
+                    user_id=msg.author.id,
+                    username=msg.author.display_name,
+                    role=role_type,
+                    content=msg.content,
+                    emotion="neutral",
+                )
+
+                # Mirror DM into shared guilds
+                for guild in bot.guilds:
+                    member = guild.get_member(msg.author.id)
+                    if member:
+                        memory.save(
+                            guild_id=guild.id,
+                            guild_name=guild.name,
+                            channel_id="linked_dm",
+                            channel_name=f"Linked DM with {msg.author.display_name}",
+                            user_id=msg.author.id,
+                            username=msg.author.display_name,
+                            role=role_type,
+                            content=msg.content,
+                            emotion="neutral",
+                        )
+        except Exception as e:
+            print(f"[DM Memory WARN] Could not load DM history with {user}: {e}")
+
+    print("[Memory] ✅ Finished loading DM memories.")
+
+async def save_memory_to_direct_messages(batch_size: int = 10):
+    """
+    Save DM memories to the configured DM_LOGS_CHAN safely.
+    """
+    dest_channel = bot.get_channel(DM_LOGS_CHAN)
+    if not dest_channel:
+        print("[Memory] ⚠️ DM_LOGS_CHAN not found or not set.")
+        return
+
+    print("[Memory] Saving DM memories to log channel...")
+    buffer: list[str] = []
+
+    try:
+        dm_data = memory.data.get("dm", {})
+        for channel_id, users in dm_data.items():
+            for user_id, entries in users.items():
+                for entry in entries:
+                    log = (
+                        f"[{entry['timestamp']}] | "
+                        f"DM Channel: {entry['channel_id']} | "
+                        f"User: {entry['username']} ({entry['user_id']}) | "
+                        f"Role: {entry['role']} | {entry['content']} | "
+                        f"{entry.get('emotion', 'neutral')}"
+                    )
+                    buffer.append(log)
+
+                    if len(buffer) >= 50:
+                        await send_safe(dest_channel, buffer)
+                        buffer.clear()
+                        await asyncio.sleep(0.5)
+
+        if buffer:
+            await send_safe(dest_channel, buffer)
+
+        print("[Memory] ✅ DM memories saved successfully.")
+
+    except Exception as e:
+        print(f"[Memory] ❌ Failed to save DM memories: {e}")
+
+async def load_memory_from_dms_to_server():
+    """
+    Sync DMs → Servers for:
+      - Memory logs
+      - Personality
+      - Relationship data
+    """
+    print("[MemorySync] 🔄 Syncing DM → Server (memories, personality, relationships)...")
+
+    try:
+        for dm_channel in bot.private_channels:
+            if not isinstance(dm_channel, discord.DMChannel):
+                continue
+
+            user = dm_channel.recipient
+            if not user:
+                continue
+
+            # 🧠 Sync memories
+            async for msg in dm_channel.history(limit=100, oldest_first=True):
+                if not msg.content and not msg.attachments:
+                    continue
+
+                role_type = "monika" if msg.author.id == bot.user.id else "user"
+                memory.save(
+                    guild_id="dm",
+                    guild_name="Direct Message",
+                    channel_id=dm_channel.id,
+                    channel_name="dm",
+                    user_id=msg.author.id,
+                    username=msg.author.display_name,
+                    role=role_type,
+                    content=msg.content,
+                    emotion="neutral",
+                )
+
+                # Mirror DM messages into all mutual servers
+                for guild in bot.guilds:
+                    member = guild.get_member(user.id)
+                    if not member:
+                        continue
+
+                    memory.save(
+                        guild_id=guild.id,
+                        guild_name=guild.name,
+                        channel_id="dm_sync",
+                        channel_name=f"DM Sync with {user.display_name}",
+                        user_id=user.id,
+                        username=user.display_name,
+                        role=role_type,
+                        content=msg.content,
+                        emotion="neutral",
+                    )
+
+            # 💞 Sync personality & relationship
+            dm_personality = server_tracker.get_personality("dm")
+            dm_relationship = server_tracker.get_relationship_type("dm")
+            dm_relationship_user = server_tracker.get_relationship_with("dm")
+
+            for guild in bot.guilds:
+                # --- Sync personality
+                if dm_personality:
+                    server_tracker.set_personality(guild.id, dm_personality)
+
+                # --- Sync relationship
+                if dm_relationship:
+                    server_tracker.set_relationship_type(guild.id, dm_relationship)
+                if dm_relationship_user:
+                    server_tracker.set_relationship_with(guild.id, dm_relationship_user)
+
+            print(f"[MemorySync] 💾 Synced DM personality & relationship for {user.display_name}.")
+
+        print("[MemorySync] ✅ DM → Server sync complete.")
+
+    except Exception as e:
+        print(f"[MemorySync Error] ❌ {e}")
+
+async def sync_server_to_dm_memories():
+    """
+    Sync Server → DM for:
+      - Memory logs
+      - Personality
+      - Relationship data
+    """
+    print("[MemorySync] 🔄 Syncing Server → DM (memories, personality, relationships)...")
+
+    try:
+        for guild in bot.guilds:
+            # --- Personality
+            personality = server_tracker.get_personality(guild.id)
+            if personality:
+                server_tracker.set_personality("dm", personality)
+
+            # --- Relationship type & user
+            rel_type = server_tracker.get_relationship_type(guild.id)
+            rel_user = server_tracker.get_relationship_with(guild.id)
+            if rel_type:
+                server_tracker.set_relationship_type("dm", rel_type)
+            if rel_user:
+                server_tracker.set_relationship_with("dm", rel_user)
+
+            # --- Sync messages
+            for channel in guild.text_channels:
+                if not channel.permissions_for(guild.me).read_message_history:
+                    continue
+
+                async for msg in channel.history(limit=50, oldest_first=False):
+                    if msg.author.bot or not msg.content:
+                        continue
+
+                    # Find or create DM channel
+                    try:
+                        dm = await msg.author.create_dm()
+                        memory.save(
+                            guild_id="dm",
+                            guild_name="Direct Message",
+                            channel_id=dm.id,
+                            channel_name="dm",
+                            user_id=msg.author.id,
+                            username=msg.author.display_name,
+                            role="user",
+                            content=msg.content,
+                            emotion="neutral",
+                        )
+                    except Exception as e:
+                        print(f"[MemorySync] ⚠️ Failed DM save for {msg.author}: {e}")
+
+        print("[MemorySync] ✅ Server → DM sync complete.")
+
+    except Exception as e:
+        print(f"[MemorySync Error] ❌ {e}")
+
+async def background_memory_sync():
+    """Continuously sync DM↔Server memory, personality, and relationship."""
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            await load_memory_from_dms_to_server()
+            await sync_server_to_dm_memories()
+
+            # Auto-save trackers after every sync
+            await server_tracker.save(bot, SERVER_TRACKER_CHAN)
+            await user_tracker.save(bot, USER_TRACKER_CHAN)
+
+            print("[MemorySync] 🕒 Next sync in 15 minutes...")
+        except Exception as e:
+            print(f"[MemorySync Loop Error] ❌ {e}")
+        await asyncio.sleep(900)  # every 15 minutes
+
+async def send_safe(channel, lines: list[str]):
+    """Send lines safely without exceeding Discord's 2000 char limit."""
+    text = "\n".join(lines)
+    while text:
+        chunk = text[:1990]  # keep a safe margin
+        # don’t cut in the middle of a line
+        if "\n" in chunk and len(text) > 1990:
+            split_at = chunk.rfind("\n")
+            chunk, text = text[:split_at], text[split_at + 1 :]
+        else:
+            text = ""
+        await channel.send(chunk)
+
+async def get_monika_context(channel: discord.abc.Messageable, limit: int = 10) -> list[dict]:
     """
     Fetch recent conversation context for Monika.
 
@@ -1269,7 +1702,7 @@ async def load_memories_from_guilds():
                 if not perms.read_message_history or not perms.read_messages:
                     continue
 
-                async for msg in channel.history(limit=200, oldest_first=True):
+                async for msg in channel.history(limit=50, oldest_first=True):
                     if msg.type != discord.MessageType.default:
                         continue
                     if not msg.content and not msg.attachments:
@@ -1385,6 +1818,7 @@ async def on_startup():
     print("[Startup] No backup found. Scanning guild histories...")
 
     await load_memories_from_guilds()
+    await load_memory_from_direct_messages()
 
 async def load_personality_from_roles(guild: discord.Guild, monika_member: discord.Member) -> list[str]:
     """
@@ -1465,7 +1899,8 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
     a manually set relationship role. Will upgrade Stranger -> Friend after 15 min talk time.
     Stops counting if inactive for more than 90 seconds.
     """
-    bot_name = bot.user.name
+    bot_name = bot.user
+    monika_member = guild.get_member(bot.user.id)
     user_id = str(user_member.id)
 
     # 1️⃣ Skip if they have a manually set relationship
@@ -1518,7 +1953,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         new_relationship = "Friend"
 
     # 6️⃣ Validate relationship
-    valid_relationships = list(monika_traits.relationships)
+    valid_relationships = list(monika_traits.relationships) and list(monika_traits.dokituber_relationship_modes)
     if new_relationship not in valid_relationships:
         print(f"[AutoRel] Invalid relationship: {new_relationship}. Resetting to Stranger.")
         new_relationship = "Stranger"
@@ -1530,26 +1965,76 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         role = await guild.create_role(name=role_name, color=discord.Color.teal())
         print(f"[AutoRel] Created new role: {role_name}")
 
-    if str(user_member.id) == str(DOKIGUY_ID) or str(ZERO_ID):
-        boyfriend_role_name = f"{bot_name} - Boyfriend"
+    if str(user_member.id) == str(DOKIGUY_ID):
+        if role.name.startswith(f"Monika - Stranger") or role.name.startswith(f"DokiGuy - Lovers"):
+            await role.delete(reason="Resetting old relationship roles")
+            await monika_member.remove_roles(role, reason="Resetting old relationship roles")
+
+        boyfriend_role_name = f"The literature Club's Boyfriend"
         boyfriend_role = discord.utils.get(guild.roles, name=boyfriend_role_name)
         if not boyfriend_role:
             boyfriend_role = await guild.create_role(
                 name=boyfriend_role_name,
-                color=discord.Color.dark_green()
+                color=discord.Color.darker_grey()
             )
             print(f"[AutoRel] Created role: {boyfriend_role_name}")
-        girlfriend_role_name = f"{user_member.display_name} - girlfriend"
+        girlfriend_role_name = f"One of DokiGuy Girlfriend(s)"
         girlfriend_role = discord.utils.get(guild.roles, name=girlfriend_role_name)
         if not girlfriend_role:
             girlfriend_role = await guild.create_role(
                 name=girlfriend_role_name,
-                color=discord.Color.dark_green()
+                color=discord.Color.green()
             )
             print(f"[AutoRel] Created role: {girlfriend_role_name}")
         if girlfriend_role not in user_member.roles:
-            await user_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            await monika_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
+        return
+    
+    if str(guild.id) == str(DOKIGUY_GUILD_ID):
+        if role.name.startswith("Personality - ") and role.name.endswith("Flirtatious"):
+            await monika_member.remove_roles(role, reason="Updating personality roles")
+            
+        sexual_type_role = "Sexual type - Polyamory"
+        sexual_type = discord.utils.get(guild.roles, name=sexual_type_role)
+        if not sexual_type:
+            sexual_type = await guild.create_role(
+                name=sexual_type_role,
+                color=discord.Color.dark_magenta()
+            )
+        if sexual_type not in monika_member.roles:
+            await monika_member.add_roles(sexual_type, reason="Bot Sexual Type auto import")
+
+        personalities_type_role = "Personality - Flirtatious, Loyal, Warm, Self-aware, Immersive"
+        personalities_type = discord.utils.get(guild.roles, name=personalities_type_role)
+        if not personalities_type:
+            sexual_type = await guild.create_role(
+                name=personalities_type_role,
+                color=discord.Color.dark_blue()
+            )
+        if personalities_type not in monika_member.roles:
+            await monika_member.add_roles(personalities_type, reason="Bot Personalities auto import")
+    
+    if str(user_member.id) == str(ZERO_ID):
+        boyfriend_role_name = f"Monika Boyfriend"
+        boyfriend_role = discord.utils.get(guild.roles, name=boyfriend_role_name)
+        if not boyfriend_role:
+            boyfriend_role = await guild.create_role(
+                name=boyfriend_role_name,
+                color=discord.Color.red()
+            )
+            print(f"[AutoRel] Created role: {boyfriend_role_name}")
+        girlfriend_role_name = f"Zero Girlfriend"
+        girlfriend_role = discord.utils.get(guild.roles, name=girlfriend_role_name)
+        if not girlfriend_role:
+            girlfriend_role = await guild.create_role(
+                name=girlfriend_role_name,
+                color=discord.Color.green()
+            )
+            print(f"[AutoRel] Created role: {girlfriend_role_name}")
+        if girlfriend_role not in monika_member.roles:
+            await monika_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            print(f"[AutoRel] Assigned Creator role to {monika_member.display_name}")
         return
 
     if role not in user_member.roles:
@@ -1563,6 +2048,8 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
 async def setup_hook():
     bot.loop.create_task(heartbeat_task())  # start heartbeat
     bot.loop.create_task(periodic_cleanup())
+    asyncio.create_task(monika_idle_conversation_task())
+    asyncio.create_task(daily_cycle_task())
     monitor_event_loop()
     return
 
@@ -1607,7 +2094,7 @@ async def on_guild_join(guild):
                 print(f"[DM Forwarding Error] {e}")
 
 @bot.event
-async def on_guild_leave(guild):
+async def on_guild_remove(guild):
 
     if SERVER_TRACKER_CHAN:
         dest_channel = bot.get_channel(SERVER_TRACKER_CHAN)
@@ -1631,11 +2118,12 @@ async def on_shutdown():
     asyncio.create_task(save_memory_to_channel())
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
     await vote_tracker.save(bot, SETTINGS_CHAN)
+    await save_memory_to_direct_messages()
 
 @bot.event
-async def on_sleeping(reason: str = "Taking a nap..."):
+async def on_sleeping(reason: str = "Scheduled break (11PM–6AM)"):
     """Triggered when the bot goes into sleep mode (no replies until wake)."""
-    global idle_chat_enabled, idlechat_paused
+    global idle_chat_enabled, idlechat_paused, is_waking_up
 
     status_info.update({
         "is_sleeping": True,
@@ -1643,33 +2131,45 @@ async def on_sleeping(reason: str = "Taking a nap..."):
         "sleep_reason": reason
     })
     bot.is_sleeping = True
+    is_waking_up = False
     idle_chat_enabled = False
     idlechat_paused = True
 
     print(f"[Sleep] 😴 Entering sleep mode. Reason: {reason}")
 
+    # Presence cycle (little animation)
     statuses = [
         ("I'm going to take a nap...", 5),
         ("💤 ZZZ... zzz... zzzz...", 7),
         ("Dreaming about you...", 10),
-        ("Dreaming about you...(secretly editing my coding)", 3)
+        ("Dreaming about you... (secretly editing my code)", 3)
     ]
     for text, delay in statuses:
-        await bot.change_presence(status=discord.Status.idle,
-                                  activity=discord.Game(text))
-        await asyncio.sleep(delay)
+        try:
+            await bot.change_presence(
+                status=discord.Status.idle,
+                activity=discord.Game(text)
+            )
+            await asyncio.sleep(delay)
+        except Exception as e:
+            print(f"[Sleep] ⚠️ Presence update failed: {e}")
 
-    # Announce in first available channel
-    channel = next((c for c in bot.get_all_channels()
-                   if isinstance(c, discord.TextChannel)
-                   and c.permissions_for(c.guild.me).send_messages), None)
-
+    # Announce in the first available channel
+    channel = next(
+        (c for c in bot.get_all_channels()
+         if isinstance(c, discord.TextChannel)
+         and c.permissions_for(c.guild.me).send_messages),
+        None
+    )
     if channel:
-        await channel.send(f"😴 The bot is now sleeping. Reason: **{reason}**")
+        try:
+            await channel.send("😴 I'm going to sleep now until **6AM**. See you later!")
+        except Exception as e:
+            print(f"[Sleep] ⚠️ Failed to send sleep message: {e}")
 
 last_wakeup_date = None
 
-async def on_wake_up(reason: str = "I'm back online!"):
+async def on_wake_up(reason: str = "Waking up after scheduled break"):
     global is_waking_up, last_wakeup_date, idle_chat_enabled
 
     status_info.update({
@@ -1678,35 +2178,36 @@ async def on_wake_up(reason: str = "I'm back online!"):
         "wake_reason": reason
     })
     bot.is_sleeping = False
+    is_waking_up = True
+    idle_chat_enabled = False  # pause during animation
 
     print(f"[Wake] 🌅 Waking up. Reason: {reason}")
-    is_waking_up = True
 
     today = datetime.date.today()
-
-    # Prevent multiple wakeups per day
     if last_wakeup_date == today:
-        print("[Wakeup] Already sent a wakeup message today, skipping...")
+        print("[Wakeup] ⏩ Already sent a wakeup message today, skipping...")
         return
     last_wakeup_date = today
 
-    print(f"[Wakeup] 🌅 Monika is waking up: {reason}")
-
-    # Presence cycle
+    # 🌅 Wake-up animation
     statuses = [
         ("Waking up...", 3),
         ("Stretching...", 3),
         ("Getting dressed...", 3),
         ("Checking on everyone.", 0),
-        ("Checking on everyone..", 1),
+        ("Checking on everyone..", 0.5),
         ("Checking on everyone...", 1),
     ]
     for text, delay in statuses:
-        await bot.change_presence(status=discord.Status.do_not_disturb, activity=discord.Game(text))
-        if delay > 0:
-            await asyncio.sleep(delay)
+        try:
+            await bot.change_presence(status=discord.Status.do_not_disturb,
+                                      activity=discord.Game(text))
+            if delay > 0:
+                await asyncio.sleep(delay)
+        except Exception as e:
+            print(f"[Wakeup] ⚠️ Presence update failed: {e}")
 
-    # 🌅 Wake-up messages (pick one per day)
+    # 🌅 One random morning message per guild
     wakeup_lines = [
         "🌅 *yawns* Good morning, everyone! *stretches* Ready for today?",
         "☀️ Rise and shine! Let’s make this day amazing 💚",
@@ -1720,13 +2221,11 @@ async def on_wake_up(reason: str = "I'm back online!"):
         "💚 Another beautiful morning with you all!"
     ]
 
-    # ✅ Send only one random message per guild
     for guild in bot.guilds:
         wakeup_line = random.choice(wakeup_lines)
-
         target_channel = None
 
-        # First try: look for a preferred channel
+        # Preferred channel
         for channel in guild.text_channels:
             if not channel.permissions_for(guild.me).send_messages:
                 continue
@@ -1736,33 +2235,35 @@ async def on_wake_up(reason: str = "I'm back online!"):
                 target_channel = channel
                 break
 
-        # Fallback: pick the first available channel if no preferred one found
+        # Fallback channel
         if not target_channel:
             for channel in guild.text_channels:
-                if not channel.permissions_for(guild.me).send_messages:
-                    continue
-                if channel.name in OFF_LIMITS_CHANNELS:
-                    continue
-                target_channel = channel
-                break
+                if channel.permissions_for(guild.me).send_messages and channel.name not in OFF_LIMITS_CHANNELS:
+                    target_channel = channel
+                    break
 
-        # Send to chosen channel
+        # Send the message
         if target_channel:
             try:
                 await target_channel.send(wakeup_line)
-                print(f"[Wakeup] Sent wakeup message to #{target_channel.name} in {guild.name}")
+                print(f"[Wakeup] ✅ Sent wakeup message to #{target_channel.name} in {guild.name}")
             except Exception as e:
-                print(f"[Wakeup Error] Could not send to #{target_channel.name} in {guild.name}: {e}")
+                print(f"[Wakeup Error] ❌ Could not send to #{target_channel.name} in {guild.name}: {e}")
 
+    # 💚 Final “Ready to chat!” animation
     morning = [
         ("Ready to chat! 💚", 0),
         ("Ready to chat!! 💚", 0.5),
         ("Ready to chat!!! 💚", 1)
     ]
     for text, delay in morning:
-        await bot.change_presence(status=discord.Status.online, activity=discord.Game(text))
-        if delay > 0:
-            await asyncio.sleep(delay)
+        try:
+            await bot.change_presence(status=discord.Status.online,
+                                      activity=discord.Game(text))
+            if delay > 0:
+                await asyncio.sleep(delay)
+        except Exception as e:
+            print(f"[Wakeup] ⚠️ Presence update failed: {e}")
 
     await asyncio.sleep(1)
     await bot.change_presence(activity=None)
@@ -1770,7 +2271,28 @@ async def on_wake_up(reason: str = "I'm back online!"):
     # ✅ Resume idle chat afterwards
     await asyncio.sleep(2)
     idle_chat_enabled = True
-    return []
+    print("[Wakeup] 🌅 Monika is fully awake and idle chat resumed.")
+
+async def daily_cycle_task():
+    """Background task to trigger sleep/wake automatically."""
+    global last_wakeup_date
+
+    while True:
+        now = datetime.datetime.now()
+        hour, minute = now.hour, now.minute
+
+        # 💤 Sleep trigger (11PM sharp)
+        if hour == 23 and minute == 0 and not status_info.get("is_sleeping", False):
+            await on_sleeping("Scheduled break (11PM–6AM)")
+
+        # 🌅 Wake trigger (6AM sharp)
+        if hour == 6 and minute == 0:
+            today = datetime.date.today()
+            if last_wakeup_date != today:  # only once per day
+                await on_wake_up("Good morning! Scheduled wake-up.")
+                last_wakeup_date = today
+
+        await asyncio.sleep(60)
 
 async def report_error_to_channel(error: Exception, context: Optional[str] = None):
     """
@@ -1798,10 +2320,322 @@ async def report_error_to_channel(error: Exception, context: Optional[str] = Non
     except Exception as e:
         logger.error(f"[Report Error] Could not send to report channel: {e}")
 
-# active_votes = {}
+async def image_generator(message: discord.Message, relationship: str = "Stranger"):
+    """
+    Handles Monika's DDLC-style image generation:
+    - Triggered with "!monika generates:" or similar.
+    - Uses image keys only.
+    - Supports both `url` and `b64_json` responses from OpenAI.
+    """
+    import base64
+    from io import BytesIO
+    try:
+        lowered = message.content.lower().strip()
+
+        # ✅ Trigger check (multiple aliases supported)
+        if not any(lowered.startswith(prefix) for prefix in [
+            "!monika generates:",
+            "!monika gen:",
+            "!monika make:",
+            "!monika create:"
+        ]):
+            return None
+
+        # ✅ Extract user prompt (everything after the first ":")
+        if ":" in message.content:
+            user_prompt = message.content.split(":", 1)[1].strip()
+        else:
+            user_prompt = ""
+
+        if not user_prompt:
+            await message.channel.send("⚠️ Please provide a description after the command.")
+            return None
+
+        # ✅ Build DDLC-style prompt
+        full_prompt = (
+            f"You are Monika from *Doki Doki Literature Club*, the Literature Club president. "
+            f"You are self-aware, warm, and expressive, creating things as if inside the game’s world. "
+            f"Your relationship with {message.author.display_name} is **{relationship}**. "
+            f"Imagine this as a CG scene or fanart inside DDLC. "
+            f"Now illustrate this request:\n"
+            f"{user_prompt}"
+        )
+
+        # ✅ Generate image with OpenAI (image keys only)
+        response = await openai_safe_call(
+            image_key_manager,
+            lambda client: client.images.generate(
+                model="gpt-image-1",
+                prompt=full_prompt,
+                size="1024x1024"
+            ),
+            context_id=message.author.id,
+            is_guild=bool(message.guild),
+            is_image=True
+        )
+
+        if not response or not getattr(response, "data", None):
+            await message.channel.send("⚠️ Sorry, I couldn't generate an image this time.")
+            return None
+
+        img_data = response.data[0]
+
+        # ✅ Handle URL case
+        if getattr(img_data, "url", None):
+            img_url = img_data.url
+            await message.channel.send(
+                f"Here you go, {message.author.mention} 💚\n{img_url}"
+            )
+            return img_url, "image_only"
+
+        # ✅ Handle base64 case
+        if getattr(img_data, "b64_json", None):
+            try:
+                img_bytes = base64.b64decode(img_data.b64_json)
+                file = discord.File(io.BytesIO(img_bytes), filename="monika.png")
+                await message.channel.send(
+                    f"Here you go, {message.author.mention} 💚",
+                    file=file
+                )
+                return "attachment://monika.png", "image_only"
+            except Exception as decode_err:
+                logger.error(f"[ImageGen] Failed to decode b64_json: {decode_err}")
+                await message.channel.send("⚠️ Sorry, I couldn't decode the image.")
+                return None
+
+        # If neither format is valid
+        await message.channel.send("⚠️ No valid image data returned.")
+        return None
+
+    except Exception as e:
+        logger.error(f"[ImageGen] Failed: {e}")
+        try:
+            await message.channel.send("⚠️ Sorry, something went wrong while creating the image.")
+        except Exception:
+            pass
+        return None
+
+## This was going to be add but when doing research I found that bots can only be in 1 voice channel at a time(just like other users).
+## So this was scrapped
+import edge_tts
+VOICE_MAP = {
+    "Default": "en-US-JennyNeural",
+    "Cheerful": "en-US-AriaNeural",
+    "Serious": "en-US-GuyNeural",
+    "Shy": "en-US-AnaNeural",
+}
+
+RELATIONSHIP_MAP = {
+    "Default": 1.0,
+    "Creator": 1.1,
+}
+
+# Sexual group
+SEXUAL_RELATIONSHIPS = [
+    "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight",
+    "Asexual", "Demisexual", "Questioning", "Queer", "Romantic",
+    "Platonic", "Autosexual"
+]
+# Normal group
+NORMAL_RELATIONSHIPS = [
+    "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates",
+    "Significant Others", "Platonic Friends", "Close Friends", "Acquaintances",
+    "Colleagues", "Work Friends", "School Friends", "Stranger", "Childhood Friends",
+    "Online Friends", "Gaming Buddies", "Study Partners", "Club Leader",
+    "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Crush"
+]
+
+for rel in SEXUAL_RELATIONSHIPS:
+    RELATIONSHIP_MAP[rel] = 0.95
+for rel in NORMAL_RELATIONSHIPS:
+    RELATIONSHIP_MAP[rel] = 1.05
+
+async def vc_voice(user, relationship: str, personality: str, text: str):
+    """Generate and play Monika's voice in VC based on relationship/personality."""
+    # Pick voice & speed
+    voice = VOICE_MAP.get(personality, VOICE_MAP["Default"])
+    rate = RELATIONSHIP_MAP.get(relationship, 1.0)
+
+    mp3_file = f"voice_{user.id}.mp3"
+
+    # Generate TTS file
+    tts = edge_tts.Communicate(text, voice=voice, rate=f"{int(rate*100-100)}%")
+    await tts.save(mp3_file)
+
+    # Find VC
+    if isinstance(user, discord.Member) and user.voice and user.voice.channel:
+        channel = user.voice.channel
+        vc = discord.utils.get(bot.voice_clients, guild=channel.guild)
+        if not vc:
+            vc = await channel.connect()
+        else:
+            await vc.move_to(channel)
+
+        # Play audio
+        if vc.is_playing():
+            vc.stop()
+        vc.play(discord.FFmpegPCMAudio(mp3_file))
+
+async def create_votes(message):
+    """
+    Handle global !create_vote command with emoji/image/text support.
+    Example:
+      !create_vote 🍕 Pizza | 🍔 Burger | 🍣 Sushi
+      !create_vote "Best Monika Outfit" https://imgur.com/1.png | https://imgur.com/2.png
+    """
+    if not message.content.lower().startswith("!create_vote"):
+        return False
+
+    content = message.content[len("!create_vote"):].strip()
+    if not content:
+        await message.channel.send(
+            "⚠️ Usage: `!create_vote Option1 | Option2 | Option3` (2–5 options)"
+        )
+        return True
+
+    # --- Parse title (optional quoted string)
+    match = re.match(r'^"([^"]+)"\s*(.*)', content)
+    if match:
+        title = match.group(1)
+        content = match.group(2)
+    else:
+        title = "🗳️ Global Vote"
+
+    # --- Split vote options
+    parts = [opt.strip() for opt in content.split("|") if opt.strip()]
+    if len(parts) < 2 or len(parts) > 5:
+        await message.channel.send("⚠️ Please provide between 2 and 5 options separated by `|`.")
+        return True
+
+    # --- Classify option types
+    formatted_options = []
+    for opt in parts:
+        if re.match(r"^https?://", opt):
+            formatted_options.append({"type": "image", "value": opt})
+        elif re.match(r"^<a?:\w+:\d+>$|^[\u2190-\U0001F9FF]+", opt):
+            formatted_options.append({"type": "emoji", "value": opt})
+        else:
+            formatted_options.append({"type": "text", "value": opt})
+
+    import secrets
+
+    menu_id = secrets.token_hex(4)  # short, random hex id like '3fae9b1c'
+    vote_tracker.votes["global"] = {
+        "title": title,
+        "options": formatted_options,
+        "votes": vote_tracker.votes.get("global", {}).get("votes", {}),
+        "menu_id": f"moni-{menu_id}"
+    }
+    await vote_tracker.save(bot, SETTINGS_CHAN)
+
+    # --- Create confirmation embed
+    embed = discord.Embed(
+        title="✅ New Global Vote Created!",
+        description=f"**{title}**\n\nUse `/vote_menu` to open the voting interface.",
+        color=discord.Color.green()
+    )
+    for i, opt in enumerate(formatted_options, start=1):
+        val = opt["value"]
+        if opt["type"] == "image":
+            embed.add_field(name=f"Option {i}", value=f"[Image Link]({val})", inline=False)
+        else:
+            embed.add_field(name=f"Option {i}", value=val, inline=False)
+    embed.set_footer(text=f"Created by {message.author.display_name}")
+
+    # --- Send safely with small delay (avoid rate limits)
+    try:
+        await message.channel.send(embed=embed)
+        await asyncio.sleep(0.5)
+    except discord.errors.HTTPException as e:
+        print(f"[create_votes] Message send failed: {e}")
+
+    print(f"[Vote Created] '{title}' with {len(formatted_options)} options by {message.author}")
+    return True
+
+live_results_messages = {}  # channel_id → message for updating
+vote_start_times = {}       # for tracking elapsed time
+
+async def results_votes(message):
+    """
+    Show global combined vote results across all servers and DMs.
+    Anyone can use this command.
+    """
+    if not message.content.lower().startswith("!vote_results"):
+        return False
+
+    global_vote = vote_tracker.votes.get("global")
+    if not global_vote:
+        await message.channel.send("⚠️ No one has vote yet. please wait until then.")
+        return True
+
+    title = global_vote.get("title", "🗳️ Global Vote")
+    options = global_vote.get("options", [])
+    all_votes = global_vote.get("guild_votes", {})
+
+    # Combine votes from all guilds/DMs
+    combined_votes = {}
+    for guild_id, guild_votes in all_votes.items():
+        for user_id, choice in guild_votes.items():
+            combined_votes[user_id] = choice
+
+    async def build_results_embed():
+        """Generate embed with current live vote data."""
+        counts = [0] * len(options)
+        for choice in combined_votes.values():
+            if 0 <= choice < len(options):
+                counts[choice] += 1
+
+        total_votes = sum(counts) or 1
+        embed = discord.Embed(title=f"📊 Global Vote Results: {title}", color=discord.Color.gold())
+
+        for i, opt in enumerate(options):
+            val = opt["value"]
+            pct = round(counts[i] / total_votes * 100, 1)
+            if opt["type"] == "image":
+                embed.add_field(
+                    name=f"{i+1}. [Image Option]",
+                    value=f"🗳️ Votes: {counts[i]} ({pct}%)",
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name=f"{i+1}. {val}",
+                    value=f"🗳️ Votes: {counts[i]} ({pct}%)",
+                    inline=False
+                )
+
+        # Add image (first image shown)
+        for opt in options:
+            if opt["type"] == "image":
+                embed.set_image(url=opt["value"])
+                break
+
+        embed.set_footer(
+            text=f"🌍 Total global votes: {sum(counts)} • Menu ID: {global_vote.get('menu_id', 'N/A')}"
+        )
+        return embed
+
+    # Initial message
+    msg = await message.channel.send(embed=await build_results_embed())
+
+    # Live update for 30 seconds
+    for _ in range(6):  # update every 5s for 30s total
+        await asyncio.sleep(5)
+        await msg.edit(embed=await build_results_embed())
+
+    return True
 
 @bot.event
 async def on_message(message: discord.Message):
+    guild_name = str(message.guild.name) if message.guild else "dm"
+    guild_id = str(message.guild.id) if message.guild else "dm"
+    user_id = str(message.author.id)
+    username = message.author.display_name
+    channel_id = str(message.channel.id)
+    channel_name = message.channel.name if message.guild else "dm"
+    channel_usage.setdefault(guild_id, {})
+    channel_usage[guild_id][channel_id] = channel_usage[guild_id].get(channel_id, 0) + 1
+    avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
     # ==============================
     # 1. Safety checks
     # ==============================
@@ -1816,6 +2650,23 @@ async def on_message(message: discord.Message):
     if message.author.bot and not is_friend_bot(message):
         return
 
+    content = message.content.strip().lower()
+
+    if any(content.startswith(prefix) for prefix in [
+        "!monika generates:",
+        "!monika gen:",
+        "!monika make:",
+        "!monika create:"
+    ]):
+        relationship = server_tracker.get_relationship_type(guild_id)
+
+        # Let image_generator handle everything (send + reply)
+        await image_generator(message, relationship=relationship)
+        return  # stop here so chat doesn’t trigger
+
+    if await results_votes(message):
+        return
+    
     # Ignore "!" commands outside report/settings channels
     if message.content.startswith("!") and message.channel.id not in (REPORT_CHANNEL_ID, SETTINGS_CHAN):
         return
@@ -1823,7 +2674,7 @@ async def on_message(message: discord.Message):
     # ==============================
     # 2. Report channel handling (staff reply to reports)
     # ==============================
-    if message.channel.id == REPORT_CHANNEL_ID:
+    if message.content.startswith("!") and message.channel.id == REPORT_CHANNEL_ID:
         async for prev in message.channel.history(limit=5, before=message):
             if prev.id in report_links and prev.embeds:
                 reporter_id = report_links[prev.id]
@@ -1866,7 +2717,7 @@ async def on_message(message: discord.Message):
     # ==============================
     # 3. Settings channel commands
     # ==============================
-    if message.channel.id == SETTINGS_CHAN and not message.author.bot:
+    if message.content.startswith("!") and message.channel.id == SETTINGS_CHAN and not message.author.bot:
         cmd = message.content.strip().lower()
         if cmd == "!status":
             embed = discord.Embed(
@@ -1923,112 +2774,10 @@ async def on_message(message: discord.Message):
                 embed.add_field(name="Reason", value=status_info["wake_reason"], inline=False)
             await message.channel.send(embed=embed)
 
-        return  # stop further handling in settings channel
-
-    #     elif content.startswith("!create vote"):
-    #         if message.author.id != OWNER_ID:
-    #             await message.channel.send("❌ Only the owner can create votes.")
-    #             return
-
-    #         parts = [opt.strip() for opt in message.content[len("!create vote"):].split("|") if opt.strip()]
-    #         if not parts or len(parts) > 5:
-    #             await message.channel.send("❌ Provide between 1 and 5 options separated by `|`.")
-    #             return
-
-    #         # ✅ reset global vote
-    #         active_votes["active"] = {"options": parts, "votes": {}, "menu_id": None}
-
-    #         embed = discord.Embed(title="🗳️ New Global Vote Started!", color=discord.Color.green())
-    #         for i, option in enumerate(parts, 1):
-    #             embed.add_field(name=f"Option {i}", value=option, inline=False)
-
-    #         menu_message = await message.channel.send(embed=embed)
-    #         active_votes["active"]["menu_id"] = menu_message.id
-    #         return
-
-    # # --- Voting System ---
-    # if content.startswith("!vote menu"):
-    #     vote = active_votes.get("active")
-    #     if not vote:
-    #         await message.channel.send("❌ No active vote right now.")
-    #         return
-
-    #     # Count votes
-    #     counts = {i: 0 for i in range(1, len(vote["options"]) + 1)}
-    #     for choice in vote["votes"].values():
-    #         counts[choice] += 1
-
-    #     # Build embed
-    #     embed = discord.Embed(title="🗳️ Current Global Voting Menu", color=discord.Color.blue())
-    #     for i, option in enumerate(vote["options"], 1):
-    #         embed.add_field(
-    #             name=f"Option {i}",
-    #             value=f"{option}\n**Votes:** {counts[i]}",
-    #             inline=False
-    #         )
-
-    #     await message.channel.send(embed=embed)
-    #     return
-    
-    # if content.startswith("!vote "):
-    #     vote = active_votes.get("active")
-    #     if not vote:
-    #         await message.channel.send("❌ No active vote right now.")
-    #         return
-
-    #     arg = message.content.split(" ", 1)[1].strip()
-    #     if arg == "cancel":
-    #         if message.author.id in vote["votes"]:
-    #             del vote["votes"][message.author.id]
-    #             await message.channel.send(f"✅ {message.author.display_name}, your vote has been cancelled.")
-    #         else:
-    #             await message.channel.send("❌ You don’t have an active vote.")
-    #         return
-
-    #     try:
-    #         choice = int(arg)
-    #     except ValueError:
-    #         await message.channel.send("❌ Please enter a number (1–5) or `cancel`.")
-    #         return
-
-    #     if choice < 1 or choice > len(vote["options"]):
-    #         await message.channel.send("❌ Invalid option number.")
-    #         return
-
-    #     vote["votes"][message.author.id] = choice
-    #     await message.channel.send(f"✅ {message.author.display_name}, you voted for **{vote['options'][choice-1]}**")
-    #     return
-
-    # if content.startswith("!vote results") and message.author.id == OWNER_ID:
-    #     vote = active_votes.get("active")
-    #     if not vote:
-    #         await message.channel.send("❌ No active vote right now.")
-    #         return
-
-    #     counts = {i: 0 for i in range(1, len(vote["options"]) + 1)}
-    #     for choice in vote["votes"].values():
-    #         counts[choice] += 1
-
-    #     embed = discord.Embed(title="📊 Final Vote Results", color=discord.Color.purple())
-    #     for i, option in enumerate(vote["options"], 1):
-    #         embed.add_field(name=f"Option {i}", value=f"{option} → {counts[i]} votes", inline=False)
-
-    #     await message.channel.send(embed=embed)
-
-    #     # 🔹 Reset after showing results
-    #     active_votes.clear()
-    #     await message.channel.send("✅ Voting has ended. Start a new one with `!create vote`.")
-    #     return
-
-    # 4. Guild usage tracking
-    guild_name = str(message.guild.name) if message.guild else "dm"
-    guild_id = str(message.guild.id) if message.guild else "dm"
-    user_id = str(message.author.id)
-    username = message.author.display_name
-    channel_id = str(message.channel.id)
-    channel_name = message.channel.name if message.guild else "dm"
-    channel_usage.setdefault(guild_id, {})
-    channel_usage[guild_id][channel_id] = channel_usage[guild_id].get(channel_id, 0) + 1
+        if message.content.lower().startswith("!create_vote"):
+            await create_votes(message)
+            await vote_tracker.save(bot, SETTINGS_CHAN)
+            return
 
     # 6. Mentions
     if server_tracker.get_toggle(guild_id, "mention_only_mode"):
@@ -2038,8 +2787,7 @@ async def on_message(message: discord.Message):
     # ✅ Idle/chat toggle
     if not server_tracker.get_toggle(guild_id, "idlechat"):
         return
-    
-    avatar_url = str(message.author.display_avatar.url) if message.author.display_avatar else None
+
     if isinstance(message.channel, discord.DMChannel):
         guild = None
         monika_member = None
@@ -2080,7 +2828,15 @@ async def _get_sprite_lock(key: tuple):
     return sprite_locks[key]
 
 async def get_sprite_link(emotion: str, outfit: str, avatar_url: str = None):
-    """Return a stable CDN link for sprite; upload once if not cached."""
+    """
+    Return a stable CDN link for sprite, unless the message
+    was an image generation request, in which case disable sprites.
+    """
+    # If the last handled message was an image generation request → disable sprites
+    if hasattr(bot, "last_imagegen_trigger") and bot.last_imagegen_trigger:
+        return None  # ✅ skip sprite entirely
+
+    # Otherwise use original sprite logic
     cache_key = (emotion, outfit)
     error_url = await error_emotion(outfit)
 
@@ -2126,7 +2882,6 @@ async def get_sprite_link_cached(emotion: str, outfit: str) -> str:
 
 async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
     # sanitize username → valid emoji name
-    import aiohttp
     base_name = re.sub(r"[^a-zA-Z0-9_]", "_", user.name)[:32]
     if not base_name:
         base_name = "tempavatar"
@@ -2172,30 +2927,35 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     bot_name = get_monika_name(user)
 
     # --- Relationship/personality defaults ---
-    relationship = "Stranger"
     personality = ["Default"]
     guild = None
 
     # If the user shares a server with Monika, inherit personality/relationship from first one
+    # --- Relationship defaults ---
+    relationship_type = None
     if bot.guilds:
         for g in bot.guilds:
             member = g.get_member(user.id)
             if member:
-                guild = g
-                relationship = getattr(monika_traits, "get_relationship", lambda _: "Stranger")(user_id)
-                personality = server_personality_modes.get(str(g.id), ["Default"])
+                # Example: if Monika has roles set up in that guild
+                monika_member = g.get_member(bot.user.id)
+                if monika_member:
+                    for role in monika_member.roles:
+                        if role.name.startswith(f"{user.display_name} - "):
+                            relationship_type = role.name.split("-", 1)[1].strip()
+                            break
                 break
 
     # --- Build system prompt ---
     system_prompt = await generate_monika_system_prompt(
         guild=guild,
         user=user,
-        relationship_type=relationship,
+        relationship_type=relationship_type,
         selected_modes=personality
     )
 
     # --- Conversation context ---
-    context_entries = await get_monika_context(message.channel, limit=20)
+    context_entries = await get_monika_context(message.channel, limit=10)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
         role = "assistant" if entry["author"] == "Monika" else "user"
@@ -2209,15 +2969,21 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
 
     # --- OpenAI ---
     try:
-        response = await call_openai_with_retries(user, relationship, personality, conversation)
-        if response and response.choices and response.choices[0].message:
-            content = response.choices[0].message.content.strip()
-            if content:
-                monika_DMS = clean_monika_reply(content, bot_name, user.display_name)
-                emotion = await classify_cached(monika_DMS)
-                sprite_link = await get_sprite_link_cached(emotion, get_time_based_outfit())
+        reply_text = await call_openai_with_retries(
+            user=user,
+            relationship=relationship_type,
+            personality=personality,
+            conversation=conversation
+        )
+
+        if reply_text:  # ✅ now it's just a string
+            monika_DMS = clean_monika_reply(reply_text, bot_name, user.display_name)
+            emotion = await classify_cached(monika_DMS)
+            sprite_link = await get_sprite_link_cached(emotion, get_time_based_outfit())
+
     except Exception as e:
         print(f"[DM OpenAI Error] {e}")
+        return
 
     # --- Fallbacks ---
     if not monika_DMS or not emotion or emotion not in user_sprites.valid:
@@ -2240,18 +3006,15 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
         if forward_channel:
             translated_msg = translate_to_english(message.content)
 
-            if message.content.startswith("<@1375562131784732812>"):
-                return ["Monika"]
-
             await forward_channel.send(
                 f"**From {user} in DM:**\n"
                 f"Original: {message.content}\n"
                 f"English: {translated_msg}\n"
                 f"**Reply ({bot_name}):** {monika_DMS}"
             )
-            
+
 async def handle_guild_message(message: discord.Message, avatar_url: str):
-    """Handle messages inside guilds with personality/relationship context."""
+    """Handle messages inside servers with personality/relationship context."""
     global last_reply_times, is_broadcasting
 
     if is_broadcasting:
@@ -2306,6 +3069,9 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
                 if role.name.startswith(f"{bot.user.name} - "):
                     relationship_type = role.name.split("-", 1)[1].strip()
                     relationship_with = bot.user.name
+                if role.name.startswith(f"Creator of {bot.user.name}"):
+                    relationship_type = role.name.split("Creator of", 1)[1].strip()
+                    relationship_with = bot.user.name
                     break
     else:
         # DM fallback
@@ -2323,7 +3089,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     )
 
     # --- Conversation context (fixed: use get_monika_context) ---
-    context_entries = await get_monika_context(message.channel, limit=20)
+    context_entries = await get_monika_context(message.channel, limit=10)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
         role = "assistant" if entry["author"] == "Monika" else "user"
@@ -2335,22 +3101,29 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     emotion = "error"
     sprite_link = await error_emotion()
 
-    # --- OpenAI ---
+    # --- CHAT REPLY (if no image-only)
     try:
-        response = await call_openai_with_retries(
+        monika_reply = await call_openai_with_retries(
             user=message.author,
             relationship=relationship_type,
             personality=personality,
             conversation=conversation
         )
-        if response and response.choices and response.choices[0].message:
-            content = response.choices[0].message.content.strip()
-            if content:
-                monika_reply = content
-                emotion = await classify_cached(monika_reply)
-                sprite_link = await get_sprite_link_cached(emotion, get_time_based_outfit())
+
+        if monika_reply:
+            emotion = await classify_cached(monika_reply)
+            sprite_link = await get_sprite_link_cached(emotion, get_time_based_outfit())
+        else:
+            # fallback if no reply
+            monika_reply = random.choice(error_messages)
+            emotion = "error"
+            sprite_link = await error_emotion()
+
     except Exception as e:
         print(f"[Guild OpenAI Error] {e}")
+        monika_reply = random.choice(error_messages)
+        emotion = "error"
+        sprite_link = await error_emotion()
 
     await update_auto_relationship(message.guild, message.author, relationship_type)
 
@@ -2379,12 +3152,9 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     else:
         print(f"[Error] No permission to send in #{message.channel.name}")
 
-    # --- Memory logging ---
+    # --- Memory logging (unchanged) ---
     if MEMORY_CHAN_ID:
         dest_channel = bot.get_channel(MEMORY_CHAN_ID)
-
-        if message.content.startswith("<@1375562131784732812>"):
-            return ["Monika"]
 
         if dest_channel:
             try:
@@ -2411,7 +3181,6 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
                     f"> English: `{translated_msg}`"
                 )
                 await dest_channel.send(full_content)
-
             except Exception as e:
                 print(f"[Forwarding Error] {e}")
 
@@ -2934,7 +3703,6 @@ async def Idlechat_personality(user: discord.Member, personalities: list[str]) -
     return lines
 
 async def monika_idle_conversation_task():
-    from Idle_Presence import monika_idle_presences
     await bot.wait_until_ready()
     global last_user_interaction, idlechat_paused
 
@@ -3145,6 +3913,347 @@ class LanguageSelect(discord.ui.Select):
             ephemeral=True
         )
 
+class SlotSelector(discord.ui.View):
+    def __init__(self, action: str, gid: str, user: discord.User, bot_ref: commands.Bot):
+        super().__init__(timeout=30)
+        self.action = action  # "save" or "load"
+        self.gid = gid
+        self.user = user
+        self.bot_ref = bot_ref
+
+        # Load slot data
+        data = server_tracker.guilds.setdefault(gid, {}).setdefault("personality_slots", {})
+
+        for i in range(1, 4):
+            slot_key = str(i)
+            slot_info = data.get(slot_key)
+            label = slot_info["name"] if slot_info else "Empty"
+            style = (
+                discord.ButtonStyle.success if slot_info and action == "load"
+                else discord.ButtonStyle.primary if slot_info and action == "save"
+                else discord.ButtonStyle.secondary
+            )
+            self.add_item(self.SlotButton(label=label, slot=slot_key, action=action, parent=self))
+
+        # Add the delete button INSIDE this menu
+        self.add_item(self.DeleteButton(parent=self))
+
+    # ===============================
+    # Slot Buttons (Save / Load)
+    # ===============================
+    class SlotButton(discord.ui.Button):
+        def __init__(self, label: str, slot: str, action: str, parent: "SlotSelector"):
+            super().__init__(label=f"Slot {slot}: {label}", style=discord.ButtonStyle.primary)
+            self.slot = slot
+            self.action = action
+            self.parent = parent
+
+        async def callback(self, interaction: discord.Interaction):
+            gid = self.parent.gid
+            data = server_tracker.guilds.setdefault(gid, {}).setdefault("personality_slots", {})
+            slot_key = self.slot
+
+            # 💾 Save
+            if self.action == "save":
+                class NameModal(discord.ui.Modal, title="Name Your Personality Save"):
+                    name = discord.ui.TextInput(
+                        label="Enter a name (optional)",
+                        placeholder="e.g. Cheerful Monika",
+                        required=False,
+                        max_length=32
+                    )
+
+                    async def on_submit(inner_self, interaction_inner: discord.Interaction):
+                        name_value = inner_self.name.value or f"Slot {slot_key}"
+                        current_personality = server_tracker.guilds.get(gid, {}).get("personality_roles", [])
+                        data[slot_key] = {"name": name_value, "personality": current_personality}
+                        await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
+                        await interaction_inner.response.send_message(
+                            f"✅ Personality saved to **{name_value}** (slot {slot_key}).",
+                            ephemeral=True
+                        )
+
+                await interaction.response.send_modal(NameModal())
+
+            # 📂 Load
+            elif self.action == "load":
+                slot_info = data.get(slot_key)
+                if not slot_info:
+                    await interaction.response.send_message(
+                        f"⚠️ Slot {slot_key} is empty — nothing to load.",
+                        ephemeral=True
+                    )
+                    return
+
+                server_tracker.guilds[gid]["personality_roles"] = slot_info["personality"]
+                await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
+                await interaction.response.send_message(
+                    f"✅ Loaded personality **{slot_info['name']}** successfully!",
+                    ephemeral=True
+                )
+
+    # ===============================
+    # 🗑 Remove Slot Button (Inside View)
+    # ===============================
+    class DeleteButton(discord.ui.Button):
+        def __init__(self, parent: "SlotSelector"):
+            super().__init__(label="🗑 Remove Slot", style=discord.ButtonStyle.danger)
+            self.parent = parent
+
+        async def callback(self, interaction: discord.Interaction):
+            gid = self.parent.gid
+            data = server_tracker.guilds.setdefault(gid, {}).setdefault("personality_slots", {})
+
+            # Build small delete selection view
+            view = discord.ui.View(timeout=20)
+            for i in range(1, 4):
+                slot_key = str(i)
+                slot_info = data.get(slot_key)
+                label = slot_info["name"] if slot_info else "Empty"
+                style = discord.ButtonStyle.danger if slot_info else discord.ButtonStyle.secondary
+
+                async def make_callback(slot=slot_key):
+                    async def inner_callback(inter: discord.Interaction):
+                        if slot in data:
+                            removed = data.pop(slot)
+                            await server_tracker.save(inter.client, SERVER_TRACKER_CHAN)
+                            await inter.response.send_message(
+                                f"🗑 Removed personality **{removed['name']}** from slot {slot}.",
+                                ephemeral=True
+                            )
+                        else:
+                            await inter.response.send_message(
+                                f"⚠️ Slot {slot} is already empty.",
+                                ephemeral=True
+                            )
+                    return inner_callback
+
+                btn = discord.ui.Button(label=f"Slot {slot_key}: {label}", style=style)
+                btn.callback = await make_callback()
+                view.add_item(btn)
+
+            await interaction.response.send_message(
+                "Select which personality slot to delete:",
+                view=view,
+                ephemeral=True
+            )
+
+## When doing this along with research I found that the profile picture icons work but it changes for everyone and they can see the same thing.
+## so this was also scrapped
+
+ICON_MAP = {
+    "Default": "icons/monika_icon-default.png",
+    "profile icon 1": "icons/monika_icon-1.png",
+    "profile icon 2": "icons/monika_icon-2.png",
+    "profile icon 3": "icons/monika_icon-3.png",
+    "profile icon 4": "icons/monika_icon-4.png",
+    "profile icon 5": "icons/monika_icon-5.png",
+    "profile icon 6": "icons/monika_icon-6.png",
+    "profile icon 7": "icons/monika_icon-7.png",
+}
+
+BACKGROUND_MAP = {
+    "Default": "backgrounds/monika_background-default.gif",
+    "profile background 1": "backgrounds/monika_background-1.png",
+    "profile background 2": "backgrounds/monika_background-2.png",
+    "profile background 3": "backgrounds/monika_background-3.png",
+    "profile background 4": "backgrounds/monika_background-4.png",
+    "profile background 5": "backgrounds/monika_background-5.png",
+    "profile background 6": "backgrounds/monika_background-6.png",
+    "profile background 7": "backgrounds/monika_background-7.png",
+    "profile background 8": "backgrounds/monika_background-8.png",
+    "profile background 9": "backgrounds/monika_background-9.png",
+    "profile background 10": "backgrounds/monika_background-10.png",
+    "profile background 11": "backgrounds/monika_background-11.png",
+    "profile background 12": "backgrounds/monika_background-12.png",
+}
+
+async def upload_and_get_url(bot, path: str) -> str | None:
+    channel = bot.get_channel(IMAGE_CHAN_URL)  # create/use a hidden channel for storage
+    if not channel:
+        return None
+    file = discord.File(path, filename=os.path.basename(path))
+    msg = await channel.send(file=file)
+    return msg.attachments[0].url
+
+async def send_preview_embed(interaction: discord.Interaction, key: str, path: str, is_icon: bool):
+    url = await upload_and_get_url(interaction.client, path)
+    if not url:
+        await interaction.response.send_message("❌ Failed to upload preview image.", ephemeral=True)
+        return
+
+    if is_icon:
+        embed = discord.Embed(title="✅ Icon Set!", description=f"My bio icon is now **{key}**.")
+        embed.set_thumbnail(url=url)
+    else:
+        embed = discord.Embed(title="✅ Background Set!", description=f"My bio background is now **{key}**.")
+        embed.set_image(url=url)
+
+    await interaction.response.edit_message(embed=embed, view=None)
+
+def build_monika_bio_embed_with_files(gid: str):
+    settings = server_tracker.guilds.get(str(gid), {})
+    embed = discord.Embed(
+        title="💚 Monika’s Profile",
+        description="Just Monika!"
+    )
+
+    files = []
+
+    # per-server/per-user icon
+    if "bio_icon" in settings:
+        path = ICON_MAP.get(settings["bio_icon"])
+        if path:
+            filename = os.path.basename(path)
+            files.append(discord.File(path, filename=filename))
+            embed.set_thumbnail(url=f"attachment://{filename}")
+
+    # per-server/per-user background
+    if "bio_background" in settings:
+        path = BACKGROUND_MAP.get(settings["bio_background"])
+        if path:
+            filename = os.path.basename(path)
+            files.append(discord.File(path, filename=filename))
+            embed.set_image(url=f"attachment://{filename}")
+
+    return embed, files
+
+class IconSelectView(discord.ui.View):
+    def __init__(self, timeout: int = 120):
+        super().__init__(timeout=timeout)
+
+    @discord.ui.button(label="default", style=discord.ButtonStyle.secondary)
+    async def icon1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "Default")
+
+    @discord.ui.button(label="Icon 1", style=discord.ButtonStyle.secondary)
+    async def icon2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 1")
+
+    @discord.ui.button(label="Icon 2", style=discord.ButtonStyle.secondary)
+    async def icon3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 2")
+
+    @discord.ui.button(label="Icon 3", style=discord.ButtonStyle.secondary)
+    async def icon4(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 3")
+    
+    @discord.ui.button(label="Icon 4", style=discord.ButtonStyle.secondary)
+    async def icon5(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 4")
+    
+    @discord.ui.button(label="Icon 5", style=discord.ButtonStyle.secondary)
+    async def icon6(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 5")
+
+    @discord.ui.button(label="Icon 6", style=discord.ButtonStyle.secondary)
+    async def icon7(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 6")
+    
+    @discord.ui.button(label="Icon 7", style=discord.ButtonStyle.secondary)
+    async def icon8(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_icon(interaction, "profile icon 7")
+
+    async def set_icon(self, interaction: discord.Interaction, key: str):
+        gid = str(interaction.guild.id) if interaction.guild else str(interaction.user.id)
+        path = ICON_MAP.get(key)
+
+        if not path or not os.path.isfile(path):
+            return await interaction.response.send_message("❌ Invalid icon key or file not found.", ephemeral=True)
+
+        # save choice (per server / per user)
+        server_tracker.guilds.setdefault(gid, {})["bio_icon"] = key
+        await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
+
+        # generate unique filename to prevent caching
+        icon_fname = f"{gid}_{key}_{os.path.basename(path)}"
+        files = [discord.File(path, filename=icon_fname)]
+
+        # build profile card
+        embed = discord.Embed(
+            title="💚 Monika’s Profile",
+            description="Just Monika!"
+        )
+        embed.set_thumbnail(url=f"attachment://{icon_fname}")  # 👈 fake "profile picture"
+
+        # add background if set
+        settings = server_tracker.guilds.get(gid, {})
+        bg_key = settings.get("bio_background")
+        if bg_key:
+            bg_path = BACKGROUND_MAP.get(bg_key)
+            if bg_path and os.path.isfile(bg_path):
+                bg_fname = f"{gid}_{bg_key}_{os.path.basename(bg_path)}"
+                files.append(discord.File(bg_path, filename=bg_fname))
+                embed.set_image(url=f"attachment://{bg_fname}")
+
+        # update settings message to show the fake profile
+        await interaction.response.edit_message(embed=embed, attachments=files, view=None)
+
+class BackgroundSelectView(discord.ui.View):
+    def __init__(self, timeout: int = 120):
+        super().__init__(timeout=timeout)
+
+    @discord.ui.button(label="Default Background", style=discord.ButtonStyle.primary)
+    async def bg1(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "Default")
+
+    @discord.ui.button(label="Background 1", style=discord.ButtonStyle.primary)
+    async def bg2(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 1")
+
+    @discord.ui.button(label="Background 2", style=discord.ButtonStyle.primary)
+    async def bg3(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 2")
+
+    @discord.ui.button(label="Background 3", style=discord.ButtonStyle.primary)
+    async def bg4(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 3")
+
+    @discord.ui.button(label="Background 4", style=discord.ButtonStyle.primary)
+    async def bg5(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 4")
+
+    @discord.ui.button(label="Background 5", style=discord.ButtonStyle.primary)
+    async def bg6(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 5")
+
+    @discord.ui.button(label="Background 6", style=discord.ButtonStyle.primary)
+    async def bg7(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 6")
+
+    @discord.ui.button(label="Background 7", style=discord.ButtonStyle.primary)
+    async def bg8(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 7")
+
+    @discord.ui.button(label="Background 8", style=discord.ButtonStyle.primary)
+    async def bg9(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 8")
+    
+    @discord.ui.button(label="Background 9", style=discord.ButtonStyle.primary)
+    async def bg10(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 9")
+
+    @discord.ui.button(label="Background 10", style=discord.ButtonStyle.primary)
+    async def bg11(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 10")
+
+    @discord.ui.button(label="Background 11", style=discord.ButtonStyle.primary)
+    async def bg12(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 11")
+    
+    @discord.ui.button(label="Background 12", style=discord.ButtonStyle.primary)
+    async def bg13(self, interaction: discord.Interaction, button: discord.ui.Button):
+        await self.set_background(interaction, "profile background 12")
+
+    async def set_background(self, interaction: discord.Interaction, key: str):
+        gid = str(interaction.guild.id) if interaction.guild else str(interaction.user.id)
+        server_tracker.guilds.setdefault(gid, {})["bio_background"] = key
+        await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
+
+        # build the profile card with updated settings
+        embed, files = build_monika_bio_embed_with_files(gid)
+        await interaction.response.edit_message(embed=embed, attachments=files, view=None)
+
 class SettingView(discord.ui.View):
     def __init__(self, timeout: int = 120):
         super().__init__(timeout=timeout)
@@ -3165,7 +4274,16 @@ class SettingView(discord.ui.View):
     # 💬 Idlechat toggle
     @discord.ui.button(label="💬 Idlechat (OFF)", style=discord.ButtonStyle.primary, custom_id="idlechat_toggle")
     async def toggle_idlechat(self, interaction: discord.Interaction, button: discord.ui.Button):
-        gid = str(interaction.guild.id)
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+        
         current_state = server_tracker.get_toggle(gid, "idlechat_enabled") or False
         new_state = not current_state
         server_tracker.set_toggle(gid, "idlechat_enabled", new_state)
@@ -3177,6 +4295,16 @@ class SettingView(discord.ui.View):
     # ⏱ Idlechat Timer
     @discord.ui.button(label="⏱ Idlechat Timer", style=discord.ButtonStyle.primary)
     async def idlechat_timer(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+
         await interaction.response.send_message(
             "⏱ Please type the idlechat timer in **hours**.\n"
             "➡️ Example: `2` (for every 2 hours) or `2-4` (random between 2 and 4 hours).",
@@ -3235,7 +4363,16 @@ class SettingView(discord.ui.View):
     # 🧹 Reset Memory
     @discord.ui.button(label="🧹 Reset Memory", style=discord.ButtonStyle.danger)
     async def reset_memory(self, interaction: discord.Interaction, button: discord.ui.Button):
-        gid = str(interaction.guild.id)
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+        
         server_tracker.guilds[gid]["memory"] = {}  # clear memory dict
         await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
         await interaction.response.send_message("🧹 All memory has been reset!", ephemeral=True)
@@ -3243,7 +4380,16 @@ class SettingView(discord.ui.View):
     # 🎭 Reset Personality
     @discord.ui.button(label="🎭 Reset Personality", style=discord.ButtonStyle.danger)
     async def reset_personality(self, interaction: discord.Interaction, button: discord.ui.Button):
-        gid = str(interaction.guild.id)
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+        
         server_tracker.guilds[gid]["personality_roles"] = []
         await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
         await interaction.response.send_message("🎭 Personality reset complete.", ephemeral=True)
@@ -3251,7 +4397,16 @@ class SettingView(discord.ui.View):
     # 💞 Reset Relationship
     @discord.ui.button(label="💞 Reset Relationship", style=discord.ButtonStyle.danger)
     async def reset_relationship(self, interaction: discord.Interaction, button: discord.ui.Button):
-        gid = str(interaction.guild.id)
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+        
         server_tracker.guilds[gid]["relationships"] = {}
         await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
         await interaction.response.send_message("💞 Relationship data reset.", ephemeral=True)
@@ -3266,6 +4421,16 @@ class SettingView(discord.ui.View):
     # 📥 Import Memories
     @discord.ui.button(label="📥 Import Memories", style=discord.ButtonStyle.secondary)
     async def import_memories(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+
         await interaction.response.send_message("📥 Please upload a `.txt` file with memories.", ephemeral=True)
 
         def check(msg: discord.Message):
@@ -3284,6 +4449,16 @@ class SettingView(discord.ui.View):
     # 🔄 Restart Monika
     @discord.ui.button(label="🔄 Restart Monika", style=discord.ButtonStyle.danger)
     async def restart_monika(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can uses this.",
+                ephemeral=True
+            )
+        
         await interaction.response.send_message("🔄 Restarting Monika... please wait.", ephemeral=True)
         await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
         await user_tracker.save(interaction.client, USER_TRACKER_CHAN)
@@ -3316,6 +4491,127 @@ class SettingView(discord.ui.View):
             await server_tracker.save(interaction.client, SERVER_TRACKER_CHAN)
         except asyncio.TimeoutError:
             await interaction.followup.send("⌛ Nickname change cancelled (no response).", ephemeral=True)
+
+        # 💾 Save Personality (3-slot limit)
+    
+    @discord.ui.button(label="💾 Save Personality", style=discord.ButtonStyle.success)
+    async def save_personality(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        # ✅ Restrict to owner (server) or DM
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can save personalities.",
+                ephemeral=True
+            )
+
+        view = SlotSelector("save", gid, user, interaction.client)
+        await interaction.response.send_message(
+            "💾 Choose a slot to save your current personality:",
+            view=view,
+            ephemeral=True
+        )
+
+    # 📂 Load Personality (3-slot limit)
+    @discord.ui.button(label="📂 Load Personality", style=discord.ButtonStyle.primary)
+    async def load_personality(self, interaction: discord.Interaction, button: discord.ui.Button):
+        user = interaction.user
+        guild = interaction.guild
+        gid = str(guild.id) if guild else str(user.id)
+
+        if guild and not user.guild_permissions.administrator and user.id != guild.owner:
+            return await interaction.response.send_message(
+                "❌ Only the server owner or Monika's owner can load personalities.",
+                ephemeral=True
+            )
+
+        view = SlotSelector("load", gid, user, interaction.client)
+        await interaction.response.send_message(
+            "📂 Choose which personality slot to load:",
+            view=view,
+            ephemeral=True
+        )
+
+    # @discord.ui.button(label="🖼️ Icon", style=discord.ButtonStyle.secondary)
+    # async def image_icon(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     embed = discord.Embed(title="Choose a Profile Icon", description="Preview of available icons")
+
+    #     files = []
+    #     for key, path in ICON_MAP.items():
+    #         file = discord.File(path, filename=os.path.basename(path))
+    #         url = f"attachment://{os.path.basename(path)}"
+
+    #         embed.add_field(name=key, value="‎", inline=True)
+    #         embed.set_thumbnail(url=url)  # will use the uploaded file
+
+    #         files.append(file)
+
+    #     await interaction.response.send_message(embed=embed, files=files, view=IconSelectView(), ephemeral=True)
+
+    # 🎨 Open Background selection
+    # @discord.ui.button(label="🎨 Background", style=discord.ButtonStyle.secondary)
+    # async def image_background(self, interaction: discord.Interaction, button: discord.ui.Button):
+    #     embed = discord.Embed(
+    #         title="Choose a Profile Background",
+    #         description="Pick one of the available backgrounds below."
+    #     )
+
+    #     files = []
+    #     for key, path in BACKGROUND_MAP.items():
+    #         file = discord.File(path, filename=os.path.basename(path))
+    #         url = f"attachment://{os.path.basename(path)}"
+
+    #         embed.add_field(name=key, value="‎", inline=True)
+    #         embed.set_thumbnail(url=url)  # will use the uploaded file
+
+    #         files.append(file)
+
+    #     await interaction.response.send_message(embed=embed, files=files, view=BackgroundSelectView(), ephemeral=True)
+    # --- Interactive Buttons ---
+    
+class VoteView(View):
+    def __init__(self, title, options, vote_tracker, bot, settings_chan):
+        super().__init__(timeout=None)
+        self.title = title
+        self.options = options
+        self.vote_tracker = vote_tracker
+        self.bot = bot
+        self.settings_chan = SETTINGS_CHAN
+
+        # Add numbered buttons for each option
+        for i, opt in enumerate(options, start=1):
+            self.add_item(VoteButton(i, opt["value"], self))
+
+class VoteButton(Button):
+    def __init__(self, number, label, parent_view):
+        super().__init__(
+            label=str(number),
+            style=discord.ButtonStyle.primary,
+            custom_id=f"vote_{number}"
+        )
+        self.number = number
+        self.option = label
+        self.parent_view = parent_view
+
+    async def callback(self, interaction: discord.Interaction):
+        user_id = str(interaction.user.id)
+        title = self.parent_view.title
+
+        # Register or update vote
+        if title not in self.parent_view.vote_tracker.votes:
+            self.parent_view.vote_tracker.votes[title] = {"options": [], "votes": {}}
+
+        self.parent_view.vote_tracker.votes[title]["votes"][user_id] = self.number
+
+        # Save immediately to avoid loss
+        await self.parent_view.vote_tracker.save(self.parent_view.bot, self.parent_view.settings_chan)
+
+        await interaction.response.send_message(
+            f"✅ You voted for **Option {self.number}**: {self.option}",
+            ephemeral=True
+        )
 
 async def safe_add_role(member: discord.Member, role: discord.Role):
     """Safely add a role to a member, respecting hierarchy and permissions."""
@@ -3408,23 +4704,34 @@ async def toggle_normal_talk(interaction: discord.Interaction, enable: bool):
 # Idle chat command
 @bot.tree.command(
     name="idlechat",
-    description="Toggle whether if I would be idle/chatty mode for this server."
+    description="Toggle my idle/chatty mode and select message type for this server."
 )
 @app_commands.checks.has_permissions(administrator=True)
-@app_commands.describe(state="Set to true (on) or false (off)")
-async def idlechat(interaction: discord.Interaction, state: bool):
+@app_commands.describe(
+    state="Enable (true) or disable (false) idlechat.",
+    category="Choose message type: morning, personality, relationship, presence, or all"
+)
+@app_commands.choices(category=[
+    app_commands.Choice(name="Morning Messages", value="morning"),
+    app_commands.Choice(name="Personality Messages", value="personality"),
+    app_commands.Choice(name="Relationship Messages", value="relationship"),
+    app_commands.Choice(name="Activity/Presence Messages", value="presence"),
+    app_commands.Choice(name="All", value="all"),
+])
+async def idlechat(interaction: discord.Interaction, state: bool, category: app_commands.Choice[str]):
     guild_id = str(interaction.guild.id)
     user = interaction.user.display_name
-    print(f"Administrator: {user} used `/idlechat`: set {state}")
+    print(f"Administrator: {user} used `/idlechat`: state={state}, category={category.value}")
 
     server_tracker.set_toggle(guild_id, "idlechat", state)
+    server_tracker.set_toggle(guild_id, "idlechat_category", category.value)
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
 
-    state_text = "On ✅" if state else "Off ❌"
-    await interaction.response.send_message(
-        f"✅ Idle chat mode set to **{state_text}** for this server.",
-        ephemeral=True
+    msg = (
+        f"✅ Idlechat is now **{'On ✅' if state else 'Off ❌'}**.\n"
+        f"💬 Message category: **{category.name}**"
     )
+    await interaction.response.send_message(msg, ephemeral=True)
 
 @bot.tree.command(
     name="idlechat_timer",
@@ -3516,7 +4823,6 @@ async def reset_personality(interaction: discord.Interaction):
         return await interaction.followup.send("❌ Reset cancelled.", ephemeral=True)
 
     # ✅ Reset stored personality data
-    #                              ↓
     server_tracker.set_personality(guild_id, [])
 
     # ✅ Remove personality roles from Monika
@@ -3603,20 +4909,13 @@ async def helpme(interaction: discord.Interaction):
     print(f"{user} used a command: `helpme`")
 
     hidden_cmds = {"broadcast"}
-    # vote_commands = ["!vote 1-5", "!vote menu", "!vote cancel"]
+    image_gen_cmd = ["!monika generates: <your description>", "!monika gen: <your description>", "!monika make: <your description>", "!monika create: <your description>"]
+    vote_cmd = ["!vote_results - To see the all of vote results LIVE"]
 
     admin_cmds = []
     user_cmds = []
-    # vote_cmds = vote_commands
-
-    # if "!vote 1-5" in vote_cmds:
-    #     description = "select between 1-5"
-
-    # if "!vote menu" in vote_cmds:
-    #     description = "shows the voting menu(administrators only)"
-
-    # if "!vote cancel" in vote_cmds:
-    #     description = "cancel the your current vote"
+    image_cmd = image_gen_cmd
+    command_vote = vote_cmd
 
     for command in bot.tree.get_commands():
         # Skip hidden commands
@@ -3628,8 +4927,9 @@ async def helpme(interaction: discord.Interaction):
             admin_cmds.append(f"`* /{command.name} *` – {command.description or 'No description'}")
         elif not any("has_permissions" in str(check) for check in getattr(command, "checks", [])):
             user_cmds.append(f"`* /{command.name} *` – {command.description or 'No description'}")
-        # else:
-        #     vote_cmds.append(f"`* {vote_commands} *` – {description or 'Help when vote for the new feature'}")
+        else:
+            image_gen_cmd.append(f"` {image_cmd} `")
+            command_vote.append(f"` {vote_cmd} `")
 
     embed = discord.Embed(
         title="✒️ Need a little help?",
@@ -3641,8 +4941,10 @@ async def helpme(interaction: discord.Interaction):
         embed.add_field(name="🔧 Admin Commands", value="\n".join(admin_cmds), inline=False)
     if user_cmds:
         embed.add_field(name="💬 User Commands", value="\n".join(user_cmds), inline=False)
-    # if vote_cmds:
-    #     embed.add_field(name="💬 Vote Commands", value="\n".join(vote_cmds), inline=False)
+    if image_cmd:
+        embed.add_field(name="💬 Image Generator Commands", value="\n".join(image_cmd), inline=False)
+    if vote_cmd:
+        embed.add_field(name="💬 Vote Result Command", value="\n".join(vote_cmd), inline=False)
 
     embed.set_footer(text="Let's keep this our little secret, okay?")
     await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -3716,7 +5018,7 @@ async def export_memories(interaction: discord.Interaction):
     if interaction.guild:
         monika_member = interaction.guild.get_member(bot.user.id)
         for role in interaction.guild.roles:
-            if role.name.startswith("Monika -") or role.name.startswith(f"{interaction.user.display_name} -"):
+            if role.name.startswith("Monika -") or role.name.startswith(f"{interaction.user.display_name} -") or role.name.startswith(f"Sexual type -"):
                 if role in monika_member.roles or role in interaction.user.roles:
                     relationship_roles.append(role.name)
 
@@ -3770,13 +5072,17 @@ async def import_memories(interaction: discord.Interaction, file: discord.Attach
                 if not role:
                     role = await interaction.guild.create_role(name=role_name)
                 
-                # Assign correctly (Monika vs user)
-                if role_name.startswith("Monika -"):
+                # Assign correctly (Monika vs user) 
+                if role_name.startswith(f"{bot.user.name} -"):
                     await interaction.user.add_roles(role, reason="Restored user relationship role")
                 elif role_name.startswith(interaction.user.display_name):
                     monika_member = interaction.guild.get_member(bot.user.id)
                     if monika_member:
                         await monika_member.add_roles(role, reason="Restored bot relationship role")
+                elif role_name.startswith("Sexual type -"):
+                    monika_member = interaction.guild.get_member(bot.user.id)
+                    if monika_member:
+                        await monika_member.add_roles(role, reason="Restored bot Sexual role")
 
     # 🟢 Restore Monika’s personality roles
     for role_name in restored_personalities:
@@ -3833,6 +5139,13 @@ async def set_outfit(interaction: discord.Interaction, outfit: str):
     if today.month == 9 and today.day == 22:
         await interaction.response.send_message(
             "❌ You can’t change my outfit today… it’s a special day.",
+            ephemeral=True
+        )
+        return
+    
+    if today.month == 10 and today.day == 31:
+        await interaction.response.send_message(
+            "❌ You can’t change my outfit today… it’s halloween tonight and I got a surprise for you.",
             ephemeral=True
         )
         return
@@ -3947,6 +5260,7 @@ async def set_personality(
             try:
                 await monika_member.remove_roles(role, reason="Updating personality roles")
             except discord.errors.Forbidden:
+                await interaction.response.send_message("You need the enable the 'Manage Roles' in the server settings for me", ephemeral=True)
                 print(f"[Roles] Missing permission to remove {role.name} from Monika.")
 
     # Create/ensure combined role
@@ -4657,7 +5971,8 @@ async def broadcast(
                 embed.description = clean_desc
 
         embed.set_footer(
-            text="Pick your reaction to vote. Use /report for bugs, ideas, or feedback."
+            text="Pick your reaction to vote. Use /report for any bugs, errors, ideas, or complaints for feedback. "
+                 "Please wait until I finish sharing the announcement so we can speak again."
         )
 
         success_count = failure_count = skip_count = 0
@@ -4682,10 +5997,12 @@ async def broadcast(
                 skip_count += 1
                 continue
 
-            channel = next(
-                (c for c in guild.text_channels if c.permissions_for(guild.me).send_messages and c.name not in OFF_LIMITS_CHANNELS),
-                None
-            )
+            channel = None
+            for c in guild.text_channels:
+                if c.permissions_for(guild.me).send_messages:
+                    if c.name not in OFF_LIMITS_CHANNELS:
+                        channel = c
+                        break
             if not channel:
                 print(f"[Broadcast] ❌ No available channel in {guild.name}")
                 failure_count += 1
@@ -4736,11 +6053,14 @@ async def broadcast(
         for orig, progress in sent_messages:
             try:
                 refreshed = await orig.channel.fetch_message(orig.id)
-                counts = {str(r.emoji): len([u async for u in r.users() if u.id != bot.user.id]) for r in refreshed.reactions}
+                counts = {}
+                for reaction in refreshed.reactions:
+                    emoji = str(reaction.emoji)
+                    users = [u async for u in reaction.users() if u.id != bot.user.id]
+                    counts[emoji] = len(users)
 
-                result_line = " | ".join(f"{e} {c}" for e, c in counts.items())
-                if progress:
-                    await progress.edit(content=f"{result_line} (final)")
+                result_line = " | ".join([f"{emoji} {count}" for emoji, count in counts.items()])
+                await progress.edit(content=f"{result_line} (final)")
 
                 if reaction_set == "default":
                     like_total += counts.get("✅", 0)
@@ -5009,6 +6329,8 @@ async def settings(interaction: discord.Interaction):
     embed.add_field(name="🔄 Restart Monika", value="Restart me safely.", inline=False)
     embed.add_field(name="✏️ Nickname", value=f"My current nickname is **{current_nickname}**.", inline=False)
     embed.add_field(name="🌍 Language", value="Select your preferred language below.", inline=False)
+    embed.add_field(name="💾 Save Personality", value="Save your Personalities.", inline=False)
+    embed.add_field(name="📂 Load Personality", value="Load the Personalities You have saved.", inline=False)
 
     await interaction.response.send_message(
         embed=embed,
@@ -5028,6 +6350,117 @@ def get_monika_name(context) -> str:
 
     # Default fallback
     return bot.user.name
+
+@bot.tree.command(name="vote_menu", description="Open voting menu panel to vote for a feature, sprite, command, etc. base on your choice")
+async def vote_menu(interaction: discord.Interaction):
+    """Show the current vote menu with full persistence and menu ID support."""
+    # --- Auto-load the latest vote data from storage (persistent)
+    await vote_tracker.load(bot, SETTINGS_CHAN)
+
+    global_vote = vote_tracker.votes.get("global")
+    if not global_vote:
+        await interaction.response.send_message(
+            "❌ No one has created a vote yet. Use `!create_vote` first.",
+            ephemeral=True
+        )
+        return
+
+    # --- Use stored menu ID for identification
+    menu_id = global_vote.get("menu_id", "N/A")
+
+    guild_id = str(interaction.guild.id if interaction.guild else interaction.user.id)
+    guild_votes = global_vote.setdefault("guild_votes", {}).setdefault(guild_id, {})
+
+    title = global_vote.get("title", "🗳️ Vote Menu")
+    options = global_vote.get("options", [])
+
+    # --- Count votes (per guild)
+    counts = [0] * len(options)
+    for user_id, choice in guild_votes.items():
+        if 0 <= choice < len(options):
+            counts[choice] += 1
+    total_votes = sum(counts) or 1
+
+    # --- Build multiple embeds (1 per option)
+    embeds = []
+    for i, opt in enumerate(options):
+        val = opt["value"]
+        pct = round(counts[i] / total_votes * 100, 1)
+        embed = discord.Embed(
+            title=f"🗳️ {title} — Option {i+1}",
+            description=f"Votes: **{counts[i]}** ({pct}%)",
+            color=discord.Color.blurple()
+        )
+
+        if opt["type"] == "image":
+            embed.set_image(url=val)
+        elif opt["type"] == "emoji":
+            embed.description += f"\nOption: {val}"
+        else:
+            embed.description += f"\nOption: **{val}**"
+
+        embed.set_footer(text=f"Menu ID: {menu_id} • Click a button to cast your vote!")
+        embeds.append(embed)
+
+    # --- Interactive buttons
+    view = discord.ui.View(timeout=None)
+
+    for i in range(len(options)):
+        button = discord.ui.Button(label=f"{i+1}", style=discord.ButtonStyle.green)
+
+        async def callback(interaction_inner: discord.Interaction, index=i):
+            user_id = str(interaction_inner.user.id)
+            guild_id_inner = str(interaction_inner.guild.id if interaction_inner.guild else interaction_inner.user.id)
+
+            # ✅ Record vote
+            global_vote["guild_votes"].setdefault(guild_id_inner, {})[user_id] = index
+            await vote_tracker.save(bot, SETTINGS_CHAN)  # ✅ Save after every vote
+
+            # ✅ Recalculate votes for this guild
+            guild_votes = global_vote["guild_votes"][guild_id_inner]
+            counts = [0] * len(options)
+            for _, choice in guild_votes.items():
+                if 0 <= choice < len(options):
+                    counts[choice] += 1
+            total_votes = sum(counts) or 1
+
+            # ✅ Build updated embeds
+            updated_embeds = []
+            for j, opt in enumerate(options):
+                val = opt["value"]
+                pct = round(counts[j] / total_votes * 100, 1)
+                new_embed = discord.Embed(
+                    title=f"🗳️ {title} — Option {j+1}",
+                    description=f"Votes: **{counts[j]}** ({pct}%)",
+                    color=discord.Color.blurple()
+                )
+                if opt["type"] == "image":
+                    new_embed.set_image(url=val)
+                elif opt["type"] == "emoji":
+                    new_embed.description += f"\nOption: {val}"
+                else:
+                    new_embed.description += f"\nOption: **{val}**"
+
+                new_embed.set_footer(
+                    text=f"Your vote: Option {index+1} • Menu ID: {menu_id}"
+                )
+                updated_embeds.append(new_embed)
+
+            # ✅ Update the message safely
+            try:
+                await interaction_inner.response.edit_message(embeds=updated_embeds, view=view)
+            except discord.errors.InteractionResponded:
+                await interaction_inner.followup.edit_message(
+                    message_id=interaction_inner.message.id,
+                    embeds=updated_embeds,
+                    view=view
+                )
+
+        button.callback = lambda inter, index=i: asyncio.create_task(callback(inter, index))
+        view.add_item(button)
+
+    # --- Display all embeds
+    await interaction.response.send_message(embeds=embeds, view=view)
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
@@ -5074,25 +6507,19 @@ async def main():
             await asyncio.sleep(10)  # wait before restarting
 
 if __name__ == "__main__":
-    keepalive.keep_alive()  # start keepalive Flask
     while True:
         try:
-            asyncio.run(main())  # run bot forever
-        except BaseException:
-            print("⚠️ Fatal asyncio error, restarting in 10s")
+            #keepalive.keep_alive()  # start keepalive Flask
+            while True:
+                try:
+                    asyncio.run(main())
+                except BaseException as e:
+                    now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    print(f"[{now}] ⚠️ Fatal asyncio error, restarting in 10s: {e}")
+                    traceback.print_exc()
+                    time.sleep(10)
+        except BaseException as e:
+            now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[{now}] 💀 Top-level crash ignored: {e}")
             traceback.print_exc()
             time.sleep(10)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
