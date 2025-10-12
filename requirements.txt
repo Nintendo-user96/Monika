@@ -10,7 +10,7 @@ langdetect
 deep_translator
 psutil
 aiohttp
+edge_tts
 
 # pip install -r requirements.txt
 # python monika_bot.py
-
