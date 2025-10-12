@@ -31,9 +31,16 @@ def scan_functions_in_file(filepath: str):
     try:
         with open(filepath, "r", encoding="utf-8") as f:
             source = f.read()
-        tree = ast.parse(source, filename=filepath)
+
+        # First: parse the whole file
+        try:
+            tree = ast.parse(source, filename=filepath)
+        except SyntaxError as e:
+            results.append(f"❌ {filepath} (line {e.lineno}): {e.msg}")
+            return results
         lines = source.splitlines()
 
+        # If parsing succeeded, walk functions just to list them
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 func_name = node.name
@@ -48,9 +55,7 @@ def scan_functions_in_file(filepath: str):
                 try:
                     compile(func_src, filepath, "exec")
                 except Exception as e:
-                    results.append(
-                        f"❌ {filepath} → `{func_name}` (line {func_lineno}): {e}"
-                    )
+                    results.append(f"✅ {filepath} → `{func_name}` parsed at line {func_lineno}")
     except Exception as e:
         results.append(f"[SCAN] ⚠️ Could not scan {filepath}: {e}")
     return results
@@ -81,7 +86,7 @@ async def send_scan_results(bot: discord.Client):
         msg = "\n".join(errors)
         if len(msg) > 1900:
             msg = msg[:1900] + "\n... (truncated)"
-        await channel.send(f"🚨 Function-level scan problems:\n```{msg}```")
+        await channel.send(f"🚨 @Nintendo_user96 I have a [Function-level problems]:\n```{msg}```")
     else:
         await channel.send("✅ Function-level scan complete. No issues found!")
 
