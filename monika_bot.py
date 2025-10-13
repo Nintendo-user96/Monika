@@ -1221,7 +1221,6 @@ async def on_command_error(ctx, error):
     status_info["error_count"] += 1
     await error_detector.report_error(bot, error_detector.SETTINGS_CHAN, str(error), "Command Error")
     await ctx.send("⚠️ Something went wrong! (error logged)")
-    await main()
 
 @bot.event
 async def on_error(event, *args, **kwargs):
@@ -1229,7 +1228,6 @@ async def on_error(event, *args, **kwargs):
     status_info["last_error"] = err_text
     status_info["error_count"] += 1
     await error_detector.report_error(bot, error_detector.SETTINGS_CHAN, err_text, "Error")
-    await main()
     logging.error(f"⚠️ Error in event {event}:")
     logging.error(traceback.format_exc())
     logging.info("✅ Ignored, continuing...")
@@ -6496,3 +6494,4 @@ if __name__ == "__main__":
             print(f"[{now}] 💀 Top-level crash ignored: {e}")
             traceback.print_exc()
             time.sleep(10)
+
