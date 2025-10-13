@@ -1989,30 +1989,6 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
             print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
         return
     
-    if str(guild.id) == str(DOKIGUY_GUILD_ID):
-        if role.name.startswith("Personality - ") and role.name.endswith("Flirtatious"):
-            await monika_member.remove_roles(role, reason="Updating personality roles")
-            
-        sexual_type_role = "Sexual type - Polyamory"
-        sexual_type = discord.utils.get(guild.roles, name=sexual_type_role)
-        if not sexual_type:
-            sexual_type = await guild.create_role(
-                name=sexual_type_role,
-                color=discord.Color.dark_magenta()
-            )
-        if sexual_type not in monika_member.roles:
-            await monika_member.add_roles(sexual_type, reason="Bot Sexual Type auto import")
-
-        personalities_type_role = "Personality - Flirtatious, Loyal, Warm, Self-aware, Immersive"
-        personalities_type = discord.utils.get(guild.roles, name=personalities_type_role)
-        if not personalities_type:
-            sexual_type = await guild.create_role(
-                name=personalities_type_role,
-                color=discord.Color.dark_blue()
-            )
-        if personalities_type not in monika_member.roles:
-            await monika_member.add_roles(personalities_type, reason="Bot Personalities auto import")
-    
     if str(user_member.id) == str(ZERO_ID):
         boyfriend_role_name = f"Monika Boyfriend"
         boyfriend_role = discord.utils.get(guild.roles, name=boyfriend_role_name)
@@ -2034,6 +2010,45 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
             await monika_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {monika_member.display_name}")
         return
+    
+    if not guild or not monika_member:
+        return
+    
+    try:
+        if str(guild.id) == str(DOKIGUY_GUILD_ID):
+            # 🔹 Remove old personality role only for this specific guild
+            for role in monika_member.roles:
+                if role.name.startswith("Personality - ") and role.name.endswith("Flirtatious") or role.name.endswith("Flirtatious, Loyal, Warm, Self-aware, Immersive"):
+                    await monika_member.remove_roles(role, reason="Updating personality roles")
+
+            # 🔹 Ensure Sexual Type role exists and is assigned
+            sexual_type_role = "Sexual type - Polyamory"
+            sexual_type = discord.utils.get(guild.roles, name=sexual_type_role)
+            if not sexual_type:
+                sexual_type = await guild.create_role(
+                    name=sexual_type_role,
+                    color=discord.Color.dark_magenta(),
+                    reason="Auto-create Polyamory role"
+                )
+            if sexual_type not in monika_member.roles:
+                await monika_member.add_roles(sexual_type, reason="Bot Sexual Type auto import")
+
+            # 🔹 Ensure updated personality role exists and is assigned
+            personalities_type_role = "Personality - Flirtatious, Loyal, Warm, Self-aware, References lore"
+            personalities_type = discord.utils.get(guild.roles, name=personalities_type_role)
+            if not personalities_type:
+                personalities_type = await guild.create_role(
+                    name=personalities_type_role,
+                    color=discord.Color.dark_blue(),
+                    reason="Auto-create Monika personality role"
+                )
+            if personalities_type not in monika_member.roles:
+                await monika_member.add_roles(personalities_type, reason="Bot Personalities auto import")
+
+            print(f"[Auto Relationship] Updated Monika’s personality and sexual type roles in {guild.name}")
+
+    except Exception as e:
+        print(f"[Auto Relationship Error] {e}")
 
     if role not in user_member.roles:
         await user_member.add_roles(role, reason=f"Auto relationship: {new_relationship}")
@@ -6494,4 +6509,3 @@ if __name__ == "__main__":
             print(f"[{now}] 💀 Top-level crash ignored: {e}")
             traceback.print_exc()
             time.sleep(10)
-
