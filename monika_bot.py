@@ -3000,19 +3000,6 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     reply = f"{monika_DMS}\n[{emotion}]({sprite_link})"
     await message.author.send(reply)
 
-    # --- Logging ---
-    if DM_LOGS_CHAN:
-        forward_channel = bot.get_channel(DM_LOGS_CHAN)
-        if forward_channel:
-            translated_msg = translate_to_english(message.content)
-
-            await forward_channel.send(
-                f"**From {user} in DM:**\n"
-                f"Original: {message.content}\n"
-                f"English: {translated_msg}\n"
-                f"**Reply ({bot_name}):** {monika_DMS}"
-            )
-
 async def handle_guild_message(message: discord.Message, avatar_url: str):
     """Handle messages inside servers with personality/relationship context."""
     global last_reply_times, is_broadcasting
@@ -3151,38 +3138,6 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
                 await emoji.delete()  # optional cleanup
     else:
         print(f"[Error] No permission to send in #{message.channel.name}")
-
-    # --- Memory logging (unchanged) ---
-    if MEMORY_CHAN_ID:
-        dest_channel = bot.get_channel(MEMORY_CHAN_ID)
-
-        if dest_channel:
-            try:
-                timestamp = datetime.datetime.utcnow().isoformat()
-                if user_id and username:
-                    header = f"📩 `[{timestamp}]` | `User: {username} ({user_id})` | "
-                elif user.bot or is_friend:
-                    header = f"📩 `[{timestamp}]` | `Bot: {user.bot}`| `emotion: {emotion}` | "
-                body = f"`Server: {guild_name} ({guild_id})` | `Channel: {channel_name} ({channel_id})`"
-                quote = ""
-                if message.reference and message.reference.resolved:
-                    ref = message.reference.resolved
-                    if isinstance(ref, discord.Message):
-                        ref_author = ref.author.display_name
-                        ref_content = ref.content or "*[No text]*"
-                        quote = f"> 🗨️ __Reply to {ref_author}__: {ref_content}\n\n"
-                if message.attachments:
-                    for attachment in message.attachments:
-                        await dest_channel.send(attachment.url)
-                translated_msg = translate_to_english(message.content)
-                full_content = (
-                    f"{header}{body}:\n"
-                    f"{quote}> Original: `{message.content}`\n"
-                    f"> English: `{translated_msg}`"
-                )
-                await dest_channel.send(full_content)
-            except Exception as e:
-                print(f"[Forwarding Error] {e}")
 
     last_reply_times.setdefault(guild_id, {})[channel_id] = datetime.datetime.utcnow()
 
