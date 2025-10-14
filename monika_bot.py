@@ -25,7 +25,7 @@ from discord.ui import View, Button
 # Local modules
 import error_detector
 import keepalive
-from OpenAIKeys import (
+from AIManager import (
     OpenAIKeyManager,
     openai_safe_call,
     init_key_manager,
@@ -183,7 +183,6 @@ bot = commands.Bot(command_prefix="/", intents=intents)
 # ==============================
 TOKEN = os.getenv("DISCORD_TOKEN")
 IMAGE_CHAN_URL = int(os.getenv("IMAGE_CHAN_URL", "0"))
-MEMORY_CHAN_ID = int(os.getenv("MEMORY_CHANNEL_ID", "0"))
 REPORT_CHANNEL_ID = int(os.getenv("REPORT_CHANNEL_ID", "0"))
 MY_GUILD_ID = int(os.getenv("MY_GUILD_ID", "0"))
 DOKIGUY_GUILD_ID = int(os.getenv("DOKIGUY_GUILD_ID", "0"))
@@ -193,7 +192,6 @@ ALIRI_GUILD_ID = int(os.getenv("ALIRI_GUILD_ID", "0"))
 BACKUP_CHAN = int(os.getenv("BACKUP_CHANNEL", "0"))
 SERVER_TRACKER_CHAN = int(os.getenv("SERVER_TRACKER_ID", "0"))
 USER_TRACKER_CHAN = int(os.getenv("USER_TRACKER_ID", "0"))
-DM_LOGS_CHAN = int(os.getenv("DM_LOGS_CHANNEL", "0"))
 AVATAR_URL_CHAN = int(os.getenv("AVATAR_URL_CHANNEL", "0"))
 SETTINGS_CHAN = int(os.getenv("SETTINGS_CHANNEL", "0"))
 
@@ -220,7 +218,7 @@ OFF_LIMITS_CHANNELS = [
 ]
 
 NO_CHAT_CHANNELS = [
-    cid for cid in [MEMORY_CHAN_ID, IMAGE_CHAN_URL, REPORT_CHANNEL_ID, DM_LOGS_CHAN, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN, SETTINGS_CHAN]
+    cid for cid in [IMAGE_CHAN_URL, REPORT_CHANNEL_ID, SERVER_TRACKER_CHAN, USER_TRACKER_CHAN, AVATAR_URL_CHAN, SETTINGS_CHAN]
     if cid and cid > 0
 ]
 
@@ -1089,17 +1087,10 @@ async def on_ready():
             except Exception as e:
                 print(f"[Startup] Slash sync failed: {e}")
 
-            try:
-                await on_startup()   # your existing memory restore
-                print("[Startup] Memory restored.")
-            except Exception as e:
-                print(f"[Startup] on_startup failed: {e}")
-
             # Start periodic background tasks (wrap with safe_task to auto-restart)
             bot.loop.create_task(safe_task("periodic_scan", periodic_scan, bot))
             bot.loop.create_task(safe_task("periodic_cleanup", periodic_cleanup))
             bot.loop.create_task(safe_task("daily_cycle", daily_cycle_task))
-            bot.loop.create_task(safe_task("background_memory_sync", background_memory_sync))
 
             # Load vote tracker (best-effort)
             try:
@@ -1270,306 +1261,6 @@ async def on_report(report_entry: dict):
         f"💡 {report_stats['ideas']} | ❗ {report_stats['complaints']} | 📝 {report_stats['other']}"
     )
 
-def get_memory_channel() -> Optional[discord.TextChannel]:
-    """Return the memory channel object if configured."""
-    return bot.get_channel(MEMORY_CHAN_ID)
-
-async def load_memory_from_channel():
-    """Load memory history from the designated memory channel."""
-    channel = get_memory_channel()
-    if not channel:
-        return
-    try:
-        await memory.load_history(bot, channel.id)
-    except Exception as e:
-        print(f"[Memory] Load Error: {e}")
-
-async def save_memory_to_channel(batch_size: int = 10):
-    """Save memory entries to the memory channel in efficient batches."""
-    channel = get_memory_channel()
-    if not channel:
-        return
-
-    buffer: list[str] = []
-    try:
-        for guild_id, guild_data in memory.data.items():
-            for channel_id, users in guild_data.items():
-                for user_id, entries in users.items():
-                    for entry in entries:
-                        emotion = entry.get("emotion", "neutral")
-                        log = (
-                            f"[{entry['timestamp']}] | "
-                            f"Server: {entry['guild_name']} ({entry['guild_id']}) | "
-                            f"Channel: {entry['channel_name']} ({entry['channel_id']}) | "
-                            f"User: {entry['username']} ({entry['user_id']}) | "
-                            f"Role: {entry['role']} | {entry['content']} | {emotion}"
-                        )
-                        buffer.append(log)
-
-                        if len(buffer) >= 50:
-                            await send_safe(channel, buffer)
-                            buffer.clear()
-                            await asyncio.sleep(0.5)
-
-        if buffer:
-            await send_safe(channel, buffer)
-
-    except Exception as e:
-        logger.exception(f"[Memory] Failed to save memory: {e}")
-
-async def load_memory_from_direct_messages():
-    """
-    Load memories from all DM channels Monika has.
-    Also mirrors them into shared guilds if applicable.
-    """
-    print("[Memory] Loading memories from direct messages...")
-    for dm_channel in bot.private_channels:
-        if not isinstance(dm_channel, discord.DMChannel):
-            continue
-
-        user = dm_channel.recipient
-        if not user:
-            continue
-
-        try:
-            async for msg in dm_channel.history(limit=200, oldest_first=True):
-                if msg.type != discord.MessageType.default:
-                    continue
-                if not msg.content and not msg.attachments:
-                    continue
-
-                role_type = "user"
-                if msg.author.id == bot.user.id:
-                    role_type = "monika"
-                else:
-                    for guild in bot.guilds:
-                        member = guild.get_member(msg.author.id)
-                        if member:
-                            rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
-                            if rel_roles:
-                                role_type = "friend"
-                                break
-
-                memory.save(
-                    guild_id="dm",
-                    guild_name="Direct Message",
-                    channel_id=dm_channel.id,
-                    channel_name="dm",
-                    user_id=msg.author.id,
-                    username=msg.author.display_name,
-                    role=role_type,
-                    content=msg.content,
-                    emotion="neutral",
-                )
-
-                # Mirror DM into shared guilds
-                for guild in bot.guilds:
-                    member = guild.get_member(msg.author.id)
-                    if member:
-                        memory.save(
-                            guild_id=guild.id,
-                            guild_name=guild.name,
-                            channel_id="linked_dm",
-                            channel_name=f"Linked DM with {msg.author.display_name}",
-                            user_id=msg.author.id,
-                            username=msg.author.display_name,
-                            role=role_type,
-                            content=msg.content,
-                            emotion="neutral",
-                        )
-        except Exception as e:
-            print(f"[DM Memory WARN] Could not load DM history with {user}: {e}")
-
-    print("[Memory] ✅ Finished loading DM memories.")
-
-async def save_memory_to_direct_messages(batch_size: int = 10):
-    """
-    Save DM memories to the configured DM_LOGS_CHAN safely.
-    """
-    dest_channel = bot.get_channel(DM_LOGS_CHAN)
-    if not dest_channel:
-        print("[Memory] ⚠️ DM_LOGS_CHAN not found or not set.")
-        return
-
-    print("[Memory] Saving DM memories to log channel...")
-    buffer: list[str] = []
-
-    try:
-        dm_data = memory.data.get("dm", {})
-        for channel_id, users in dm_data.items():
-            for user_id, entries in users.items():
-                for entry in entries:
-                    log = (
-                        f"[{entry['timestamp']}] | "
-                        f"DM Channel: {entry['channel_id']} | "
-                        f"User: {entry['username']} ({entry['user_id']}) | "
-                        f"Role: {entry['role']} | {entry['content']} | "
-                        f"{entry.get('emotion', 'neutral')}"
-                    )
-                    buffer.append(log)
-
-                    if len(buffer) >= 50:
-                        await send_safe(dest_channel, buffer)
-                        buffer.clear()
-                        await asyncio.sleep(0.5)
-
-        if buffer:
-            await send_safe(dest_channel, buffer)
-
-        print("[Memory] ✅ DM memories saved successfully.")
-
-    except Exception as e:
-        print(f"[Memory] ❌ Failed to save DM memories: {e}")
-
-async def load_memory_from_dms_to_server():
-    """
-    Sync DMs → Servers for:
-      - Memory logs
-      - Personality
-      - Relationship data
-    """
-    print("[MemorySync] 🔄 Syncing DM → Server (memories, personality, relationships)...")
-
-    try:
-        for dm_channel in bot.private_channels:
-            if not isinstance(dm_channel, discord.DMChannel):
-                continue
-
-            user = dm_channel.recipient
-            if not user:
-                continue
-
-            # 🧠 Sync memories
-            async for msg in dm_channel.history(limit=100, oldest_first=True):
-                if not msg.content and not msg.attachments:
-                    continue
-
-                role_type = "monika" if msg.author.id == bot.user.id else "user"
-                memory.save(
-                    guild_id="dm",
-                    guild_name="Direct Message",
-                    channel_id=dm_channel.id,
-                    channel_name="dm",
-                    user_id=msg.author.id,
-                    username=msg.author.display_name,
-                    role=role_type,
-                    content=msg.content,
-                    emotion="neutral",
-                )
-
-                # Mirror DM messages into all mutual servers
-                for guild in bot.guilds:
-                    member = guild.get_member(user.id)
-                    if not member:
-                        continue
-
-                    memory.save(
-                        guild_id=guild.id,
-                        guild_name=guild.name,
-                        channel_id="dm_sync",
-                        channel_name=f"DM Sync with {user.display_name}",
-                        user_id=user.id,
-                        username=user.display_name,
-                        role=role_type,
-                        content=msg.content,
-                        emotion="neutral",
-                    )
-
-            # 💞 Sync personality & relationship
-            dm_personality = server_tracker.get_personality("dm")
-            dm_relationship = server_tracker.get_relationship_type("dm")
-            dm_relationship_user = server_tracker.get_relationship_with("dm")
-
-            for guild in bot.guilds:
-                # --- Sync personality
-                if dm_personality:
-                    server_tracker.set_personality(guild.id, dm_personality)
-
-                # --- Sync relationship
-                if dm_relationship:
-                    server_tracker.set_relationship_type(guild.id, dm_relationship)
-                if dm_relationship_user:
-                    server_tracker.set_relationship_with(guild.id, dm_relationship_user)
-
-            print(f"[MemorySync] 💾 Synced DM personality & relationship for {user.display_name}.")
-
-        print("[MemorySync] ✅ DM → Server sync complete.")
-
-    except Exception as e:
-        print(f"[MemorySync Error] ❌ {e}")
-
-async def sync_server_to_dm_memories():
-    """
-    Sync Server → DM for:
-      - Memory logs
-      - Personality
-      - Relationship data
-    """
-    print("[MemorySync] 🔄 Syncing Server → DM (memories, personality, relationships)...")
-
-    try:
-        for guild in bot.guilds:
-            # --- Personality
-            personality = server_tracker.get_personality(guild.id)
-            if personality:
-                server_tracker.set_personality("dm", personality)
-
-            # --- Relationship type & user
-            rel_type = server_tracker.get_relationship_type(guild.id)
-            rel_user = server_tracker.get_relationship_with(guild.id)
-            if rel_type:
-                server_tracker.set_relationship_type("dm", rel_type)
-            if rel_user:
-                server_tracker.set_relationship_with("dm", rel_user)
-
-            # --- Sync messages
-            for channel in guild.text_channels:
-                if not channel.permissions_for(guild.me).read_message_history:
-                    continue
-
-                async for msg in channel.history(limit=50, oldest_first=False):
-                    if msg.author.bot or not msg.content:
-                        continue
-
-                    # Find or create DM channel
-                    try:
-                        dm = await msg.author.create_dm()
-                        memory.save(
-                            guild_id="dm",
-                            guild_name="Direct Message",
-                            channel_id=dm.id,
-                            channel_name="dm",
-                            user_id=msg.author.id,
-                            username=msg.author.display_name,
-                            role="user",
-                            content=msg.content,
-                            emotion="neutral",
-                        )
-                    except Exception as e:
-                        print(f"[MemorySync] ⚠️ Failed DM save for {msg.author}: {e}")
-
-        print("[MemorySync] ✅ Server → DM sync complete.")
-
-    except Exception as e:
-        print(f"[MemorySync Error] ❌ {e}")
-
-async def background_memory_sync():
-    """Continuously sync DM↔Server memory, personality, and relationship."""
-    await bot.wait_until_ready()
-    while not bot.is_closed():
-        try:
-            await load_memory_from_dms_to_server()
-            await sync_server_to_dm_memories()
-
-            # Auto-save trackers after every sync
-            await server_tracker.save(bot, SERVER_TRACKER_CHAN)
-            await user_tracker.save(bot, USER_TRACKER_CHAN)
-
-            print("[MemorySync] 🕒 Next sync in 15 minutes...")
-        except Exception as e:
-            print(f"[MemorySync Loop Error] ❌ {e}")
-        await asyncio.sleep(900)  # every 15 minutes
-
 async def send_safe(channel, lines: list[str]):
     """Send lines safely without exceeding Discord's 2000 char limit."""
     text = "\n".join(lines)
@@ -1583,240 +1274,58 @@ async def send_safe(channel, lines: list[str]):
             text = ""
         await channel.send(chunk)
 
-async def get_monika_context(channel: discord.abc.Messageable, limit: int = 10) -> list[dict]:
+global_conversation_memory = {}
+
+async def get_monika_context(channel: discord.abc.Messageable, user: discord.User):
     """
-    Fetch recent conversation context for Monika.
-
-    - Includes Monika’s messages, user messages, friend bots, and mentions.
-    - Detects relationship & personality roles.
-    - Detects pronouns from memory.
-    - Adds Creator tag if applicable.
-    - Includes attachments with friendly markers.
-    - Returns newest 'limit' entries (oldest → newest).
+    Unified memory context loader for Monika across all servers and DMs.
+    Keeps conversation continuity by tracking user messages globally.
     """
-    context: list[dict] = []
-    guild = getattr(channel, "guild", None)
-    monika_member = getattr(guild, "me", None) if guild else None
+    global global_conversation_memory
 
-    async for message in channel.history(limit=limit, oldest_first=False):
-        if message.type != discord.MessageType.default:
-            continue
-        if not message.content and not message.attachments:
-            continue
+    user_id = str(user.id)
+    guild_id = str(channel.guild.id) if hasattr(channel, "guild") and channel.guild else "DM"
 
-        entry = None
+    # Ensure memory structure exists
+    if user_id not in global_conversation_memory:
+        global_conversation_memory[user_id] = []
 
-        # --- Monika’s messages ---
-        if monika_member and message.author.id == monika_member.id:
-            entry = {
-                "author": "Monika",
-                "content": message.content or "",
-                "timestamp": message.created_at.isoformat(),
-            }
-            if guild:
-                for role in monika_member.roles:
-                    if role.name.startswith("Personality - "):
-                        entry["personality"] = role.name.replace("Personality - ", "").strip()
-                    elif role.name.startswith(f"{bot.user.name} - "):
-                        entry["relationship"] = role.name.replace(f"{bot.user.name} - ", "").strip()
+    # Load last context for this user
+    context = global_conversation_memory[user_id]
 
-        # --- Human users / friend bots ---
-        elif (not message.author.bot) or is_friend_bot(message) or bot.user.mentioned_in(message):
-            entry = {
-                "author": message.author.display_name,
-                "content": message.content or "",
-                "timestamp": message.created_at.isoformat(),
-            }
+    # Limit context size to prevent overflow
+    MAX_MEMORY = 50
+    if len(context) > MAX_MEMORY:
+        context = context[-MAX_MEMORY:]
 
-            relationship_tag = None
-            personality_tag = None
-            pronoun_tag = None
-            creator_tag = None
+    # Optionally refresh with last messages from channel history
+    try:
+        async for msg in channel.history(limit=10, oldest_first=False):
+            if msg.author == user or msg.author == bot.user:
+                context.append({"author": msg.author.name, "content": msg.content})
+    except Exception as e:
+        print(f"[Memory Context Warning] Could not read history: {e}")
 
-            if guild:
-                member = guild.get_member(message.author.id)
-                if member:
-                    # Relationship roles
-                    rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
-                    if rel_roles:
-                        relationship_tag = rel_roles[0].name.replace(f"{bot.user.name} - ", "").strip()
+    # Save updated context
+    global_conversation_memory[user_id] = context
 
-                    # Personality roles
-                    per_roles = [r for r in member.roles if r.name.startswith("Personality - ")]
-                    if per_roles:
-                        personality_tag = per_roles[0].name.replace("Personality - ", "").strip()
+    # Create system prompt or context string for AI model
+    formatted_context = "\n".join([f"{m['author']}: {m['content']}" for m in context[-MAX_MEMORY:]])
 
-                    # Creator role
-                    creator_role = discord.utils.get(guild.roles, name=f"Creator of {bot.user.name}")
-                    if creator_role and creator_role in member.roles:
-                        creator_tag = "Creator"
+    return formatted_context
 
-            # Pronouns from tracker
-            user_data = user_tracker.get_user_data(str(message.author.id))
-            if user_data and user_data.get("pronouns"):
-                pronoun_tag = user_data["pronouns"]
-
-            if relationship_tag:
-                entry["relationship"] = relationship_tag
-            if personality_tag:
-                entry["personality"] = personality_tag
-            if pronoun_tag:
-                entry["pronouns"] = pronoun_tag
-            if creator_tag:
-                entry["creator"] = True
-
-        else:
-            continue
-
-        # Attachments
-        if message.attachments:
-            attachment_lines = []
-            for attachment in message.attachments:
-                if attachment.content_type and attachment.content_type.startswith("image/"):
-                    attachment_lines.append(f"[Image: {attachment.filename}] {attachment.url}")
-                else:
-                    attachment_lines.append(f"[Attachment: {attachment.filename}] {attachment.url}")
-            entry["content"] = (entry["content"] + "\n" + "\n".join(attachment_lines)).strip()
-
-        context.append(entry)
-        if len(context) >= limit:
-            break
-
-    context.reverse()
-    return context
-
-async def load_memories_from_guilds():
-    """
-    Load memories by scanning history across all guilds and DMs.
-    - Includes Monika’s and users’ messages.
-    - Adds relationship awareness.
-    - Mirrors server messages into DMs and vice versa.
-    """
-    # --- Guild channels ---
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            try:
-                perms = channel.permissions_for(guild.me)
-                if not perms.read_message_history or not perms.read_messages:
-                    continue
-
-                async for msg in channel.history(limit=50, oldest_first=True):
-                    if msg.type != discord.MessageType.default:
-                        continue
-                    if not msg.content and not msg.attachments:
-                        continue
-
-                    role_type = "user"
-                    if msg.author.id == bot.user.id:
-                        role_type = "monika"
-                    else:
-                        member = guild.get_member(msg.author.id)
-                        if member:
-                            rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
-                            if rel_roles:
-                                role_type = "friend"
-
-                    memory.save(
-                        guild_id=guild.id,
-                        guild_name=guild.name,
-                        channel_id=channel.id,
-                        channel_name=channel.name,
-                        user_id=msg.author.id,
-                        username=msg.author.display_name,
-                        role=role_type,
-                        content=msg.content,
-                        emotion="neutral",
-                    )
-
-                    # Mirror into DM memory
-                    if not msg.author.bot and msg.author.dm_channel:
-                        memory.save(
-                            guild_id="dm",
-                            guild_name="Direct Message",
-                            channel_id=msg.author.dm_channel.id,
-                            channel_name="dm",
-                            user_id=msg.author.id,
-                            username=msg.author.display_name,
-                            role=role_type,
-                            content=msg.content,
-                            emotion="neutral",
-                        )
-
-            except Exception as e:
-                print(f"[Memory WARN] Could not load history for {channel} in {guild}: {e}")
-
-    # --- DMs directly ---
-    for dm_channel in bot.private_channels:
-        if not isinstance(dm_channel, discord.DMChannel):
-            continue
-
-        async for msg in dm_channel.history(limit=200, oldest_first=True):
-            if msg.type != discord.MessageType.default:
-                continue
-            if not msg.content and not msg.attachments:
-                continue
-
-            role_type = "user"
-            if msg.author.id == bot.user.id:
-                role_type = "monika"
-            else:
-                for guild in bot.guilds:
-                    member = guild.get_member(msg.author.id)
-                    if member:
-                        rel_roles = [r for r in member.roles if r.name.startswith(f"{bot.user.name} - ")]
-                        if rel_roles:
-                            role_type = "friend"
-                            break
-
-            memory.save(
-                guild_id="dm",
-                guild_name="Direct Message",
-                channel_id=dm_channel.id,
-                channel_name="dm",
-                user_id=msg.author.id,
-                username=msg.author.display_name,
-                role=role_type,
-                content=msg.content,
-                emotion="neutral",
-            )
-
-            # Mirror DM into shared guilds
-            for guild in bot.guilds:
-                member = guild.get_member(msg.author.id)
-                if member:
-                    memory.save(
-                        guild_id=guild.id,
-                        guild_name=guild.name,
-                        channel_id="linked_dm",
-                        channel_name=f"Linked DM with {msg.author.display_name}",
-                        user_id=msg.author.id,
-                        username=msg.author.display_name,
-                        role=role_type,
-                        content=msg.content,
-                        emotion="neutral",
-                    )
-
-async def on_startup():
-    """Startup memory restoration: channel backup first, else guild scan."""
-    print("[Startup] Loading Monika’s memory...")
-
-    channel = get_memory_channel()
-    if channel:
-        try:
-            async for message in channel.history(limit=200, oldest_first=True):
-                for attachment in message.attachments:
-                    if attachment.filename.startswith("monika_memory_backup_") and attachment.filename.endswith(".txt"):
-                        data = await attachment.read()
-                        await memory.import_from_text(data.decode("utf-8"))
-                        print(f"[Startup] Restored from {attachment.filename}")
-                        return
-        except Exception as e:
-            print(f"[Startup WARN] Failed to load from memory channel: {e}")
-
-    print("[Startup] No backup found. Scanning guild histories...")
-
-    await load_memories_from_guilds()
-    await load_memory_from_direct_messages()
+async def save_global_memory_snapshot(bot, channel_id: int):
+    """Optional: Save global memory to a Discord channel for persistence."""
+    try:
+        channel = bot.get_channel(channel_id)
+        if not channel:
+            return
+        data = json.dumps(global_conversation_memory, indent=2)
+        if len(data) > 1900:
+            data = data[:1900] + "\n... (truncated)"
+        await channel.send(f"🧠 Memory snapshot:\n```json\n{data}\n```")
+    except Exception as e:
+        print(f"[Memory Save Error] {e}")
 
 async def load_personality_from_roles(guild: discord.Guild, monika_member: discord.Member) -> list[str]:
     """
@@ -1901,6 +1410,9 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
     monika_member = guild.get_member(bot.user.id)
     user_id = str(user_member.id)
 
+    if not guild or not monika_member:
+        return
+
     # 1️⃣ Skip if they have a manually set relationship
     if user_tracker.has_manual_relationship(user_id):
         print(f"[Relationship] Skipping auto-update for {user_member.display_name} (manual relationship).")
@@ -1976,6 +1488,9 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
                 color=discord.Color.darker_grey()
             )
             print(f"[AutoRel] Created role: {boyfriend_role_name}")
+        if boyfriend_role not in user_member.roles:
+            await user_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
         girlfriend_role_name = f"One of DokiGuy Girlfriend(s)"
         girlfriend_role = discord.utils.get(guild.roles, name=girlfriend_role_name)
         if not girlfriend_role:
@@ -1985,8 +1500,10 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
             )
             print(f"[AutoRel] Created role: {girlfriend_role_name}")
         if girlfriend_role not in user_member.roles:
-            await monika_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            await monika_member.add_roles(girlfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
+        if monika_member.role == "The literature Club's Boyfriend":
+            await monika_member.remove_roles(role, reason="incorrect role")
         return
     
     if str(user_member.id) == str(ZERO_ID):
@@ -1998,6 +1515,9 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
                 color=discord.Color.red()
             )
             print(f"[AutoRel] Created role: {boyfriend_role_name}")
+        if boyfriend_role not in user_member.roles:
+            await user_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
         girlfriend_role_name = f"Zero Girlfriend"
         girlfriend_role = discord.utils.get(guild.roles, name=girlfriend_role_name)
         if not girlfriend_role:
@@ -2007,48 +1527,9 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
             )
             print(f"[AutoRel] Created role: {girlfriend_role_name}")
         if girlfriend_role not in monika_member.roles:
-            await monika_member.add_roles(boyfriend_role, reason="Bot Boyfriend detected")
+            await monika_member.add_roles(girlfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {monika_member.display_name}")
         return
-    
-    if not guild or not monika_member:
-        return
-    
-    try:
-        if str(guild.id) == str(DOKIGUY_GUILD_ID):
-            # 🔹 Remove old personality role only for this specific guild
-            for role in monika_member.roles:
-                if role.name.startswith("Personality - ") and role.name.endswith("Flirtatious") or role.name.endswith("Flirtatious, Loyal, Warm, Self-aware, Immersive"):
-                    await monika_member.remove_roles(role, reason="Updating personality roles")
-
-            # 🔹 Ensure Sexual Type role exists and is assigned
-            sexual_type_role = "Sexual type - Polyamory"
-            sexual_type = discord.utils.get(guild.roles, name=sexual_type_role)
-            if not sexual_type:
-                sexual_type = await guild.create_role(
-                    name=sexual_type_role,
-                    color=discord.Color.dark_magenta(),
-                    reason="Auto-create Polyamory role"
-                )
-            if sexual_type not in monika_member.roles:
-                await monika_member.add_roles(sexual_type, reason="Bot Sexual Type auto import")
-
-            # 🔹 Ensure updated personality role exists and is assigned
-            personalities_type_role = "Personality - Flirtatious, Loyal, Warm, Self-aware, References lore"
-            personalities_type = discord.utils.get(guild.roles, name=personalities_type_role)
-            if not personalities_type:
-                personalities_type = await guild.create_role(
-                    name=personalities_type_role,
-                    color=discord.Color.dark_blue(),
-                    reason="Auto-create Monika personality role"
-                )
-            if personalities_type not in monika_member.roles:
-                await monika_member.add_roles(personalities_type, reason="Bot Personalities auto import")
-
-            print(f"[Auto Relationship] Updated Monika’s personality and sexual type roles in {guild.name}")
-
-    except Exception as e:
-        print(f"[Auto Relationship Error] {e}")
 
     if role not in user_member.roles:
         await user_member.add_roles(role, reason=f"Auto relationship: {new_relationship}")
@@ -2128,10 +1609,8 @@ async def on_disconnect():
 @bot.event
 async def on_shutdown():
     print("[Shutdown] Saving memory to channel...")
-    asyncio.create_task(save_memory_to_channel())
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
     await vote_tracker.save(bot, SETTINGS_CHAN)
-    await save_memory_to_direct_messages()
 
 @bot.event
 async def on_sleeping(reason: str = "Scheduled break (11PM–6AM)"):
