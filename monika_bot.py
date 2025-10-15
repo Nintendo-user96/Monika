@@ -15,6 +15,7 @@ import requests
 import json
 import aiohttp
 import hashlib
+import pytz
 
 import discord
 from discord import File, app_commands
@@ -25,7 +26,7 @@ from discord.ui import View, Button
 # Local modules
 import error_detector
 import keepalive
-from AIManager import (
+from OpenAIKeys import (
     OpenAIKeyManager,
     openai_safe_call,
     init_key_manager,
@@ -1476,9 +1477,13 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         print(f"[AutoRel] Created new role: {role_name}")
 
     if str(user_member.id) == str(DOKIGUY_ID):
-        if role.name.startswith(f"Monika - Stranger") or role.name.startswith(f"DokiGuy - Lovers"):
-            await role.delete(reason="Resetting old relationship roles")
-            await monika_member.remove_roles(role, reason="Resetting old relationship roles")
+        for role in monika_member.roles:
+            if role.name.startswith(f"DokiGuy - ") and role.name.endswith(f"Lovers"):
+                await monika_member.remove_roles(role, reason="Resetting old relationship roles")
+
+        for role in user_member.roles:
+            if role.name.startswith(f"Monika - ") and role.name.endswith(f"Stranger"):
+                await user_member.remove_roles(reason="Resetting old relationship roles")
 
         boyfriend_role_name = f"The literature Club's Boyfriend"
         boyfriend_role = discord.utils.get(guild.roles, name=boyfriend_role_name)
@@ -1502,8 +1507,6 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
         if girlfriend_role not in user_member.roles:
             await monika_member.add_roles(girlfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
-        if monika_member.role == "The literature Club's Boyfriend":
-            await monika_member.remove_roles(role, reason="incorrect role")
         return
     
     if str(user_member.id) == str(ZERO_ID):
@@ -1530,6 +1533,10 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
             await monika_member.add_roles(girlfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {monika_member.display_name}")
         return
+
+    for role in monika_member.roles:
+        if role.name.startswith(f"The literature ") and role.name.endswith(f"Club's Boyfriend"):
+            await monika_member.remove_roles(role, reason="incorrect role")
 
     if role not in user_member.roles:
         await user_member.add_roles(role, reason=f"Auto relationship: {new_relationship}")
@@ -1765,26 +1772,55 @@ async def on_wake_up(reason: str = "Waking up after scheduled break"):
     idle_chat_enabled = True
     print("[Wakeup] 🌅 Monika is fully awake and idle chat resumed.")
 
+LOCAL_TIMEZONE = pytz.timezone("US/Central")  # or "America/New_York", etc.
+
 async def daily_cycle_task():
-    """Background task to trigger sleep/wake automatically."""
-    global last_wakeup_date
+    """
+    Manages Monika's daily rhythm: automatically goes to sleep at 11PM and wakes up at 6AM (local time).
+    Prevents missed triggers by checking within time windows and tracks last actions.
+    """
+    print("[Daily Cycle] 🕓 Started monitoring daily rhythm.")
+    last_sleep_date = None
+    last_wake_date = None
+    status_info = {"is_sleeping": False}
 
     while True:
-        now = datetime.datetime.now()
-        hour, minute = now.hour, now.minute
+        try:
+            # Get local time
+            now = datetime.datetime.now(LOCAL_TIMEZONE)
+            hour, minute = now.hour, now.minute
 
-        # 💤 Sleep trigger (11PM sharp)
-        if hour == 23 and minute == 0 and not status_info.get("is_sleeping", False):
-            await on_sleeping("Scheduled break (11PM–6AM)")
+            # 🌙 Sleep window (11:00 PM – 11:10 PM)
+            if (
+                23 <= hour < 24 and minute < 10
+                and not status_info.get("is_sleeping", False)
+                and last_sleep_date != now.date()
+            ):
+                print(f"[Daily Cycle] 🌙 Triggering sleep routine at {now.strftime('%I:%M %p')}...")
+                await on_sleeping("Scheduled break (11PM–6AM)")
+                status_info["is_sleeping"] = True
+                last_sleep_date = now.date()
+                await asyncio.sleep(600)  # wait 10 minutes before next check
+                continue
 
-        # 🌅 Wake trigger (6AM sharp)
-        if hour == 6 and minute == 0:
-            today = datetime.date.today()
-            if last_wakeup_date != today:  # only once per day
+            # 🌅 Wake-up window (6:00 AM – 6:10 AM)
+            if (
+                6 <= hour < 7 and minute < 10
+                and status_info.get("is_sleeping", False)
+                and last_wake_date != now.date()
+            ):
+                print(f"[Daily Cycle] 🌅 Triggering wake-up routine at {now.strftime('%I:%M %p')}...")
                 await on_wake_up("Good morning! Scheduled wake-up.")
-                last_wakeup_date = today
+                status_info["is_sleeping"] = False
+                last_wake_date = now.date()
+                await asyncio.sleep(600)
+                continue
 
-        await asyncio.sleep(60)
+        except Exception as e:
+            print(f"[Daily Cycle Error] {e}")
+
+        # Sleep a bit before rechecking
+        await asyncio.sleep(30)
 
 async def report_error_to_channel(error: Exception, context: Optional[str] = None):
     """
