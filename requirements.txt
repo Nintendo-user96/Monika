@@ -11,6 +11,7 @@ deep_translator
 psutil
 aiohttp
 edge_tts
+pytz
 
 # pip install -r requirements.txt
 # python monika_bot.py
