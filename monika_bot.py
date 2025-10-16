@@ -275,6 +275,7 @@ channel_usage = {}
 user_talk_times = {}
 
 bot.is_sleeping = False
+bot.http_session = None
 
 PERSONALITY_MODES = monika_traits.personality_modes
 
@@ -1004,13 +1005,13 @@ async def on_ready():
     except Exception as e:
         print(f"[Startup] error_detector failed: {e}")
 
-    if not hasattr(bot, "http_session") or bot.http_session.closed:
+    if not hasattr(bot, "http_session") or bot.http_session is None or bot.http_session.closed:
         try:
             bot.http_session = aiohttp.ClientSession()
             print("[Network] ✅ Persistent aiohttp session started.")
         except Exception as e:
             print(f"[Network Error] Failed to start session: {e}")
-
+            
     # Restore roles / trackers in a background job to avoid blocking gateway
     async def startup_full_init():
         try:
@@ -1626,7 +1627,12 @@ async def on_shutdown():
     print("[Shutdown] Saving memory to channel...")
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
     await vote_tracker.save(bot, SETTINGS_CHAN)
-    await bot.http_session.close()
+    if hasattr(bot, "http_session") and not bot.http_session.closed:
+        try:
+            await bot.http_session.close()
+            print("[Network] Closed aiohttp session cleanly.")
+        except Exception as e:
+            print(f"[Network] Failed to close session gracefully: {e}")
 
 @bot.event
 async def on_sleeping(reason: str = "Scheduled break (11PM–6AM)"):
@@ -1943,6 +1949,11 @@ async def image_generator(message: discord.Message, relationship: str = "Strange
         # If neither format is valid
         await message.channel.send("⚠️ No valid image data returned.")
         return None
+    
+    except aiohttp.ClientConnectionResetError:
+        print("[Network] ⚠️ Connection reset; retrying in 3s...")
+        await asyncio.sleep(3)
+        return
 
     except Exception as e:
         logger.error(f"[ImageGen] Failed: {e}")
@@ -2377,6 +2388,11 @@ async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
         emoji = await guild.create_custom_emoji(name=base_name, image=image_bytes)
         print(f"[DEBUG] ✅ Created emoji {emoji} for user {user}")
         return emoji
+    
+    except aiohttp.ClientConnectionResetError:
+        print("[Network] ⚠️ Connection reset; retrying in 3s...")
+        await asyncio.sleep(3)
+        return
 
     except Exception as e:
         print(f"[DEBUG] ❌ Failed to create emoji for {user}: {e}")
