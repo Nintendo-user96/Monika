@@ -981,7 +981,7 @@ async def on_ready():
             image_key_manager = await init_image_key_manager()
         # Attach hooks (use callables that schedule the wake/sleep coros)
         key_manager.on_all_keys_exhausted = lambda: safe_create_task(on_sleeping("All OpenAI keys exhausted"), name="on_sleeping")
-        key_manager.on_key_recovered = lambda key: safe_create_task(on_wake_up(f"Key {str(key)[:8]} recovered"), name="on_wake_up")
+        key_manager.on_key_recovered = lambda key: safe_create_task(on_wake_up(f"Key {str(key)[:16]} recovered"), name="on_wake_up")
     except Exception as e:
         print(f"[Startup] Key manager initialization failed: {e}")
         traceback.print_exc()
@@ -1002,6 +1002,14 @@ async def on_ready():
         await error_detector.send_scan_results(bot)
     except Exception as e:
         print(f"[Startup] error_detector failed: {e}")
+
+    if not hasattr(bot, "http_session") or bot.http_session.closed:
+        try:
+            import aiohttp
+            bot.http_session = aiohttp.ClientSession()
+            print("[Network] Persistent aiohttp session started successfully.")
+        except Exception as e:
+            print(f"[Network Error] Failed to start persistent session: {e}")
 
     # Restore roles / trackers in a background job to avoid blocking gateway
     async def startup_full_init():
@@ -1233,6 +1241,11 @@ report_stats = {
     "other": 0,
     "users": {}  # user_id -> count
 }
+
+@bot.event
+async def on_close():
+    if hasattr(bot, "http_session") and not bot.http_session.closed:
+        await bot.http_session.close()
 
 @bot.event
 async def on_report(report_entry: dict):
@@ -1613,6 +1626,7 @@ async def on_shutdown():
     print("[Shutdown] Saving memory to channel...")
     await server_tracker.save(bot, channel_id=SERVER_TRACKER_CHAN)
     await vote_tracker.save(bot, SETTINGS_CHAN)
+    await bot.http_session.close()
 
 @bot.event
 async def on_sleeping(reason: str = "Scheduled break (11PM–6AM)"):
@@ -1767,7 +1781,7 @@ async def on_wake_up(reason: str = "Waking up after scheduled break"):
     idle_chat_enabled = True
     print("[Wakeup] 🌅 Monika is fully awake and idle chat resumed.")
 
-LOCAL_TIMEZONE = pytz.timezone("US/Central")
+LOCAL_TIMEZONE = pytz.timezone("US/Central")  # or "America/New_York", etc.
 
 async def daily_cycle_task():
     """
@@ -1778,9 +1792,6 @@ async def daily_cycle_task():
     last_sleep_date = None
     last_wake_date = None
     status_info = {"is_sleeping": False}
-
-    while not bot.is_ready():
-        await asyncio.sleep(2)
 
     while True:
         try:
@@ -1940,67 +1951,6 @@ async def image_generator(message: discord.Message, relationship: str = "Strange
         except Exception:
             pass
         return None
-
-## This was going to be add but when doing research I found that bots can only be in 1 voice channel at a time(just like other users).
-## So this was scrapped
-import edge_tts
-VOICE_MAP = {
-    "Default": "en-US-JennyNeural",
-    "Cheerful": "en-US-AriaNeural",
-    "Serious": "en-US-GuyNeural",
-    "Shy": "en-US-AnaNeural",
-}
-
-RELATIONSHIP_MAP = {
-    "Default": 1.0,
-    "Creator": 1.1,
-}
-
-# Sexual group
-SEXUAL_RELATIONSHIPS = [
-    "Polyamory", "Lesbian", "Pansexual", "Bisexual", "Straight",
-    "Asexual", "Demisexual", "Questioning", "Queer", "Romantic",
-    "Platonic", "Autosexual"
-]
-# Normal group
-NORMAL_RELATIONSHIPS = [
-    "Friends", "Companions", "Best Friends", "Family", "Partners", "Soulmates",
-    "Significant Others", "Platonic Friends", "Close Friends", "Acquaintances",
-    "Colleagues", "Work Friends", "School Friends", "Stranger", "Childhood Friends",
-    "Online Friends", "Gaming Buddies", "Study Partners", "Club Leader",
-    "Boyfriend", "Girlfriend", "Girlfriend(Lesbian)", "Club Member", "Crush"
-]
-
-for rel in SEXUAL_RELATIONSHIPS:
-    RELATIONSHIP_MAP[rel] = 0.95
-for rel in NORMAL_RELATIONSHIPS:
-    RELATIONSHIP_MAP[rel] = 1.05
-
-async def vc_voice(user, relationship: str, personality: str, text: str):
-    """Generate and play Monika's voice in VC based on relationship/personality."""
-    # Pick voice & speed
-    voice = VOICE_MAP.get(personality, VOICE_MAP["Default"])
-    rate = RELATIONSHIP_MAP.get(relationship, 1.0)
-
-    mp3_file = f"voice_{user.id}.mp3"
-
-    # Generate TTS file
-    tts = edge_tts.Communicate(text, voice=voice, rate=f"{int(rate*100-100)}%")
-    await tts.save(mp3_file)
-
-    # Find VC
-    if isinstance(user, discord.Member) and user.voice and user.voice.channel:
-        channel = user.voice.channel
-        vc = discord.utils.get(bot.voice_clients, guild=channel.guild)
-        if not vc:
-            vc = await channel.connect()
-        else:
-            await vc.move_to(channel)
-
-        # Play audio
-        if vc.is_playing():
-            vc.stop()
-        vc.play(discord.FFmpegPCMAudio(mp3_file))
 
 async def create_votes(message):
     """
@@ -2407,22 +2357,27 @@ async def get_sprite_link_cached(emotion: str, outfit: str) -> str:
     return await get_sprite_link(emotion, outfit)
 
 async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
-    # sanitize username → valid emoji name
+    """Download user's avatar and create a temporary emoji in the guild."""
     base_name = re.sub(r"[^a-zA-Z0-9_]", "_", user.name)[:32]
     if not base_name:
         base_name = "tempavatar"
 
     try:
         avatar_url = str(user.avatar.url)
-        async with aiohttp.ClientSession() as session:
-            async with session.get(avatar_url) as resp:
-                if resp.status != 200:
-                    raise Exception(f"HTTP {resp.status}")
-                image_bytes = await resp.read()
+
+        # ✅ Reuse bot’s persistent HTTP session
+        if not hasattr(bot, "http_session") or bot.http_session.closed:
+            bot.http_session = aiohttp.ClientSession()
+
+        async with bot.http_session.get(avatar_url) as resp:
+            if resp.status != 200:
+                raise Exception(f"HTTP {resp.status}")
+            image_bytes = await resp.read()
 
         emoji = await guild.create_custom_emoji(name=base_name, image=image_bytes)
         print(f"[DEBUG] ✅ Created emoji {emoji} for user {user}")
         return emoji
+
     except Exception as e:
         print(f"[DEBUG] ❌ Failed to create emoji for {user}: {e}")
         return None
@@ -6062,6 +6017,11 @@ async def main():
             print("⚠️ Bot crashed, restarting in 10s")
             traceback.print_exc()
             await asyncio.sleep(10)  # wait before restarting
+
+async def close_http_session():
+    if hasattr(bot, "http_session") and not bot.http_session.closed:
+        await bot.http_session.close()
+        print("[Network] Closed persistent aiohttp session.")
 
 if __name__ == "__main__":
     while True:
