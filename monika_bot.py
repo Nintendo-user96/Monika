@@ -22,6 +22,7 @@ from discord import File, app_commands
 from discord.ext import commands
 from discord.permissions import Permissions
 from discord.ui import View, Button
+from aiohttp.client_exceptions import ClientConnectionResetError
 
 # Local modules
 import error_detector
@@ -1005,11 +1006,10 @@ async def on_ready():
 
     if not hasattr(bot, "http_session") or bot.http_session.closed:
         try:
-            import aiohttp
             bot.http_session = aiohttp.ClientSession()
-            print("[Network] Persistent aiohttp session started successfully.")
+            print("[Network] ✅ Persistent aiohttp session started.")
         except Exception as e:
-            print(f"[Network Error] Failed to start persistent session: {e}")
+            print(f"[Network Error] Failed to start session: {e}")
 
     # Restore roles / trackers in a background job to avoid blocking gateway
     async def startup_full_init():
@@ -2368,11 +2368,11 @@ async def avatar_to_emoji(bot, guild: discord.Guild, user: discord.User):
         # ✅ Reuse bot’s persistent HTTP session
         if not hasattr(bot, "http_session") or bot.http_session.closed:
             bot.http_session = aiohttp.ClientSession()
+        session = bot.http_session
 
-        async with bot.http_session.get(avatar_url) as resp:
-            if resp.status != 200:
-                raise Exception(f"HTTP {resp.status}")
-            image_bytes = await resp.read()
+        image_bytes = await safe_aiohttp_get(bot, avatar_url)
+        if not image_bytes:
+            raise Exception("Failed to download avatar image.")
 
         emoji = await guild.create_custom_emoji(name=base_name, image=image_bytes)
         print(f"[DEBUG] ✅ Created emoji {emoji} for user {user}")
@@ -6013,15 +6013,34 @@ async def main():
     while True:
         try:
             await bot.start(TOKEN, reconnect=True)
-        except BaseException:
-            print("⚠️ Bot crashed, restarting in 10s")
-            traceback.print_exc()
-            await asyncio.sleep(10)  # wait before restarting
+        except ClientConnectionResetError:
+            print("[Network Error] Connection reset — reconnecting...")
+            continue
+        except Exception as e:
+            print(f"[Bot Crash] {e}")
+            print("Reconnecting in 10 seconds...")
+            asyncio.run(asyncio.sleep(10))
+            continue
 
-async def close_http_session():
-    if hasattr(bot, "http_session") and not bot.http_session.closed:
-        await bot.http_session.close()
-        print("[Network] Closed persistent aiohttp session.")
+async def safe_aiohttp_get(bot, url):
+    """A safe get request with auto recovery."""
+    for attempt in range(3):
+        try:
+            if not hasattr(bot, "http_session") or bot.http_session.closed:
+                bot.http_session = aiohttp.ClientSession()
+
+            async with bot.http_session.get(url) as resp:
+                return await resp.read()
+
+        except ClientConnectionResetError as e:
+            print(f"[Network Warning] Connection reset (attempt {attempt+1}/3): {e}")
+            await asyncio.sleep(1)
+        except Exception as e:
+            print(f"[Network Error] {e}")
+            await asyncio.sleep(1)
+
+    print("[Network] ❌ Failed after 3 retries.")
+    return None
 
 if __name__ == "__main__":
     while True:
