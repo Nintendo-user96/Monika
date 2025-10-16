@@ -2481,8 +2481,37 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     context_entries = await get_monika_context(message.channel, message.author, limit=20)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
-        role = "assistant" if entry["author"] == "Monika" else "user"
-        conversation.append({"role": role, "content": entry["content"]})
+        # Skip empty or invalid entries early
+        if not entry:
+            continue
+
+        # Handle string entries (possibly JSON)
+        if isinstance(entry, str):
+            entry = entry.strip()
+            if not entry:
+                continue  # skip empty strings
+            try:
+                # Only attempt JSON decode if it looks like JSON
+                if entry.startswith("{") and entry.endswith("}"):
+                    entry = json.loads(entry)
+                else:
+                    # Treat as plain text
+                    entry = {"author": "Unknown", "content": entry}
+            except json.JSONDecodeError:
+                # If decoding fails, just wrap as plain text
+                entry = {"author": "Unknown", "content": entry}
+
+        # Handle dicts directly
+        elif not isinstance(entry, dict):
+            continue  # skip anything unexpected (like Message objects)
+
+        author = entry.get("author", "Unknown")
+        content = entry.get("content", "")
+        if not content:
+            continue
+
+        role = "assistant" if author == "Monika" else "user"
+        conversation.append({"role": role, "content": content})
     conversation.append({"role": "user", "content": message.content})
     print(f"[DM Prompt]\n{system_prompt}")
 
@@ -2602,8 +2631,37 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     context_entries = await get_monika_context(message.channel, message.author, limit=20)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
-        role = "assistant" if entry["author"] == "Monika" else "user"
-        conversation.append({"role": role, "content": entry["content"]})
+        # Skip empty or invalid entries early
+        if not entry:
+            continue
+
+        # Handle string entries (possibly JSON)
+        if isinstance(entry, str):
+            entry = entry.strip()
+            if not entry:
+                continue  # skip empty strings
+            try:
+                # Only attempt JSON decode if it looks like JSON
+                if entry.startswith("{") and entry.endswith("}"):
+                    entry = json.loads(entry)
+                else:
+                    # Treat as plain text
+                    entry = {"author": "Unknown", "content": entry}
+            except json.JSONDecodeError:
+                # If decoding fails, just wrap as plain text
+                entry = {"author": "Unknown", "content": entry}
+
+        # Handle dicts directly
+        elif not isinstance(entry, dict):
+            continue  # skip anything unexpected (like Message objects)
+
+        author = entry.get("author", "Unknown")
+        content = entry.get("content", "")
+        if not content:
+            continue
+
+        role = "assistant" if author == "Monika" else "user"
+        conversation.append({"role": role, "content": content})
     conversation.append({"role": "user", "content": message.content})
 
     # --- Defaults ---
