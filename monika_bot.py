@@ -1277,7 +1277,11 @@ async def send_safe(channel, lines: list[str]):
 
 global_conversation_memory = {}
 
-async def get_monika_context(channel: discord.abc.Messageable, user: discord.User):
+async def get_monika_context(
+    channel: discord.abc.Messageable,
+    user: discord.User,
+    limit: int = 10
+):
     """
     Unified memory context loader for Monika across all servers and DMs.
     Keeps conversation continuity by tracking user messages globally.
@@ -1287,32 +1291,23 @@ async def get_monika_context(channel: discord.abc.Messageable, user: discord.Use
     user_id = str(user.id)
     guild_id = str(channel.guild.id) if hasattr(channel, "guild") and channel.guild else "DM"
 
-    # Ensure memory structure exists
     if user_id not in global_conversation_memory:
         global_conversation_memory[user_id] = []
 
-    # Load last context for this user
     context = global_conversation_memory[user_id]
-
-    # Limit context size to prevent overflow
     MAX_MEMORY = 50
     if len(context) > MAX_MEMORY:
         context = context[-MAX_MEMORY:]
 
-    # Optionally refresh with last messages from channel history
     try:
-        async for msg in channel.history(limit=10, oldest_first=False):
+        async for msg in channel.history(limit=limit, oldest_first=False):
             if msg.author == user or msg.author == bot.user:
                 context.append({"author": msg.author.name, "content": msg.content})
     except Exception as e:
         print(f"[Memory Context Warning] Could not read history: {e}")
 
-    # Save updated context
     global_conversation_memory[user_id] = context
-
-    # Create system prompt or context string for AI model
     formatted_context = "\n".join([f"{m['author']}: {m['content']}" for m in context[-MAX_MEMORY:]])
-
     return formatted_context
 
 async def save_global_memory_snapshot(bot, channel_id: int):
@@ -2483,7 +2478,7 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     )
 
     # --- Conversation context ---
-    context_entries = await get_monika_context(message.channel)
+    context_entries = await get_monika_context(message.channel, message.author, limit=20)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
         role = "assistant" if entry["author"] == "Monika" else "user"
@@ -2604,7 +2599,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     )
 
     # --- Conversation context (fixed: use get_monika_context) ---
-    context_entries = await get_monika_context(message.channel)
+    context_entries = await get_monika_context(message.channel, message.author, limit=20)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
         role = "assistant" if entry["author"] == "Monika" else "user"
