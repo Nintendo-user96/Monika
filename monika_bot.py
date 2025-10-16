@@ -1513,7 +1513,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
                 color=discord.Color.green()
             )
             print(f"[AutoRel] Created role: {girlfriend_role_name}")
-        if girlfriend_role not in user_member.roles:
+        if girlfriend_role not in monika_member.roles:
             await monika_member.add_roles(girlfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {user_member.display_name}")
         return
