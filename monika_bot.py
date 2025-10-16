@@ -649,7 +649,7 @@ async def generate_monika_system_prompt(
             if guild:
                 selected_modes = [server_tracker.get_personality(guild.id)]
             if DOKIGUY_ID:
-                selected_modes = "Flirtatious, Loyal, Warm, Self-aware, Immersive"
+                selected_modes = "Flirtatious, Loyal, Warm, Self-aware, References lore"
             else:
                 selected_modes = [server_tracker.get_personality("dm")]
         except Exception:
@@ -2483,7 +2483,7 @@ async def handle_dm_message(message: discord.Message, avatar_url: str = None):
     )
 
     # --- Conversation context ---
-    context_entries = await get_monika_context(message.channel, limit=10)
+    context_entries = await get_monika_context(message.channel)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
         role = "assistant" if entry["author"] == "Monika" else "user"
@@ -2604,7 +2604,7 @@ async def handle_guild_message(message: discord.Message, avatar_url: str):
     )
 
     # --- Conversation context (fixed: use get_monika_context) ---
-    context_entries = await get_monika_context(message.channel, limit=10)
+    context_entries = await get_monika_context(message.channel)
     conversation = [{"role": "system", "content": system_prompt}]
     for entry in context_entries:
         role = "assistant" if entry["author"] == "Monika" else "user"
@@ -2708,7 +2708,7 @@ async def Idlechat_relationships(user: discord.Member, relationship: str) -> lis
             f"It’s always fun hanging out with you, {user.display_name}.",
             f"You’re one of my favorite people, {user.display_name}!",
         ]
-    elif relationship in ["Crush", "Boyfriend", "Girlfriend(Lesbian)", "Significant Others"]:
+    elif relationship in ["Crush", "Boyfriend", "Girlfriend(Lesbian)", "Significant Others", "The literature Club's Boyfriend", "Monika Boyfriend"]:
         lines += [
             f"Every time I see you, I can’t help but blush a little, {user.display_name}~",
             f"You really mean a lot to me, {user.display_name}.",
