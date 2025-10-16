@@ -1767,7 +1767,7 @@ async def on_wake_up(reason: str = "Waking up after scheduled break"):
     idle_chat_enabled = True
     print("[Wakeup] 🌅 Monika is fully awake and idle chat resumed.")
 
-LOCAL_TIMEZONE = pytz.timezone("US/Central")  # or "America/New_York", etc.
+LOCAL_TIMEZONE = pytz.timezone("US/Central")
 
 async def daily_cycle_task():
     """
@@ -1778,6 +1778,9 @@ async def daily_cycle_task():
     last_sleep_date = None
     last_wake_date = None
     status_info = {"is_sleeping": False}
+
+    while not bot.is_ready():
+        await asyncio.sleep(2)
 
     while True:
         try:
