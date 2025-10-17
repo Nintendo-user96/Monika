@@ -1101,7 +1101,6 @@ async def on_ready():
             bot.loop.create_task(safe_task("periodic_scan", periodic_scan, bot))
             bot.loop.create_task(safe_task("periodic_cleanup", periodic_cleanup))
             bot.loop.create_task(safe_task("daily_cycle", daily_cycle_task))
-            bot.loop.create_task(safe_task("network_monitor", monitor_session_health))
 
             # Load vote tracker (best-effort)
             try:
@@ -4804,8 +4803,6 @@ async def set_personality(
 async def set_personality_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.MissingPermissions):
         await interaction.response.send_message("❌ You need Administrator to use this.", ephemeral=True)
-    elif isinstance(error, app_commands.BotMissingPermissions):
-        await interaction.response.send_message("❌ I need Manage Roles to do this.", ephemeral=True)
     else:
         await interaction.response.send_message(f"⚠️ Error: {error}", ephemeral=True)
 
@@ -4994,12 +4991,12 @@ async def set_relationship(
             ephemeral=True
         )
 
-    except commands.BotMissingPermissions as MP:
+    except Exception as e:
         await interaction.response.send_message(
-            f"❌ Missing permissions: **{MP}**",
+            f"Something went wrong",
             ephemeral=True
         )
-        print("[Relationship Error]", MP)
+        print("[Relationship Error]", e)
 
 @bot.tree.command(
     name="personalities_description", 
@@ -5624,11 +5621,23 @@ async def broadcast(
 
 @broadcast.error
 async def broadcast_error(interaction: discord.Interaction, error):
-    if isinstance(error, app_commands.errors.CheckFailure):
-        await interaction.response.send_message("❌ You are not the bot owner.", ephemeral=True)
+    """Handle errors for the /broadcast command."""
+    try:
+        if isinstance(error, app_commands.CheckFailure):
+            await interaction.response.send_message("❌ You are not the bot owner.", ephemeral=True)
 
-    elif isinstance(error, app_commands.errors):
-        await interaction.response.send_message("something went wrong", ephemeral=True)
+        else:
+            msg = f"⚠️ Something went wrong while running this command:\n```{error}```"
+            if interaction.response.is_done():
+                await interaction.followup.send(msg, ephemeral=True)
+            else:
+                await interaction.response.send_message(msg, ephemeral=True)
+
+        # Log it for debugging
+        print(f"[Broadcast Error] {type(error).__name__}: {error}")
+
+    except Exception as e:
+        print(f"[Broadcast Error Handler Failure] {e}")
 
 async def emotion_autocomplete(interaction: discord.Interaction, current: str):
     outfit = getattr(interaction.namespace, "outfit", None)
@@ -6026,7 +6035,7 @@ async def main():
     while True:
         try:
             await bot.start(TOKEN, reconnect=True)
-        except ClientConnectionResetError:
+        except aiohttp.client_exceptions.ClientConnectionResetError:
             print("[Network Error] Connection reset — reconnecting...")
             continue
         except Exception as e:
@@ -6045,7 +6054,7 @@ async def safe_aiohttp_get(bot, url):
             async with bot.http_session.get(url) as resp:
                 return await resp.read()
 
-        except ClientConnectionResetError as e:
+        except aiohttp.client_exceptions.ClientConnectionResetError as e:
             print(f"[Network Warning] Connection reset (attempt {attempt+1}/3): {e}")
             await asyncio.sleep(1)
         except Exception as e:
