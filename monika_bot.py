@@ -1101,6 +1101,7 @@ async def on_ready():
             bot.loop.create_task(safe_task("periodic_scan", periodic_scan, bot))
             bot.loop.create_task(safe_task("periodic_cleanup", periodic_cleanup))
             bot.loop.create_task(safe_task("daily_cycle", daily_cycle_task))
+            bot.loop.create_task(safe_task("network_monitor", monitor_session_health))
 
             # Load vote tracker (best-effort)
             try:
@@ -1487,7 +1488,7 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
 
     if str(user_member.id) == str(DOKIGUY_ID):
         for role in monika_member.roles:
-            if role.name.startswith(f"DokiGuy - ") and role.name.endswith(f"Lovers"):
+            if role.name.startswith(f"DokiGuy - ") and role.name.endswith(f"Lovers") or role.name.startswith(f"The literature ") and role.name.endswith(f"Club's Boyfriend"):
                 await monika_member.remove_roles(role, reason="Resetting old relationship roles")
 
         for role in user_member.roles:
@@ -1542,10 +1543,6 @@ async def update_auto_relationship(guild: discord.Guild, user_member: discord.Me
             await monika_member.add_roles(girlfriend_role, reason="Bot Boyfriend detected")
             print(f"[AutoRel] Assigned Creator role to {monika_member.display_name}")
         return
-
-    for role in monika_member.roles:
-        if role.name.startswith(f"The literature ") and role.name.endswith(f"Club's Boyfriend"):
-            await monika_member.remove_roles(role, reason="incorrect role")
 
     if role not in user_member.roles:
         await user_member.add_roles(role, reason=f"Auto relationship: {new_relationship}")
