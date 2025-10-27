@@ -98,7 +98,7 @@ async def call_openai_with_retries(user, relationship, personality, conversation
     """
     global _cache_counter, _openai_cache  # ✅ ensures both are global
 
-    model_priority = ["gpt-5-nano", "gpt-5-mini", "gpt-5"]
+    model_priority = ["gpt-3.5-turbo", "gpt-5-nano", "gpt-5-mini"]
 
     # ---------------- Context ---------------- #
     context_id = getattr(getattr(user, "guild", None), "id", None) or user.id
@@ -6081,3 +6081,4 @@ if __name__ == "__main__":
             print(f"[{now}] 💀 Top-level crash ignored: {e}")
             traceback.print_exc()
             time.sleep(10)
+
