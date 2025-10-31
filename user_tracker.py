@@ -1,3 +1,4 @@
+import io
 import discord, os, json
 from datetime import datetime
 
@@ -47,14 +48,27 @@ class UserTracker:
             print("[UserTracker] User channel not found.")
             return
 
-        formatted = "```json\n" + json.dumps(self.data, indent=2) + "\n```"
-
         try:
+            json_text = json.dumps(self.data, indent=2)
+            formatted = f"```json\n{json_text}\n```"
+
+            # ⚠️ Discord has 2000 char limit; upload as file if too long
+            if len(formatted) > 1900:
+                file = discord.File(
+                    io.BytesIO(json_text.encode("utf-8")),
+                    filename="user_data_backup.json"
+                )
+                await channel.send("📦 User data backup (too large for message):", file=file)
+                print("[UserTracker] Data uploaded as file (too large).")
+                return
+
             if self.last_backup_message:
                 await self.last_backup_message.edit(content=formatted)
             else:
                 self.last_backup_message = await channel.send(formatted)
+
             print("[UserTracker] Data saved to channel.")
+
         except Exception as e:
             print(f"[UserTracker] Failed to save user data: {e}")
 
